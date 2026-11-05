@@ -1,0 +1,1411 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NMDC MMO 鯨豚觀察作業系統</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --navy:#002038; --navy-2:#0b2e4f; --green:#00B050; --green-dark:#008a3e; --green-bg:#e6f7ee;
+  --bg:#f4f6f9; --card:#ffffff; --border:#dde4ec; --border-2:#c9d3de; --text:#1d2b3a; --muted:#6b7a8c; --muted-2:#9aa7b5;
+  --danger:#c62828; --danger-bg:#fdecec; --warn:#b26a00; --warn-bg:#fff4e0; --info:#1565c0; --info-bg:#e8f1fc; --na-bg:#eef1f5;
+  --purple:#5b4bc4; --purple-bg:#efedfc;
+  --sidebar-w:228px; --header-h:56px; --radius:6px; --radius-lg:10px; --shadow:0 6px 24px rgba(0,32,56,.12);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Inter','Noto Sans TC',system-ui,-apple-system,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);font-size:14px;min-height:100vh}
+a{color:var(--info)}
+button{font-family:inherit}
+.mono{font-family:'JetBrains Mono',ui-monospace,monospace;font-size:12px}
+.muted{color:var(--muted)}.small{font-size:12px}
+.hidden{display:none!important}
+body.viewer .w{display:none!important}
+body.viewer .ro :is(input,select,textarea){pointer-events:none;background:#f4f6f8}
+body:not(.admin) .adm{display:none!important}
+
+/* ---------- Auth ---------- */
+.auth{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:linear-gradient(180deg,var(--navy) 0 40%,var(--bg) 40%);z-index:500;padding:16px}
+.auth-card{background:#fff;border:1px solid var(--border);border-radius:var(--radius-lg);box-shadow:var(--shadow);width:100%;max-width:400px;padding:26px}
+.auth-brand{text-align:center;margin:-150px 0 44px}
+.auth-brand img{height:52px}
+.auth-brand h1{color:#fff;font-size:18px;font-weight:600;margin-top:10px}
+.auth-brand p{color:#b8c7d9;font-size:12px;margin-top:4px}
+.auth-card h2{font-size:17px;margin-bottom:4px;color:var(--navy)}
+.auth-card p{font-size:13px;color:var(--muted);margin-bottom:16px;line-height:1.5}
+.auth-card .fg{margin-bottom:12px}
+.auth-card .btn{width:100%;justify-content:center;padding:11px}
+.auth-err{color:var(--danger);font-size:13px;margin-top:10px;min-height:18px}
+.auth .lang-btn{position:absolute;top:14px;right:16px;background:rgba(255,255,255,.12);color:#fff;border-color:rgba(255,255,255,.3)}
+
+/* ---------- Layout ---------- */
+.sidebar{width:var(--sidebar-w);background:var(--navy);position:fixed;top:0;left:0;bottom:0;display:flex;flex-direction:column;z-index:100;transition:transform .2s}
+.sidebar-logo{padding:16px 18px 14px;border-bottom:3px solid var(--green)}
+.sidebar-logo img{height:32px;display:block}
+.sidebar-logo span{display:block;color:#b8c7d9;font-size:11px;margin-top:8px;letter-spacing:.3px}
+.nav{flex:1;overflow-y:auto;padding:10px 0}
+.nav-item{display:flex;align-items:center;gap:10px;padding:9px 18px;color:#d5deea;cursor:pointer;font-size:13.5px;border-left:3px solid transparent}
+.nav-item:hover{background:rgba(255,255,255,.06);color:#fff}
+.nav-item.active{background:rgba(0,176,80,.14);color:#fff;border-left-color:var(--green);font-weight:600}
+.nav-item .ico{width:18px;text-align:center}
+.nav-item .badge{margin-left:auto;background:var(--danger);color:#fff;font-size:10px;padding:1px 7px;border-radius:9px;font-weight:600}
+.sidebar-foot{padding:12px 18px;border-top:1px solid rgba(255,255,255,.1);font-size:11px;color:#9fb1c6;line-height:1.6}
+.main{margin-left:var(--sidebar-w);min-height:100vh;display:flex;flex-direction:column}
+.header{height:var(--header-h);background:#fff;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 20px;position:sticky;top:0;z-index:50;gap:10px}
+.header h2{font-size:16px;font-weight:600;color:var(--navy);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.header-left,.header-right{display:flex;align-items:center;gap:10px;min-width:0}
+.hamb{display:none;background:none;border:0;font-size:22px;cursor:pointer;color:var(--navy)}
+.live{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+.live i{width:8px;height:8px;border-radius:50%;background:var(--green);animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.user-chip{display:flex;align-items:center;gap:8px;padding:5px 10px;border:1px solid var(--border);border-radius:20px;cursor:pointer;font-size:13px;position:relative;background:#fff;white-space:nowrap}
+.user-chip .role{font-size:10px;text-transform:uppercase;background:var(--green-bg);color:var(--green-dark);padding:1px 6px;border-radius:8px;font-weight:600}
+.user-menu{position:absolute;right:0;top:calc(100% + 6px);background:#fff;border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);min-width:190px;overflow:hidden;z-index:60}
+.user-menu div{padding:10px 14px;cursor:pointer;font-size:13px}
+.user-menu div:hover{background:var(--bg)}
+.content{padding:20px;flex:1;max-width:1400px;width:100%}
+.scrim{display:none}
+
+/* ---------- Components ---------- */
+.btn{display:inline-flex;align-items:center;gap:6px;padding:7px 13px;border-radius:var(--radius);border:1px solid var(--border-2);background:#fff;color:var(--text);font-size:13px;cursor:pointer;white-space:nowrap;text-decoration:none;line-height:1.3}
+.btn:hover{border-color:var(--navy)}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn-primary{background:var(--navy);color:#fff;border-color:var(--navy)}
+.btn-primary:hover{background:var(--navy-2)}
+.btn-green{background:var(--green);color:#fff;border-color:var(--green)}
+.btn-green:hover{background:var(--green-dark);border-color:var(--green-dark)}
+.btn-danger{background:#fff;color:var(--danger);border-color:#e9b4b4}
+.btn-danger:hover{background:var(--danger-bg);border-color:var(--danger)}
+.btn-amber{background:#e09a1a;color:#fff;border-color:#e09a1a}
+.btn-sm{padding:4px 9px;font-size:12px}
+.btn-lg{padding:12px 20px;font-size:15px;font-weight:600}
+.lang-btn{padding:5px 10px;font-size:12px}
+.tag{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;padding:2px 8px;border-radius:10px;white-space:nowrap;background:var(--na-bg);color:var(--muted)}
+.tag.green{background:var(--green-bg);color:var(--green-dark)}
+.tag.amber{background:var(--warn-bg);color:var(--warn)}
+.tag.red{background:var(--danger-bg);color:var(--danger)}
+.tag.blue{background:var(--info-bg);color:var(--info)}
+.tag.navy{background:var(--navy);color:#fff}
+.tag.purple{background:var(--purple-bg);color:var(--purple)}
+.stat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;margin-bottom:18px}
+.stat{background:#fff;border:1px solid var(--border);border-radius:var(--radius-lg);padding:14px 16px;border-top:3px solid var(--navy)}
+.stat .v{font-size:26px;font-weight:700;color:var(--navy)}
+.stat .l{font-size:12px;color:var(--muted);margin-top:2px}
+.stat.green{border-top-color:var(--green)}.stat.red{border-top-color:var(--danger)}.stat.amber{border-top-color:#e09a1a}.stat.blue{border-top-color:var(--info)}
+.stat.red .v{color:var(--danger)}
+.section{background:#fff;border:1px solid var(--border);border-radius:var(--radius-lg);margin-bottom:16px;overflow:hidden}
+.section-header{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:12px 16px;border-bottom:1px solid var(--border)}
+.section-header h3{font-size:14px;font-weight:600;color:var(--navy)}
+.section-body{padding:16px}
+.toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.empty{padding:28px 16px;text-align:center;color:var(--muted);font-size:13px}
+.table-wrap{overflow-x:auto}
+table.tbl{width:100%;border-collapse:collapse;font-size:13px}
+.tbl th{text-align:left;font-weight:600;font-size:12px;color:var(--muted);padding:9px 12px;border-bottom:1px solid var(--border);background:#fafbfc;white-space:nowrap}
+.tbl td{padding:9px 12px;border-bottom:1px solid var(--border);vertical-align:top}
+.tbl tr.click{cursor:pointer}
+.tbl tr.click:hover td{background:#f7f9fb}
+.tbl tr:last-child td{border-bottom:0}
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.alert{border-radius:var(--radius);padding:10px 14px;font-size:13px;margin-bottom:12px;line-height:1.55}
+.alert.red{background:var(--danger-bg);color:var(--danger);border:1px solid #f1c3c3}
+.alert.amber{background:var(--warn-bg);color:var(--warn);border:1px solid #f0d48a}
+.alert.blue{background:var(--info-bg);color:var(--info);border:1px solid #c3d8f3}
+.alert ul{margin:4px 0 0 18px}
+
+/* forms */
+.fg{display:flex;flex-direction:column;gap:5px}
+.fg label{font-size:12px;font-weight:600;color:var(--muted)}
+input,select,textarea{font-family:inherit;font-size:13.5px;padding:8px 10px;border:1px solid var(--border-2);border-radius:var(--radius);background:#fff;color:var(--text);width:100%}
+input:focus,select:focus,textarea:focus{outline:2px solid rgba(0,176,80,.35);border-color:var(--green)}
+input[type=checkbox]{width:auto}
+textarea{resize:vertical;min-height:64px}
+.form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.form-grid .full{grid-column:1/-1}
+.chk{display:inline-flex;align-items:center;gap:6px;font-size:13px;cursor:pointer}
+.chk-list{display:flex;flex-wrap:wrap;gap:8px}
+.chk-list .chk{border:1px solid var(--border-2);border-radius:var(--radius);padding:6px 10px}
+.chk-list .chk:has(input:checked){border-color:var(--green);background:var(--green-bg)}
+
+/* modal */
+.modal-bg{position:fixed;inset:0;background:rgba(0,20,40,.45);z-index:300;display:flex;align-items:flex-start;justify-content:center;padding:40px 14px;overflow-y:auto}
+.modal{background:#fff;border-radius:var(--radius-lg);box-shadow:var(--shadow);width:100%;max-width:620px}
+.modal.wide{max-width:900px}
+.modal-head{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--border)}
+.modal-head h3{font-size:15px;color:var(--navy)}
+.modal-x{background:none;border:0;font-size:22px;cursor:pointer;color:var(--muted);line-height:1}
+.modal-body{padding:18px}
+.modal-foot{display:flex;justify-content:flex-end;gap:8px;padding:12px 18px;border-top:1px solid var(--border);background:#fafbfc;border-radius:0 0 var(--radius-lg) var(--radius-lg)}
+
+/* toasts / loading */
+.toasts{position:fixed;bottom:18px;right:18px;z-index:600;display:flex;flex-direction:column;gap:8px;max-width:360px}
+.toast{background:var(--navy);color:#fff;padding:10px 14px;border-radius:var(--radius);font-size:13px;box-shadow:var(--shadow);border-left:4px solid var(--green)}
+.toast.error{border-left-color:#ff6b6b}
+.loading{position:fixed;inset:0;background:rgba(255,255,255,.6);z-index:700;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px}
+.spinner{width:34px;height:34px;border:3px solid var(--border);border-top-color:var(--green);border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* vessel cards (dashboard) */
+.vgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;margin-bottom:18px}
+.vc{background:#fff;border:1px solid var(--border);border-radius:var(--radius-lg);padding:14px;cursor:pointer;border-left:4px solid var(--muted-2)}
+.vc:hover{box-shadow:var(--shadow)}
+.vc.s-pre{border-left-color:#e09a1a}.vc.s-preDone{border-left-color:var(--info)}.vc.s-work{border-left-color:var(--green)}.vc.s-paused{border-left-color:var(--danger)}.vc.s-done{border-left-color:var(--navy)}
+.vc-top{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px}
+.vc-name{font-size:16px;font-weight:700;color:var(--navy)}
+.vc-sub{font-size:12px;color:var(--muted);margin-bottom:10px}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:3px 10px;font-size:12.5px}
+.kv dt{color:var(--muted)}.kv dd{font-weight:500}
+.tl{display:flex;gap:4px;margin:10px 0 6px}
+.tl span{flex:1;height:6px;border-radius:3px;background:var(--na-bg)}
+.tl span.on{background:var(--green)}
+.tl span.warn{background:#e09a1a}
+.tl span.bad{background:var(--danger)}
+
+/* shift detail */
+.sv-tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+.sv-tab{display:flex;align-items:center;gap:8px;padding:8px 14px;border:1px solid var(--border-2);border-radius:var(--radius);background:#fff;cursor:pointer;font-weight:600;color:var(--navy)}
+.sv-tab.active{background:var(--navy);color:#fff;border-color:var(--navy)}
+.next-box{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:14px 16px;background:linear-gradient(90deg,#f2fbf6,#fff);border-bottom:1px solid var(--border)}
+.next-box .timer{font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:600;color:var(--navy)}
+.trow{display:grid;grid-template-columns:150px 1fr auto;gap:10px;align-items:center;padding:8px 0;border-bottom:1px dashed var(--border)}
+.trow:last-child{border-bottom:0}
+.trow label{font-weight:600;font-size:13px}
+.items{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
+.item{border:1px solid var(--border);border-radius:var(--radius-lg);padding:12px;background:#fff;display:flex;flex-direction:column;gap:8px}
+.item.ok{border-color:#a8dcbd;background:#fbfefc}
+.item.miss{border-color:#f0d48a}
+.item-h{display:flex;justify-content:space-between;align-items:flex-start;gap:8px}
+.item-h b{font-size:13.5px;color:var(--navy)}
+.files{display:flex;flex-direction:column;gap:4px}
+.file{display:flex;align-items:center;gap:6px;font-size:12px;padding:4px 6px;border-radius:4px;background:var(--bg)}
+.file a{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
+.thumbs{display:grid;grid-template-columns:repeat(auto-fill,minmax(70px,1fr));gap:6px}
+.thumb{position:relative;aspect-ratio:1;border-radius:6px;overflow:hidden;background:var(--na-bg);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--muted)}
+.thumb img{width:100%;height:100%;object-fit:cover}
+.thumb .x{position:absolute;top:2px;right:2px;background:rgba(0,0,0,.55);color:#fff;border:0;border-radius:50%;width:20px;height:20px;cursor:pointer;font-size:12px;line-height:20px}
+.wx{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px}
+.wx div{background:var(--bg);border-radius:var(--radius);padding:8px 10px}
+.wx b{display:block;font-size:16px;color:var(--navy)}
+.wx span{font-size:11px;color:var(--muted)}
+.admin-tabs{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:14px;border-bottom:1px solid var(--border)}
+.admin-tabs div{padding:9px 14px;cursor:pointer;font-size:13px;color:var(--muted);border-bottom:2px solid transparent;margin-bottom:-1px}
+.admin-tabs div.active{color:var(--navy);font-weight:600;border-bottom-color:var(--green)}
+.viewer-img{max-width:100%;max-height:75vh;display:block;margin:0 auto}
+
+@media (max-width:900px){
+  .sidebar{transform:translateX(-100%)}
+  body.nav-open .sidebar{transform:none}
+  body.nav-open .scrim{display:block;position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:90}
+  .main{margin-left:0}
+  .hamb{display:block}
+  .grid-2{grid-template-columns:1fr}
+  .content{padding:14px}
+  .live span{display:none}
+  .user-chip .nm{display:none}
+}
+@media (max-width:560px){
+  .form-grid{grid-template-columns:1fr}
+  .trow{grid-template-columns:1fr auto}
+  .trow label{grid-column:1/-1}
+  .header{padding:0 12px}
+  .stat .v{font-size:22px}
+}
+</style>
+</head>
+<body>
+
+<!-- ============ Auth ============ -->
+<div class="auth" id="auth">
+  <button class="btn lang-btn" onclick="toggleLang()"></button>
+  <div class="auth-card">
+    <div class="auth-brand"><img src="data:image/png;base64,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" alt="NMDC"><h1 id="authTitle"></h1><p id="authSub"></p></div>
+    <div id="authBody"></div>
+  </div>
+</div>
+
+<!-- ============ App ============ -->
+<div id="app" class="hidden">
+  <aside class="sidebar">
+    <div class="sidebar-logo"><img src="data:image/png;base64,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" alt="NMDC"><span id="sideProject"></span></div>
+    <nav class="nav" id="nav"></nav>
+    <div class="sidebar-foot" id="sideFoot"></div>
+  </aside>
+  <div class="scrim" onclick="document.body.classList.remove('nav-open')"></div>
+  <div class="main">
+    <header class="header">
+      <div class="header-left"><button class="hamb" onclick="document.body.classList.toggle('nav-open')">☰</button><h2 id="pageTitle"></h2></div>
+      <div class="header-right">
+        <div class="live" title="Auto refresh"><i></i><span id="liveTxt"></span></div>
+        <button class="btn lang-btn" onclick="toggleLang()"></button>
+        <div class="user-chip" id="userChip" onclick="toggleUserMenu(event)"></div>
+      </div>
+    </header>
+    <div class="content" id="content"></div>
+  </div>
+</div>
+
+<div id="modals"></div>
+<div class="toasts" id="toasts"></div>
+<div class="loading hidden" id="loading"><div class="spinner"></div><div class="muted" id="loadingText"></div></div>
+
+<script>
+// ==================== CONFIG ====================
+const API_URL = 'https://script.google.com/macros/s/AKfycby_ZrSFXKGi9xWZAGWXgEmAcKwK7HeAdXiO7Op9yyADqrshz-iH-jjnfMpZtsmdofcjmA/exec';
+const TOKEN_KEY = 'mmo_token';
+const MAX_UPLOAD = 20 * 1024 * 1024;
+const POLL_MS = 30000;
+
+let LANG = 'zh';
+try { LANG = localStorage.getItem('mmo_lang') || 'zh'; } catch (e) {}
+let TOKEN = '';
+try { TOKEN = localStorage.getItem(TOKEN_KEY) || ''; } catch (e) {}
+let S = null;                    // 伺服器資料
+let PAGE = 'dashboard';
+let CUR = { shift: '', sv: '' };  // 目前開啟的班次／MMO 船
+let ADMIN_TAB = 'vessels';
+let FILTER = { month: '', status: 'all', q: '' };
+const THUMBS = {};               // file id → thumb data URL（逐班次載入）
+const THUMB_LOADED = {};
+
+function L(en, zh) { return LANG === 'zh' ? zh : en; }
+function esc(s) { return String(s === undefined || s === null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+function $(id) { return document.getElementById(id); }
+function bool(v) { return v === true || v === 'TRUE' || v === 'true'; }
+function lines(v) { return String(v || '').split('\n').map(x => x.trim()).filter(Boolean); }
+function json(v, d) { try { return v ? JSON.parse(v) : d; } catch (e) { return d; } }
+function isViewer() { return S && S.user.role === 'viewer'; }
+function isAdmin() { return S && S.user.role === 'admin'; }
+
+// 時間一律用台北時間字串 'yyyy-MM-ddTHH:mm'
+function nowLocal() {
+  return new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })
+    .format(new Date()).replace(' ', 'T');
+}
+function today() { return nowLocal().slice(0, 10); }
+function tms(s) {
+  const m = String(s || '').match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/);
+  return m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4] - 8, +m[5]) : NaN;
+}
+function mins(a, b) { const x = tms(a), y = tms(b); return isNaN(x) || isNaN(y) ? NaN : Math.round((y - x) / 60000); }
+function fmtT(s, withDate) {
+  if (!s) return '—';
+  const d = s.slice(0, 10), t = s.slice(11, 16);
+  return withDate || d !== today() ? d.slice(5).replace('-', '/') + ' ' + t : t;
+}
+function fmtDur(m) {
+  if (isNaN(m)) return '—';
+  const neg = m < 0; m = Math.abs(m);
+  return (neg ? '-' : '') + (m >= 60 ? Math.floor(m / 60) + 'h ' + (m % 60) + 'm' : m + ' min');
+}
+function biName(s) {
+  // 清單項目格式「中文 | English」或「中文 English」（最後一個中文字之後的英文）：依語言取一邊；拆不開就原樣
+  s = String(s || '');
+  if (s.indexOf('|') >= 0) { const p = s.split('|').map(x => x.trim()); return LANG === 'zh' ? p[0] : (p[1] || p[0]); }
+  let i = -1;
+  for (let k = 0; k < s.length; k++) if (/[　-鿿＀-￯]/.test(s[k])) i = k;
+  if (i < 0) return s;
+  const zh = s.slice(0, i + 1).trim(), en = s.slice(i + 1).trim();
+  if (!en || !/^[A-Za-z]/.test(en)) return s;
+  return LANG === 'zh' ? zh : en;
+}
+
+// ==================== API ====================
+async function api(action, payload, opt) {
+  opt = opt || {};
+  let res;
+  try {
+    res = await fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action, token: TOKEN, payload: payload || {}, reload: !!opt.reload }) });
+  } catch (e) { throw new Error(L('Network error — please check your connection', '網路錯誤，請檢查連線')); }
+  let j;
+  try { j = await res.json(); } catch (e) { throw new Error(L('Server is not responding correctly', '伺服器回應異常') + ' (HTTP ' + res.status + ')'); }
+  if (!j.ok) {
+    if (j.code === 'RETRY' && !opt.retried) { await new Promise(r => setTimeout(r, 1500)); return api(action, payload, Object.assign({}, opt, { retried: true })); }
+    if (j.code === 'AUTH' && action !== 'auth.login') forceLogout(j.error);
+    throw new Error(trErr(j.error || 'Request failed'));
+  }
+  if (j.state) { S = j.state; LAST_REV = S.rev; }
+  return j.data;
+}
+// 寫入：顯示忙碌、成功後重畫畫面
+async function mut(action, payload, okMsg, btn) {
+  if (btn) btn.disabled = true;
+  showLoading(L('Saving…', '儲存中…'));
+  try {
+    const d = await api(action, payload, { reload: true });
+    if (okMsg) toast(okMsg);
+    render();
+    return d;
+  } catch (e) { toast(e.message, 'error'); throw e; }
+  finally { hideLoading(); if (btn) btn.disabled = false; }
+}
+const ERR_ZH = {
+  'Wrong username or password': '帳號或密碼錯誤', 'Please log in': '請先登入', 'Session expired, please log in again': '登入逾時，請重新登入',
+  'Account disabled': '帳號已停用', 'Permission denied': '權限不足', 'Guest account is read-only': '訪客帳號僅供檢視',
+  'Password must be at least 6 characters': '密碼至少 6 個字元', 'Current password is wrong': '目前密碼錯誤',
+  'Date is required': '請填日期', 'Select at least one MMO vessel': '請至少選一艘 MMO 船', 'Username already exists': '帳號已存在',
+  'This shift is closed — ask an Admin to reopen it': '此班次已結案，請管理員重新開啟後再修改',
+  'Vessel position API is not configured yet': '尚未設定船位 API（後台 › 規則與清單）', 'This vessel has no MMSI': '這艘船沒有 MMSI',
+  'File is larger than 20 MB': '檔案超過 20 MB', 'This vessel is used in shifts — set it inactive instead': '這艘船已用於班次，請改為停用',
+  'Files were uploaded under this item — set it inactive instead': '此項目已有上傳檔案，請改為停用',
+  'You cannot delete your own account': '不能刪除自己的帳號', 'You cannot demote or disable your own account': '不能降級或停用自己的帳號'
+};
+function trErr(m) {
+  if (LANG !== 'zh') return m;
+  if (ERR_ZH[m]) return ERR_ZH[m];
+  let r = m.match(/^Shift number (.+) already exists$/); if (r) return '班次編號 ' + r[1] + ' 已存在';
+  r = m.match(/^(.+) already has records in this shift and cannot be removed$/); if (r) return r[1] + ' 在此班次已有紀錄，不能移除';
+  return m;
+}
+function setToken(t) { TOKEN = t || ''; try { if (t) localStorage.setItem(TOKEN_KEY, t); else localStorage.removeItem(TOKEN_KEY); } catch (e) {} }
+
+// ==================== UI utils ====================
+function toast(msg, type) {
+  const d = document.createElement('div');
+  d.className = 'toast' + (type === 'error' ? ' error' : '');
+  d.textContent = msg;
+  $('toasts').appendChild(d);
+  setTimeout(() => d.remove(), type === 'error' ? 6000 : 3000);
+}
+function showLoading(t) { $('loadingText').textContent = t || ''; $('loading').classList.remove('hidden'); }
+function hideLoading() { $('loading').classList.add('hidden'); }
+function openModal(title, body, opt) {
+  opt = opt || {};
+  const bg = document.createElement('div');
+  bg.className = 'modal-bg';
+  bg.innerHTML = `<div class="modal ${opt.wide ? 'wide' : ''} ${opt.ro ? 'ro' : ''}"><div class="modal-head"><h3>${title}</h3><button class="modal-x">×</button></div>
+    <div class="modal-body">${body}</div>
+    ${opt.onSave || opt.foot ? `<div class="modal-foot">${opt.foot || ''}<button class="btn" data-x>${L('Cancel', '取消')}</button>${opt.onSave ? `<button class="btn btn-primary w" data-save>${opt.saveText || L('Save', '儲存')}</button>` : ''}</div>` : ''}</div>`;
+  const close = () => bg.remove();
+  bg.querySelector('.modal-x').onclick = close;
+  const x = bg.querySelector('[data-x]'); if (x) x.onclick = close;
+  bg.addEventListener('mousedown', e => { if (e.target === bg) bg.__down = true; });
+  bg.addEventListener('mouseup', e => { if (e.target === bg && bg.__down) close(); bg.__down = false; });
+  const sv = bg.querySelector('[data-save]');
+  if (sv) sv.onclick = async () => { try { const r = await opt.onSave(bg, sv); if (r !== false) close(); } catch (e) { /* 已 toast */ } };
+  $('modals').appendChild(bg);
+  const f = bg.querySelector('input:not([type=checkbox]):not([type=file]),select,textarea'); if (f && !opt.noFocus) setTimeout(() => f.focus(), 30);
+  return bg;
+}
+function confirmBox(msg, okText, danger) {
+  return new Promise(res => {
+    const bg = openModal(L('Please confirm', '請確認'), `<div style="line-height:1.6">${msg}</div>`, {
+      foot: `<button class="btn ${danger ? 'btn-danger' : 'btn-primary'}" data-ok>${okText || 'OK'}</button>`, noFocus: true });
+    bg.querySelector('[data-ok]').onclick = () => { bg.remove(); res(true); };
+    bg.querySelector('[data-x]').addEventListener('click', () => res(false));
+    bg.querySelector('.modal-x').addEventListener('click', () => res(false));
+  });
+}
+function val(root, id) { const el = root.querySelector('#' + id); return el ? (el.type === 'checkbox' ? el.checked : el.value.trim()) : ''; }
+function opts(list, cur, blank) {
+  return (blank !== undefined ? `<option value="">${blank}</option>` : '') +
+    list.map(o => { const v = typeof o === 'object' ? o.v : o, t = typeof o === 'object' ? o.t : o; return `<option value="${esc(v)}" ${String(v) === String(cur) ? 'selected' : ''}>${esc(t)}</option>`; }).join('');
+}
+function downloadCsv(name, rows) {
+  const csv = '﻿' + rows.map(r => r.map(c => { c = String(c === undefined || c === null ? '' : c); return /[",\n]/.test(c) ? '"' + c.replace(/"/g, '""') + '"' : c; }).join(',')).join('\r\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+
+// ==================== Status ====================
+const STATUS = {
+  idle: ['Not started', '未開始', ''], pre: ['Pre-watch', '預觀測中', 'amber'], preDone: ['Pre-watch done', '預觀測完成', 'blue'],
+  work: ['Working', '施工中', 'green'], paused: ['Paused', '停工中', 'red'], done: ['Completed', '已完工', 'navy']
+};
+function stTag(st) { const s = STATUS[st] || STATUS.idle; return `<span class="tag ${s[2]}">${L(s[0], s[1])}</span>`; }
+function shiftOf(id) { return S.shifts.find(s => s.id === id); }
+function svsOf(shiftId) { return S.svs.filter(x => x.shift_id === shiftId).sort((a, b) => Number(a.sort) - Number(b.sort)); }
+function shiftClosed(s) { return s && s.status === 'closed'; }
+function canEdit(s) { return !isViewer() && (!shiftClosed(s) || isAdmin()); }
+function shiftLabel(s) { return `${s.date} · ${L('Shift', '班次')} ${s.shift_no}`; }
+function settingsNum(k, d) { const v = parseFloat(S.settings[k]); return isFinite(v) ? v : d; }
+function sites() {
+  return lines(S.settings.sites).map(l => { const a = l.split(',').map(x => x.trim()); return { name: a[0], lat: parseFloat(a[1]), lon: parseFloat(a[2]) }; });
+}
+function warnList(ck) {
+  return ck.warnings.map(w => L(w.en, w.zh));
+}
+
+// ==================== AUTH ====================
+function authView(which, msg) {
+  $('auth').classList.remove('hidden'); $('app').classList.add('hidden');
+  $('authTitle').textContent = L('Marine Mammal Observation System', '鯨豚觀察作業系統');
+  $('authSub').textContent = L('Based on the Taiwan MMO Operation Guideline (4th ed.)', '依台灣鯨豚觀察員制度作業指引（第四版）');
+  const b = $('authBody');
+  if (which === 'loading') b.innerHTML = `<div style="text-align:center;padding:20px"><div class="spinner" style="margin:0 auto"></div></div>`;
+  if (which === 'login') {
+    b.innerHTML = `<h2>${L('Sign in', '登入')}</h2><p>${L('Use the account created by your administrator.', '請使用管理員建立的帳號登入。')}</p>
+      <div class="fg"><label>${L('Username or email', '帳號或 Email')}</label><input id="liUser" autocomplete="username"></div>
+      <div class="fg"><label>${L('Password', '密碼')}</label><input id="liPass" type="password" autocomplete="current-password"></div>
+      <button class="btn btn-primary" id="liBtn" onclick="doLogin()">${L('Sign in', '登入')}</button><div class="auth-err" id="liErr">${esc(msg || '')}</div>`;
+    $('liPass').onkeydown = e => { if (e.key === 'Enter') doLogin(); };
+    setTimeout(() => $('liUser').focus(), 30);
+  }
+  if (which === 'setup') {
+    b.innerHTML = `<h2>${L('First-time setup', '首次設定')}</h2><p>${L('Create the first administrator account.', '建立第一個系統管理員帳號。')}</p>
+      <div class="fg"><label>${L('Username', '帳號')}</label><input id="suUser"></div>
+      <div class="fg"><label>${L('Name', '姓名')}</label><input id="suName"></div>
+      <div class="fg"><label>Email</label><input id="suEmail" type="email"></div>
+      <div class="fg"><label>${L('Password (min 6)', '密碼（至少 6 碼）')}</label><input id="suPass" type="password"></div>
+      <button class="btn btn-primary" onclick="doSetup(this)">${L('Create admin', '建立管理員')}</button><div class="auth-err" id="liErr"></div>`;
+  }
+  if (which === 'change') {
+    b.innerHTML = `<h2>${L('Set a new password', '設定新密碼')}</h2><p>${L('Please replace the temporary password before continuing.', '首次登入請先更改臨時密碼。')}</p>
+      <div class="fg"><label>${L('Current password', '目前密碼')}</label><input id="cpOld" type="password"></div>
+      <div class="fg"><label>${L('New password (min 6)', '新密碼（至少 6 碼）')}</label><input id="cpNew" type="password"></div>
+      <button class="btn btn-primary" onclick="doChange(this, true)">${L('Save', '儲存')}</button><div class="auth-err" id="liErr"></div>`;
+  }
+}
+async function boot() {
+  applyLangButtons();
+  authView('loading');
+  if (TOKEN) {
+    for (let i = 0; i < 3 && TOKEN; i++) {
+      try { S = await api('data.load'); LAST_REV = S.rev; enterApp(); return; }
+      catch (e) { if (!TOKEN) break; await new Promise(r => setTimeout(r, 1500 * (i + 1))); }
+    }
+    if (TOKEN) { authView('login', L('Could not reach the server. Please reload.', '無法連線到伺服器，請重新整理頁面。')); return; }
+  }
+  authView('login');
+  api('auth.status').then(st => { if (st.needsSetup && !TOKEN) authView('setup'); }).catch(e => { const x = $('liErr'); if (x) x.textContent = e.message; });
+}
+async function doLogin() {
+  const err = $('liErr'); err.textContent = '';
+  const username = $('liUser').value.trim(), password = $('liPass').value;
+  if (!username || !password) { err.textContent = L('Enter username and password', '請輸入帳號與密碼'); return; }
+  $('liBtn').disabled = true;
+  try {
+    const r = await api('auth.login', { username, password });
+    setToken(r.token);
+    if (r.user.must_change) { S = { user: r.user }; authView('change'); return; }
+    S = r.data; LAST_REV = S.rev; enterApp();
+  } catch (e) { err.textContent = e.message; }
+  finally { const b = $('liBtn'); if (b) b.disabled = false; }
+}
+async function doSetup(btn) {
+  btn.disabled = true;
+  try {
+    const r = await api('auth.setup', { username: $('suUser').value.trim(), name: $('suName').value.trim(), email: $('suEmail').value.trim(), password: $('suPass').value });
+    setToken(r.token); S = r.data; LAST_REV = S.rev; enterApp();
+  } catch (e) { $('liErr').textContent = e.message; btn.disabled = false; }
+}
+async function doChange(btn, fromAuth) {
+  btn.disabled = true;
+  const root = fromAuth ? document : btn.closest('.modal');
+  try {
+    await api('auth.changePassword', { oldPassword: root.querySelector('#cpOld').value, newPassword: root.querySelector('#cpNew').value });
+    toast(L('Password changed', '密碼已更新'));
+    if (fromAuth) { S = await api('data.load'); LAST_REV = S.rev; enterApp(); }
+    else btn.closest('.modal-bg').remove();
+  } catch (e) { if (fromAuth) $('liErr').textContent = e.message; else toast(e.message, 'error'); btn.disabled = false; }
+}
+async function logout() {
+  try { await api('auth.logout'); } catch (e) {}
+  setToken(''); S = null; authView('login');
+}
+function forceLogout(msg) { setToken(''); S = null; $('modals').innerHTML = ''; authView('login', trErr(msg || '')); }
+function changePasswordModal() {
+  openModal(L('Change password', '變更密碼'), `<div class="fg" style="margin-bottom:10px"><label>${L('Current password', '目前密碼')}</label><input id="cpOld" type="password"></div>
+    <div class="fg"><label>${L('New password (min 6)', '新密碼（至少 6 碼）')}</label><input id="cpNew" type="password"></div>`,
+    { foot: `<button class="btn btn-primary" onclick="doChange(this)">${L('Save', '儲存')}</button>` });
+}
+
+// ==================== Shell ====================
+const PAGES = [
+  { id: 'dashboard', ico: '📊', en: 'Dashboard', zh: '儀表板' },
+  { id: 'shifts', ico: '📋', en: 'Shifts', zh: '施工班次' },
+  { id: 'sightings', ico: '🐬', en: 'Sightings', zh: '目擊紀錄' },
+  { id: 'summary', ico: '📑', en: 'Summary sheet', zh: '總表' },
+  { id: 'admin', ico: '⚙️', en: 'Back office', zh: '後台管理', admin: true }
+];
+function enterApp() {
+  $('auth').classList.add('hidden'); $('app').classList.remove('hidden');
+  document.body.classList.toggle('viewer', isViewer());
+  document.body.classList.toggle('admin', isAdmin());
+  const h = location.hash.match(/^#shift=(.+)$/);
+  if (h && shiftOf(h[1])) { PAGE = 'shift'; CUR.shift = h[1]; }
+  render();
+  startPoll();
+}
+function go(page, shiftId, svId) {
+  PAGE = page;
+  if (shiftId) { CUR.shift = shiftId; CUR.sv = svId || ''; }
+  history.replaceState(null, '', page === 'shift' ? '#shift=' + shiftId : location.pathname + location.search);
+  document.body.classList.remove('nav-open');
+  render();
+  window.scrollTo(0, 0);
+}
+function render() {
+  if (!S || !S.shifts) return;
+  $('sideProject').textContent = S.settings.project_name || '';
+  const missingCount = S.svs.filter(x => x.checks.missing.length && (x.checks.status === 'done' || shiftClosed(shiftOf(x.shift_id)))).length;
+  $('nav').innerHTML = PAGES.filter(p => !p.admin || isAdmin()).map(p =>
+    `<div class="nav-item ${PAGE === p.id || (PAGE === 'shift' && p.id === 'shifts') ? 'active' : ''}" onclick="go('${p.id}')"><span class="ico">${p.ico}</span>${L(p.en, p.zh)}
+      ${p.id === 'shifts' && missingCount ? `<span class="badge" title="${L('Completed vessels with missing uploads', '已完工但缺件')}">${missingCount}</span>` : ''}</div>`).join('');
+  $('sideFoot').innerHTML = `v${esc(S.version)} · ${L('Guideline 4th ed.', '作業指引第四版')}<br>${L('Pre-watch', '預觀測')} ${settingsNum('pre_watch_min', 30)} min · ${L('Alert zone', '警戒區')} ${settingsNum('alert_zone_m', 750)} m`;
+  const role = { admin: 'Admin', mmo: 'MMO', viewer: L('Guest', '訪客') }[S.user.role];
+  $('userChip').innerHTML = `👤 <span class="nm">${esc(S.user.name || S.user.username)}</span><span class="role">${role}</span>`;
+  $('liveTxt').textContent = L('Live', '即時');
+  const P = { dashboard: renderDashboard, shifts: renderShifts, shift: renderShift, sightings: renderSightings, summary: renderSummary, admin: renderAdmin };
+  if (PAGE === 'admin' && !isAdmin()) PAGE = 'dashboard';
+  if (PAGE === 'shift' && !shiftOf(CUR.shift)) PAGE = 'shifts';
+  (P[PAGE] || renderDashboard)();
+}
+function setTitle(t) { $('pageTitle').textContent = t; }
+function toggleUserMenu(e) {
+  e.stopPropagation();
+  const chip = $('userChip');
+  const old = chip.querySelector('.user-menu');
+  if (old) { old.remove(); return; }
+  const m = document.createElement('div');
+  m.className = 'user-menu';
+  m.innerHTML = `${isViewer() ? '' : `<div onclick="changePasswordModal()">🔑 ${L('Change password', '變更密碼')}</div>`}<div onclick="logout()">🚪 ${L('Sign out', '登出')}</div>`;
+  chip.appendChild(m);
+  setTimeout(() => document.addEventListener('click', () => m.remove(), { once: true }), 0);
+}
+function applyLangButtons() { document.querySelectorAll('.lang-btn').forEach(b => b.textContent = LANG === 'zh' ? 'EN' : '中文'); document.documentElement.lang = LANG === 'zh' ? 'zh-Hant' : 'en'; }
+function toggleLang() {
+  LANG = LANG === 'zh' ? 'en' : 'zh';
+  try { localStorage.setItem('mmo_lang', LANG); } catch (e) {}
+  applyLangButtons();
+  if (S && S.shifts) render(); else if (!$('auth').classList.contains('hidden')) authView($('suUser') ? 'setup' : ($('cpOld') ? 'change' : 'login'));
+}
+
+// 輪詢：資料版本變了而且沒有開著的視窗/輸入中 → 自動更新
+let LAST_REV = '', POLL = null;
+function startPoll() {
+  if (POLL) return;
+  POLL = setInterval(async () => {
+    if (!S || !TOKEN || document.hidden) return;
+    try {
+      const r = await api('data.rev');
+      if (r.rev !== LAST_REV && !$('modals').children.length && !(document.activeElement && /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName))) {
+        S = await api('data.load'); LAST_REV = S.rev; render();
+      }
+    } catch (e) {}
+    if (PAGE === 'shift') tick();
+  }, POLL_MS);
+  setInterval(() => { if (PAGE === 'shift') tick(); }, 1000);
+}
+
+// ==================== Dashboard ====================
+function renderDashboard() {
+  setTitle(L('Dashboard', '儀表板'));
+  const month = today().slice(0, 7);
+  const open = S.shifts.filter(s => !shiftClosed(s));
+  const active = S.svs.filter(x => { const s = shiftOf(x.shift_id); return s && !shiftClosed(s) && (x.checks.status !== 'done' || s.date === today()); });
+  const working = S.svs.filter(x => x.checks.status === 'work').length;
+  const paused = S.svs.filter(x => x.checks.status === 'paused').length;
+  const monthSight = S.sightings.filter(x => x.time.slice(0, 7) === month);
+  const missing = S.svs.filter(x => x.checks.missing.length && (x.checks.status === 'done' || shiftClosed(shiftOf(x.shift_id))));
+  const warned = S.svs.filter(x => x.checks.warnings.length && !shiftClosed(shiftOf(x.shift_id)));
+  active.sort((a, b) => (shiftOf(b.shift_id).date + b.shift_id).localeCompare(shiftOf(a.shift_id).date + a.shift_id) || a.sort - b.sort);
+
+  const card = sv => {
+    const s = shiftOf(sv.shift_id), ck = sv.checks, crew = json(sv.crew, {});
+    const wx = json(sv.weather, null);
+    const pre = mins(sv.pre_start, sv.pre_end);
+    const seg = (on, warn) => `<span class="${on ? (warn ? 'warn' : 'on') : ''}"></span>`;
+    const sightN = S.sightings.filter(x => x.sv_id === sv.id).length;
+    return `<div class="vc s-${ck.status}" onclick="go('shift','${s.id}','${sv.id}')">
+      <div class="vc-top"><span class="vc-name">🚤 ${esc(sv.vessel_name)}</span>${stTag(ck.status)}</div>
+      <div class="vc-sub">${esc(shiftLabel(s))} · ${esc(s.site || '')} · 🏗 ${esc(s.construction_vessel || '—')}</div>
+      <div class="tl">${seg(sv.pre_start)}${seg(sv.pre_end, pre < settingsNum('pre_watch_min', 30))}${seg(sv.work_start)}${seg(sv.work_end)}</div>
+      <dl class="kv">
+        <dt>${L('Pre-watch', '預觀測')}</dt><dd>${fmtT(sv.pre_start)} → ${fmtT(sv.pre_end)} ${isNaN(pre) ? '' : `<span class="muted">(${pre} min)</span>`}</dd>
+        <dt>${L('Work', '施工')}</dt><dd>${fmtT(sv.work_start)} → ${fmtT(sv.work_end)}</dd>
+        <dt>${L('Crew', '人員')}</dt><dd>${esc(Object.keys(crew).map(k => crew[k] && crew[k].name).filter(Boolean).join('、') || '—')}</dd>
+        <dt>${L('Position', '位置')}</dt><dd class="mono">${sv.lat ? esc(sv.lat + ', ' + sv.lon) : '—'}${sv.mmsi ? ` · <a href="${vfUrl(sv.mmsi)}" target="_blank" onclick="event.stopPropagation()">VesselFinder ↗</a>` : ''}</dd>
+        ${wx ? `<dt>${L('Weather', '天氣')}</dt><dd>💨 ${wx.wind ?? '—'} kn · 🌊 ${wx.wave ?? '—'} m</dd>` : ''}
+        <dt>${L('Sightings', '目擊')}</dt><dd>${sightN ? `<span class="tag red">🐬 ${sightN}</span>` : `<span class="muted">${L('None', '無')}</span>`}</dd>
+        <dt>${L('Uploads', '上傳')}</dt><dd>📄 ${ck.docs[0]}/${ck.docs[1]} · 📷 ${ck.photos[0]}/${ck.photos[1]}</dd>
+      </dl>
+      ${ck.warnings.length ? `<div class="alert amber" style="margin:10px 0 0;padding:6px 10px;font-size:12px">⚠ ${warnList(ck).map(esc).join('<br>⚠ ')}</div>` : ''}
+    </div>`;
+  };
+  const recent = S.sightings.slice().sort((a, b) => b.time.localeCompare(a.time)).slice(0, 8);
+  $('content').innerHTML = `
+    <div class="stat-grid">
+      <div class="stat blue"><div class="v">${open.length}</div><div class="l">${L('Open shifts', '進行中班次')}</div></div>
+      <div class="stat green"><div class="v">${working}</div><div class="l">${L('Vessels working', '施工中船舶')}</div></div>
+      <div class="stat ${paused ? 'red' : ''}"><div class="v">${paused}</div><div class="l">${L('Vessels paused', '停工中船舶')}</div></div>
+      <div class="stat amber"><div class="v">${monthSight.length}</div><div class="l">${L('Sightings this month', '本月目擊次數')}</div></div>
+      <div class="stat ${missing.length ? 'red' : ''}"><div class="v">${missing.length}</div><div class="l">${L('Completed but missing uploads', '已完工但缺件')}</div></div>
+    </div>
+    <div class="section-header" style="padding:0 0 10px;border:0"><h3>${L('Active MMO vessels', '作業中 MMO 船')}</h3>
+      <button class="btn btn-green w" onclick="shiftModal()">＋ ${L('New shift', '新增班次')}</button></div>
+    ${active.length ? `<div class="vgrid">${active.map(card).join('')}</div>` : `<div class="section"><div class="empty">${L('No active shifts. Create a shift to start recording.', '目前沒有作業中的班次，請先新增班次。')}</div></div>`}
+    <div class="grid-2">
+      <div class="section"><div class="section-header"><h3>🐬 ${L('Latest sightings', '最新目擊紀錄')}</h3><button class="btn btn-sm" onclick="go('sightings')">${L('All', '全部')} →</button></div>
+        ${recent.length ? `<div class="table-wrap"><table class="tbl"><tr><th>${L('Time', '時間')}</th><th>${L('Vessel', '船')}</th><th>${L('Species', '物種')}</th><th>${L('Count', '數量')}</th><th>${L('Distance', '距離')}</th></tr>
+          ${recent.map(x => { const sv = S.svs.find(v => v.id === x.sv_id) || {}; return `<tr class="click" onclick="go('shift','${x.shift_id}','${x.sv_id}')"><td class="mono">${fmtT(x.time, true)}</td><td>${esc(sv.vessel_name || '')}</td><td>${esc(biName(x.species))}</td><td>${esc(x.count)}</td><td>${x.min_distance_m ? esc(x.min_distance_m) + ' m' : '—'} ${bool(x.in_alert_zone) ? `<span class="tag red">${L('Alert zone', '警戒區')}</span>` : ''}</td></tr>`; }).join('')}</table></div>`
+          : `<div class="empty">${L('No sightings yet', '尚無目擊紀錄')}</div>`}</div>
+      <div class="section"><div class="section-header"><h3>📎 ${L('Missing uploads / rule warnings', '缺件與規則提醒')}</h3></div>
+        ${missing.length || warned.length ? `<div class="table-wrap"><table class="tbl">
+          ${missing.map(sv => { const s = shiftOf(sv.shift_id); return `<tr class="click" onclick="go('shift','${s.id}','${sv.id}')"><td class="mono" style="white-space:nowrap">${esc(s.date)} #${esc(s.shift_no)}</td><td><b>${esc(sv.vessel_name)}</b></td><td><span class="tag amber">${L('Missing', '缺')} ${sv.checks.missing.length}</span> <span class="small muted">${esc(sv.checks.missing.map(m => L(m.en, m.zh)).join('、'))}</span></td></tr>`; }).join('')}
+          ${warned.map(sv => { const s = shiftOf(sv.shift_id); return `<tr class="click" onclick="go('shift','${s.id}','${sv.id}')"><td class="mono" style="white-space:nowrap">${esc(s.date)} #${esc(s.shift_no)}</td><td><b>${esc(sv.vessel_name)}</b></td><td><span class="tag red">⚠</span> <span class="small">${esc(warnList(sv.checks).join('；'))}</span></td></tr>`; }).join('')}
+        </table></div>` : `<div class="empty">✅ ${L('Everything is complete', '目前沒有缺件或規則提醒')}</div>`}</div>
+    </div>`;
+}
+function vfUrl(mmsi) { return 'https://www.vesselfinder.com/?mmsi=' + encodeURIComponent(mmsi) + '&zoom=10'; }
+
+// ==================== Shifts list ====================
+function renderShifts() {
+  setTitle(L('Construction shifts', '施工班次'));
+  const months = Array.from(new Set(S.shifts.map(s => s.date.slice(0, 7)))).sort().reverse();
+  let list = S.shifts.slice().sort((a, b) => (b.date + String(b.shift_no).padStart(6, '0')).localeCompare(a.date + String(a.shift_no).padStart(6, '0')));
+  if (FILTER.month) list = list.filter(s => s.date.slice(0, 7) === FILTER.month);
+  if (FILTER.status !== 'all') list = list.filter(s => (FILTER.status === 'closed') === shiftClosed(s));
+  if (FILTER.q) { const q = FILTER.q.toLowerCase(); list = list.filter(s => [s.shift_no, s.site, s.scope, s.construction_vessel].concat(svsOf(s.id).map(x => x.vessel_name)).join(' ').toLowerCase().includes(q)); }
+  $('content').innerHTML = `<div class="section"><div class="section-header">
+      <div class="toolbar">
+        <select style="width:auto" onchange="FILTER.month=this.value;renderShifts()">${opts(months, FILTER.month, L('All months', '全部月份'))}</select>
+        <select style="width:auto" onchange="FILTER.status=this.value;renderShifts()">${opts([{ v: 'all', t: L('All', '全部') }, { v: 'open', t: L('Open', '進行中') }, { v: 'closed', t: L('Closed', '已結案') }], FILTER.status)}</select>
+        <input style="width:180px" placeholder="${L('Search…', '搜尋…')}" value="${esc(FILTER.q)}" oninput="FILTER.q=this.value;clearTimeout(this.__t);this.__t=setTimeout(renderShifts,300)">
+      </div>
+      <button class="btn btn-green w" onclick="shiftModal()">＋ ${L('New shift', '新增班次')}</button></div>
+    ${list.length ? `<div class="table-wrap"><table class="tbl"><tr><th>${L('Date', '日期')}</th><th>${L('Shift', '班次')}</th><th>${L('Site / scope', '工區／範疇')}</th><th>${L('Construction vessel', '施工船')}</th><th>${L('MMO vessels', 'MMO 船')}</th><th>${L('Sightings', '目擊')}</th><th>${L('Uploads', '上傳')}</th><th>${L('Status', '狀態')}</th></tr>
+      ${list.map(s => {
+        const vs = svsOf(s.id);
+        const sn = S.sightings.filter(x => x.shift_id === s.id).length;
+        const d = vs.reduce((a, x) => [a[0] + x.checks.docs[0] + x.checks.photos[0], a[1] + x.checks.docs[1] + x.checks.photos[1]], [0, 0]);
+        const warn = vs.some(x => x.checks.warnings.length);
+        return `<tr class="click" onclick="go('shift','${s.id}')"><td class="mono">${esc(s.date)}</td><td><b>#${esc(s.shift_no)}</b></td>
+          <td>${esc(s.site || '—')}<div class="small muted">${esc(biName(s.scope) || '')}</div></td><td>${esc(s.construction_vessel || '—')}</td>
+          <td>${vs.map(x => `<div style="margin-bottom:3px">${esc(x.vessel_name)} ${stTag(x.checks.status)}</div>`).join('')}</td>
+          <td>${sn ? `<span class="tag red">🐬 ${sn}</span>` : '<span class="muted">—</span>'}</td>
+          <td><span class="tag ${d[0] >= d[1] ? 'green' : 'amber'}">${d[0]}/${d[1]}</span> ${warn ? '<span class="tag red" title="rule">⚠</span>' : ''}</td>
+          <td>${shiftClosed(s) ? `<span class="tag navy">${L('Closed', '已結案')}</span>` : `<span class="tag green">${L('Open', '進行中')}</span>`}</td></tr>`;
+      }).join('')}</table></div>` : `<div class="empty">${L('No shifts', '沒有班次')}</div>`}</div>`;
+}
+
+// 新增／編輯班次
+function shiftModal(id) {
+  const s = id ? shiftOf(id) : null;
+  const mmo = S.vessels.filter(v => v.kind === 'mmo' && (bool(v.active) || (s && svsOf(s.id).some(x => x.vessel_id === v.id))));
+  const cvs = S.vessels.filter(v => v.kind === 'construction' && (bool(v.active) || (s && s.construction_vessel_id === v.id)));
+  const chosen = s ? svsOf(s.id).map(x => x.vessel_id) : [];
+  const siteList = sites().map(x => x.name);
+  if (s && s.site && siteList.indexOf(s.site) < 0) siteList.push(s.site);
+  const scopes = lines(S.settings.scopes);
+  if (s && s.scope && scopes.indexOf(s.scope) < 0) scopes.push(s.scope);
+  const slots = lines(S.settings.crew_slots);
+  const obs = S.observers.filter(o => bool(o.active));
+  const crewGrid = vid => {
+    const v = S.vessels.find(x => x.id === vid);
+    return `<div class="crew-block" data-vid="${vid}" style="border:1px solid var(--border);border-radius:var(--radius);padding:10px;margin-top:8px">
+      <b style="color:var(--navy)">🚤 ${esc(v ? v.name : '')}</b>
+      <div class="form-grid" style="margin-top:8px;grid-template-columns:repeat(auto-fill,minmax(150px,1fr))">${slots.map(k => `<div class="fg"><label>${esc(k)}</label>
+        <select data-slot="${esc(k)}">${opts(obs.filter(o => !o.role || o.role === 'both' || k.toUpperCase().indexOf(o.role) === 0).map(o => ({ v: o.id, t: o.name })), '', '—')}</select></div>`).join('')}</div></div>`;
+  };
+  const body = `<div class="form-grid">
+    <div class="fg"><label>${L('Date', '日期')} *</label><input id="shDate" type="date" value="${esc(s ? s.date : today())}"></div>
+    <div class="fg"><label>${L('Shift no. (blank = auto)', '班次編號（空白＝自動）')}</label><input id="shNo" value="${esc(s ? s.shift_no : '')}"></div>
+    <div class="fg"><label>${L('Site', '工區')}</label><select id="shSite">${opts(siteList, s ? s.site : siteList[0] || '', '—')}</select></div>
+    <div class="fg"><label>${L('Scope of work', '工作範疇 Scope')}</label><select id="shScope">${opts(scopes.map(x => ({ v: x, t: biName(x) })), s ? s.scope : '', '—')}</select></div>
+    <div class="fg full"><label>${L('Construction vessel', '施工船')}</label><select id="shCv">${opts(cvs.map(v => ({ v: v.id, t: v.name })), s ? s.construction_vessel_id : '', '—')}</select>
+      ${cvs.length ? '' : `<span class="small muted">${L('Add construction vessels in Back office › Vessels', '請先到 後台管理 › 船舶 新增施工船')}</span>`}</div>
+    <div class="fg full"><label>${L('MMO vessels', 'MMO 觀察船')} *</label>
+      <div class="chk-list">${mmo.map(v => `<label class="chk"><input type="checkbox" class="shV" value="${v.id}" ${chosen.indexOf(v.id) >= 0 ? 'checked' : ''}>${esc(v.name)}</label>`).join('') || `<span class="small muted">${L('Add MMO vessels in Back office › Vessels', '請先到 後台管理 › 船舶 新增 MMO 船')}</span>`}</div></div>
+    ${s ? '' : `<div class="full" id="crewArea"></div>`}
+    <div class="fg full"><label>${L('Remark', '備註')}</label><textarea id="shRemark">${esc(s ? s.remark : '')}</textarea></div></div>`;
+  const bg = openModal(s ? L('Edit shift', '編輯班次') : L('New shift', '新增班次'), body, { wide: true, onSave: async (bg, btn) => {
+    const ids = Array.from(bg.querySelectorAll('.shV:checked')).map(x => x.value);
+    const crew = {};
+    bg.querySelectorAll('.crew-block').forEach(b => {
+      const c = {};
+      b.querySelectorAll('select[data-slot]').forEach(sel => { if (sel.value) { const o = S.observers.find(x => x.id === sel.value); c[sel.dataset.slot] = { id: o.id, name: o.name }; } });
+      crew[b.dataset.vid] = c;
+    });
+    const r = await mut('shift.save', { id: s ? s.id : '', date: val(bg, 'shDate'), shift_no: val(bg, 'shNo'), site: val(bg, 'shSite'), scope: val(bg, 'shScope'),
+      construction_vessel_id: val(bg, 'shCv'), vessel_ids: ids, crew, remark: val(bg, 'shRemark') }, L('Shift saved', '班次已儲存'), btn);
+    if (!s) go('shift', r.id);
+  } });
+  if (!s) {
+    const sync = () => {
+      const area = bg.querySelector('#crewArea');
+      const ids = Array.from(bg.querySelectorAll('.shV:checked')).map(x => x.value);
+      const keep = {};
+      area.querySelectorAll('.crew-block').forEach(b => keep[b.dataset.vid] = b);
+      area.innerHTML = ids.length ? `<label class="small" style="font-weight:600;color:var(--muted)">${L('Observers on each MMO vessel', '各 MMO 船觀察人員')}</label>` : '';
+      ids.forEach(id => { if (keep[id]) area.appendChild(keep[id]); else area.insertAdjacentHTML('beforeend', crewGrid(id)); });
+    };
+    bg.querySelectorAll('.shV').forEach(c => c.onchange = sync);
+    sync();
+  }
+}
+
+// ==================== Shift detail ====================
+function renderShift() {
+  const s = shiftOf(CUR.shift);
+  const vs = svsOf(s.id);
+  if (!vs.find(x => x.id === CUR.sv)) CUR.sv = vs[0] ? vs[0].id : '';
+  const sv = vs.find(x => x.id === CUR.sv);
+  setTitle(shiftLabel(s));
+  const ed = canEdit(s);
+  const closedBar = shiftClosed(s) ? `<div class="alert blue">🔒 ${L('This shift is closed', '此班次已結案')} (${esc(s.closed_by)} · ${fmtT(s.closed_at, true)})${isAdmin() ? '' : L(' — read only.', '，僅供檢視。')}</div>` : '';
+  $('content').innerHTML = `
+    <div class="toolbar" style="margin-bottom:12px"><button class="btn btn-sm" onclick="go('shifts')">← ${L('Shifts', '班次列表')}</button></div>
+    ${closedBar}
+    <div class="section"><div class="section-header">
+      <div><h3 style="font-size:16px">${esc(shiftLabel(s))} ${shiftClosed(s) ? `<span class="tag navy">${L('Closed', '已結案')}</span>` : `<span class="tag green">${L('Open', '進行中')}</span>`}</h3>
+        <div class="small muted" style="margin-top:4px">📍 ${esc(s.site || '—')} · 🔧 ${esc(biName(s.scope) || '—')} · 🏗 ${esc(s.construction_vessel || '—')}${s.remark ? ' · ' + esc(s.remark) : ''}</div></div>
+      <div class="toolbar">
+        ${s.folder_id ? `<a class="btn btn-sm" target="_blank" href="https://drive.google.com/drive/folders/${esc(s.folder_id)}">📁 Drive</a>` : ''}
+        ${ed ? `<button class="btn btn-sm w" onclick="shiftModal('${s.id}')">✏️ ${L('Edit', '編輯')}</button>` : ''}
+        ${!shiftClosed(s) ? `<button class="btn btn-sm btn-primary w" onclick="closeShift('${s.id}')">🔒 ${L('Close shift', '結案')}</button>` : ''}
+        ${shiftClosed(s) && isAdmin() ? `<button class="btn btn-sm w" onclick="mut('shift.reopen',{id:'${s.id}'},L('Reopened','已重新開啟'))">🔓 ${L('Reopen', '重新開啟')}</button>` : ''}
+        ${isAdmin() ? `<button class="btn btn-sm btn-danger w" onclick="deleteShift('${s.id}')">🗑</button>` : ''}
+      </div></div></div>
+    <div class="sv-tabs">${vs.map(x => `<div class="sv-tab ${x.id === CUR.sv ? 'active' : ''}" onclick="CUR.sv='${x.id}';renderShift()">🚤 ${esc(x.vessel_name)} ${stTag(x.checks.status)}${x.checks.warnings.length ? ' ⚠' : ''}</div>`).join('')}</div>
+    ${sv ? svPanel(s, sv, ed) : `<div class="section"><div class="empty">${L('No MMO vessels in this shift', '此班次沒有 MMO 船')}</div></div>`}`;
+  if (sv) { loadThumbs(s.id); tick(); }
+}
+
+function nextAction(sv, ck) {
+  const open = S.pauses.find(p => p.sv_id === sv.id && !p.end);
+  switch (ck.status) {
+    case 'idle': return { k: 'pre_start', cls: 'btn-amber', t: L('▶ Start pre-watch', '▶ 開始預觀測') };
+    case 'pre': return { k: 'pre_end', cls: 'btn-primary', t: L('✓ End pre-watch (no cetaceans)', '✓ 預觀測結束（未發現鯨豚）') };
+    case 'preDone': return { k: 'work_start', cls: 'btn-green', t: L('▶ Start work', '▶ 開始施工') };
+    case 'work': return { k: 'pause', cls: 'btn-danger', t: L('⏸ Pause work', '⏸ 停工') };
+    case 'paused': return { k: 'resume', cls: 'btn-green', t: L('▶ Resume work', '▶ 復工'), pause: open };
+    default: return null;
+  }
+}
+function svPanel(s, sv, ed) {
+  const ck = sv.checks, crew = json(sv.crew, {}), slots = lines(S.settings.crew_slots);
+  const na = nextAction(sv, ck);
+  const ps = S.pauses.filter(p => p.sv_id === sv.id).sort((a, b) => a.start.localeCompare(b.start));
+  const ss = S.sightings.filter(x => x.sv_id === sv.id).sort((a, b) => a.time.localeCompare(b.time));
+  const preMin = settingsNum('pre_watch_min', 30);
+  const tRow = (k, en, zh, extra) => `<div class="trow"><label>${L(en, zh)}</label>
+      <input type="datetime-local" value="${esc(sv[k] || '')}" ${ed ? '' : 'disabled'} onchange="saveSv('${sv.id}',{${k}:this.value})">
+      <div class="toolbar">${ed ? `<button class="btn btn-sm w" onclick="saveSv('${sv.id}',{${k}:nowLocal()})">${L('Now', '現在')}</button>` : ''}${extra || ''}</div></div>`;
+  const pre = mins(sv.pre_start, sv.pre_end), work = mins(sv.work_start, sv.work_end);
+  const wx = json(sv.weather, null);
+  const site = sites().find(x => x.name === s.site);
+  return `
+  ${ck.warnings.length ? `<div class="alert red"><b>⚠ ${L('Guideline checks', '作業指引檢核')}</b><ul>${warnList(ck).map(w => `<li>${esc(w)}</li>`).join('')}</ul></div>` : ''}
+  <div class="section">
+    ${ed && na ? `<div class="next-box"><button class="btn btn-lg ${na.cls} w" onclick="doNext('${sv.id}','${na.k}')">${na.t}</button>
+      <div><div class="timer" id="timer"></div><div class="small muted" id="timerHint"></div></div>
+      ${ck.status === 'work' || ck.status === 'paused' || ck.status === 'preDone' || ck.status === 'pre' ? `<button class="btn w" style="margin-left:auto" onclick="sightingModal('${sv.id}')">🐬 ${L('Record sighting', '登錄目擊')}</button>` : ''}
+      ${ck.status === 'work' || ck.status === 'paused' ? `<button class="btn w" onclick="doNext('${sv.id}','work_end')">■ ${L('End work', '結束施工')}</button>` : ''}</div>` :
+      `<div class="next-box"><div><div class="timer" id="timer"></div><div class="small muted" id="timerHint"></div></div></div>`}
+    <div class="section-header"><h3>⏱ ${L('Operation times', '作業時間')}</h3>
+      <span class="small muted">${L('Pre-watch', '預觀測')} ${isNaN(pre) ? '—' : `<b style="color:${pre < preMin ? 'var(--danger)' : 'var(--green-dark)'}">${pre} min</b>`} / ${preMin} · ${L('Work', '施工')} <b>${fmtDur(work)}</b></span></div>
+    <div class="section-body" style="padding-top:6px;padding-bottom:6px">
+      ${tRow('pre_start', 'Pre-watch start', '預觀測開始')}
+      ${tRow('pre_end', 'Pre-watch end', '預觀測結束')}
+      ${tRow('work_start', 'Work start', '施工開始')}
+      ${tRow('work_end', 'Work end', '施工結束')}
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <div class="section"><div class="section-header"><h3>⏸ ${L('Pause / resume', '停工／復工')} <span class="muted">(${ps.length})</span></h3>
+      ${ed ? `<button class="btn btn-sm w" onclick="pauseModal('${sv.id}')">＋ ${L('Add', '新增')}</button>` : ''}</div>
+      ${ps.length ? `<div class="table-wrap"><table class="tbl"><tr><th>${L('Pause', '停工')}</th><th>${L('Resume', '復工')}</th><th>${L('Duration', '時長')}</th><th>${L('Reason', '原因')}</th><th></th></tr>
+        ${ps.map(p => `<tr><td class="mono">${fmtT(p.start, true)}</td><td class="mono">${p.end ? fmtT(p.end, true) : `<span class="tag red">${L('Paused', '停工中')}</span>`}</td>
+          <td>${p.end ? fmtDur(mins(p.start, p.end)) : '—'}</td><td>${esc(biName(p.reason))}${p.sighting_id ? ' 🐬' : ''}${p.remark ? `<div class="small muted">${esc(p.remark)}</div>` : ''}</td>
+          <td>${ed ? `<button class="btn btn-sm w" onclick="pauseModal('${sv.id}','${p.id}')">✏️</button>` : ''}</td></tr>`).join('')}</table></div>`
+        : `<div class="empty">${L('No pauses', '無停工紀錄')}</div>`}</div>
+    <div class="section"><div class="section-header"><h3>🐬 ${L('Sightings', '目擊紀錄')} <span class="muted">(${ss.length})</span></h3>
+      ${ed ? `<button class="btn btn-sm w" onclick="sightingModal('${sv.id}')">＋ ${L('Add', '新增')}</button>` : ''}</div>
+      ${ss.length ? `<div class="table-wrap"><table class="tbl"><tr><th>${L('Time', '時間')}</th><th>${L('Species', '物種')}</th><th>${L('Count', '數量')}</th><th>${L('Distance', '距離')}</th><th>${L('Action', '處置')}</th><th></th></tr>
+        ${ss.map(x => `<tr><td class="mono">${fmtT(x.time, true)}</td><td>${esc(biName(x.species))}<div class="small muted">${esc(biName(x.detection))}</div></td><td>${esc(x.count)}</td>
+          <td>${x.min_distance_m ? esc(x.min_distance_m) + ' m' : '—'} ${bool(x.in_alert_zone) ? `<span class="tag red">${L('Alert zone', '警戒區')}</span>` : ''}</td>
+          <td>${esc(biName(x.action))}${x.left_time ? `<div class="small muted">${L('Left', '離開')} ${fmtT(x.left_time)}</div>` : ''}</td>
+          <td>${ed ? `<button class="btn btn-sm w" onclick="sightingModal('${sv.id}','${x.id}')">✏️</button>` : ''}</td></tr>`).join('')}</table></div>`
+        : `<div class="empty">${L('No cetaceans sighted', '未目擊鯨豚')}</div>`}</div>
+  </div>
+
+  <div class="grid-2">
+    <div class="section"><div class="section-header"><h3>👥 ${L('Observers', '觀察人員')}</h3>${ed ? `<button class="btn btn-sm w" onclick="crewModal('${sv.id}')">✏️ ${L('Edit', '編輯')}</button>` : ''}</div>
+      <div class="section-body"><dl class="kv">${slots.map(k => `<dt>${esc(k)}</dt><dd>${esc((crew[k] && crew[k].name) || '—')}</dd>`).join('')}
+        ${Object.keys(crew).filter(k => slots.indexOf(k) < 0 && crew[k] && crew[k].name).map(k => `<dt>${esc(k)}</dt><dd>${esc(crew[k].name)}</dd>`).join('')}</dl></div></div>
+    <div class="section"><div class="section-header"><h3>📍 ${L('Position & weather', '船位與天氣')}</h3>
+      <div class="toolbar">${sv.mmsi ? `<a class="btn btn-sm" target="_blank" href="${vfUrl(sv.mmsi)}">VesselFinder ↗</a>` : ''}
+        ${ed ? `<button class="btn btn-sm w" onclick="fetchPos('${sv.id}')">📡 ${L('Get position', '抓船位')}</button><button class="btn btn-sm w" onclick="posModal('${sv.id}')">✏️</button>` : ''}</div></div>
+      <div class="section-body">
+        <dl class="kv" style="margin-bottom:10px"><dt>${L('Position', '位置')}</dt><dd class="mono">${sv.lat ? esc(sv.lat + ', ' + sv.lon) : `<span class="muted">${L('Not recorded', '未記錄')}${site && isFinite(site.lat) ? ' · ' + L('weather uses site', '天氣用工區座標') : ''}</span>`}</dd>
+          ${sv.pos_time ? `<dt>${L('Fix time', '定位時間')}</dt><dd>${fmtT(sv.pos_time, true)} ${sv.pos_source ? `<span class="muted small">(${esc(sv.pos_source)})</span>` : ''}</dd>` : ''}
+          <dt>${L('Sea state', '海況')}</dt><dd>${sv.sea_state !== '' && sv.sea_state !== undefined ? 'Beaufort ' + esc(sv.sea_state) : '—'}</dd></dl>
+        ${wx ? `<div class="wx">
+          <div><b>${wx.wind ?? '—'}</b><span>${L('Wind kn', '風速 kn')} ${wx.wdir !== undefined ? '· ' + dirTxt(wx.wdir) : ''}</span></div>
+          <div><b>${wx.gust ?? '—'}</b><span>${L('Gust kn', '陣風 kn')}</span></div>
+          <div><b>${wx.wave ?? '—'}</b><span>${L('Wave m', '浪高 m')}</span></div>
+          <div><b>${wx.vis !== undefined && wx.vis !== null ? wx.vis : '—'}</b><span>${L('Visibility km', '能見度 km')}</span></div>
+          <div><b>${wx.temp ?? '—'}</b><span>°C · ${esc(wmo(wx.code))}</span></div></div>
+          <div class="small muted" style="margin-top:6px">Open-Meteo · ${esc(fmtT(wx.time, true))}</div>` : `<div class="small muted">${L('No weather recorded', '尚未記錄天氣')}</div>`}
+        ${ed ? `<button class="btn btn-sm w" style="margin-top:10px" onclick="fetchWeather('${sv.id}')">🌤 ${L('Fetch weather for pre-watch time', '抓取預觀測時段天氣')}</button>` : ''}
+      </div></div>
+  </div>
+
+  <div class="section"><div class="section-header"><h3>📎 ${L('Uploads', '上傳文件與照片')} <span class="muted small">📄 ${ck.docs[0]}/${ck.docs[1]} · 📷 ${ck.photos[0]}/${ck.photos[1]}</span></h3>
+      ${s.folder_id ? `<a class="btn btn-sm" target="_blank" href="https://drive.google.com/drive/folders/${esc(sv.folder_id || s.folder_id)}">📁 ${L('Open in Drive', '開啟 Drive 資料夾')}</a>` : ''}</div>
+    <div class="section-body">${uploadGrid(sv, ed)}</div></div>
+
+  <div class="section"><div class="section-header"><h3>📝 ${L('Remark', '備註')}</h3></div>
+    <div class="section-body"><textarea ${ed ? '' : 'disabled'} onchange="saveSv('${sv.id}',{remark:this.value})" placeholder="${L('Notes for this vessel in this shift', '此班次此船的備註')}">${esc(sv.remark)}</textarea>
+    <div class="small muted" style="margin-top:6px">${L('Last updated', '最後更新')}: ${esc(sv.updated_by || '')} ${fmtT(sv.updated_at, true)}</div></div></div>`;
+}
+function dirTxt(d) { const a = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']; return a[Math.round(((Number(d) % 360) / 45)) % 8]; }
+function wmo(c) {
+  c = Number(c);
+  if (isNaN(c)) return '';
+  const T = [[0, 'Clear', '晴'], [3, 'Cloudy', '多雲'], [48, 'Fog', '霧'], [57, 'Drizzle', '毛毛雨'], [67, 'Rain', '雨'], [77, 'Snow', '雪'], [82, 'Showers', '陣雨'], [86, 'Snow showers', '陣雪'], [99, 'Thunderstorm', '雷雨']];
+  const r = T.find(x => c <= x[0]) || T[T.length - 1];
+  return L(r[1], r[2]);
+}
+// 每秒更新計時器：預觀測倒數／施工經過時間／停工時間
+function tick() {
+  const el = $('timer'); if (!el) return;
+  const s = shiftOf(CUR.shift); const sv = s && S.svs.find(x => x.id === CUR.sv); if (!sv) return;
+  const now = nowLocal(), preMin = settingsNum('pre_watch_min', 30);
+  const nowMs = Date.now();
+  const since = t => Math.max(0, Math.floor((nowMs - tms(t)) / 1000));
+  const hms = sec => { const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), x = sec % 60; return (h ? h + ':' : '') + String(m).padStart(2, '0') + ':' + String(x).padStart(2, '0'); };
+  const st = sv.checks.status;
+  const hint = $('timerHint');
+  if (st === 'pre') {
+    const left = preMin * 60 - since(sv.pre_start);
+    el.textContent = left > 0 ? hms(left) : '+' + hms(-left);
+    el.style.color = left > 0 ? 'var(--warn)' : 'var(--green-dark)';
+    hint.textContent = left > 0 ? L('Pre-watch remaining (' + preMin + ' min required)', '預觀測剩餘時間（需滿 ' + preMin + ' 分鐘）') : L('Pre-watch time met — you may end the pre-watch', '已滿預觀測時間，未發現鯨豚即可結束預觀測');
+  } else if (st === 'work') {
+    el.textContent = hms(since(sv.work_start)); el.style.color = 'var(--green-dark)';
+    hint.textContent = L('Working since ', '施工中，開始於 ') + fmtT(sv.work_start);
+  } else if (st === 'paused') {
+    const p = S.pauses.find(x => x.sv_id === sv.id && !x.end);
+    el.textContent = p ? hms(since(p.start)) : '—'; el.style.color = 'var(--danger)';
+    const sg = p && p.sighting_id && S.sightings.find(x => x.id === p.sighting_id);
+    const clear = settingsNum('clear_min', 30);
+    hint.textContent = L('Paused since ', '停工中，開始於 ') + (p ? fmtT(p.start) : '') +
+      (sg && sg.left_time ? L(' · may resume after ', '・可復工時間 ') + fmtT(new Date(tms(sg.left_time) + clear * 60000 + 8 * 3600000).toISOString().slice(0, 16)) : L(' · record when the animals leave the alert zone', '・請於鯨豚離開警戒區時登錄離開時間'));
+  } else if (st === 'preDone') {
+    el.textContent = '✓'; el.style.color = 'var(--info)';
+    hint.textContent = L('Pre-watch done at ', '預觀測完成於 ') + fmtT(sv.pre_end) + ' · ' + mins(sv.pre_start, sv.pre_end) + ' min';
+  } else if (st === 'done') {
+    el.textContent = fmtDur(mins(sv.work_start, sv.work_end)); el.style.color = 'var(--navy)';
+    hint.textContent = L('Work completed', '施工完成') + ' · ' + fmtT(sv.work_start, true) + ' → ' + fmtT(sv.work_end, true);
+  } else { el.textContent = ''; hint.textContent = L('Waiting to start the pre-watch', '等待開始預觀測'); }
+  void now;
+}
+async function saveSv(id, patch) { try { await mut('sv.save', Object.assign({ id }, patch)); } catch (e) {} }
+async function doNext(svId, k) {
+  const sv = S.svs.find(x => x.id === svId);
+  if (k === 'pause') return pauseModal(svId);
+  if (k === 'resume') { const p = S.pauses.find(x => x.sv_id === svId && !x.end); return pauseModal(svId, p && p.id, true); }
+  if (k === 'pre_end') {
+    const m = mins(sv.pre_start, nowLocal()), need = settingsNum('pre_watch_min', 30);
+    if (m < need && !(await confirmBox(L(`Pre-watch has only lasted ${m} min (guideline: ${need} min). End it anyway?`, `預觀測僅 ${m} 分鐘（作業指引需 ${need} 分鐘），確定要結束？`), L('End pre-watch', '結束預觀測'), true))) return;
+  }
+  if (k === 'work_end' && !(await confirmBox(L('End work for this vessel now?', '確定此船現在結束施工？'), L('End work', '結束施工')))) return;
+  const patch = { id: svId }; patch[k] = nowLocal();
+  if (k === 'work_end') { const p = S.pauses.find(x => x.sv_id === svId && !x.end); if (p) await api('pause.save', { id: p.id, end: patch.work_end }); }
+  try {
+    await mut('sv.save', patch, { pre_start: L('Pre-watch started', '預觀測開始'), pre_end: L('Pre-watch ended', '預觀測結束'), work_start: L('Work started', '開始施工'), work_end: L('Work ended', '施工結束') }[k]);
+    if (k === 'pre_start' && !sv.weather) fetchWeather(svId, true);
+  } catch (e) {}
+}
+async function closeShift(id) {
+  const vs = svsOf(id);
+  const notDone = vs.filter(x => x.checks.status !== 'done' && x.checks.status !== 'idle');
+  const miss = vs.reduce((n, x) => n + x.checks.missing.length, 0);
+  let msg = L('Close this shift? MMO users can no longer edit it.', '確定結案？結案後 MMO 帳號就不能再修改。');
+  if (notDone.length) msg += `<div class="alert amber" style="margin-top:10px">${L('Not completed: ', '尚未完工：')}${esc(notDone.map(x => x.vessel_name).join('、'))}</div>`;
+  if (miss) msg += `<div class="alert amber" style="margin-top:10px">${L(miss + ' required uploads are missing', '尚缺 ' + miss + ' 項必傳文件／照片')}</div>`;
+  if (await confirmBox(msg, L('Close shift', '結案'))) mut('shift.close', { id }, L('Shift closed', '班次已結案')).catch(() => {});
+}
+async function deleteShift(id) {
+  const s = shiftOf(id);
+  if (!(await confirmBox(L(`Delete ${shiftLabel(s)} and all its records? Its Drive folder will be moved to the trash.`, `確定刪除「${shiftLabel(s)}」及所有紀錄？Drive 資料夾會移到垃圾桶（30 天內可救回）。`), L('Delete', '刪除'), true))) return;
+  try { await mut('shift.delete', { id }, L('Deleted', '已刪除')); go('shifts'); } catch (e) {}
+}
+
+function crewModal(svId) {
+  const sv = S.svs.find(x => x.id === svId), crew = json(sv.crew, {});
+  const slots = lines(S.settings.crew_slots);
+  const obs = S.observers.filter(o => bool(o.active) || Object.values(crew).some(c => c && c.id === o.id));
+  openModal(L('Observers', '觀察人員') + ' — ' + esc(sv.vessel_name), `<div class="form-grid">${slots.map(k => {
+    const cur = crew[k] || {};
+    const list = obs.filter(o => !o.role || o.role === 'both' || k.toUpperCase().indexOf(o.role) === 0 || o.id === cur.id).map(o => ({ v: o.id, t: o.name }));
+    if (cur.name && !cur.id) list.push({ v: 'free:' + cur.name, t: cur.name });
+    return `<div class="fg"><label>${esc(k)}</label><select data-slot="${esc(k)}">${opts(list, cur.id || (cur.name ? 'free:' + cur.name : ''), '—')}<option value="__new">＋ ${L('Other (type a name)', '其他（手動輸入）')}</option></select></div>`;
+  }).join('')}</div>`, { onSave: async (bg, btn) => {
+    const c = {};
+    for (const sel of bg.querySelectorAll('select[data-slot]')) {
+      let v = sel.value;
+      if (v === '__new') { const n = (prompt(sel.dataset.slot) || '').trim(); if (n) c[sel.dataset.slot] = { id: '', name: n }; continue; }
+      if (v.indexOf('free:') === 0) c[sel.dataset.slot] = { id: '', name: v.slice(5) };
+      else if (v) { const o = S.observers.find(x => x.id === v); c[sel.dataset.slot] = { id: o.id, name: o.name }; }
+    }
+    await mut('sv.save', { id: svId, crew: c }, L('Saved', '已儲存'), btn);
+  } });
+}
+
+function pauseModal(svId, id, resume) {
+  const p = id ? S.pauses.find(x => x.id === id) : null;
+  const reasons = lines(S.settings.pause_reasons);
+  if (p && p.reason && reasons.indexOf(p.reason) < 0) reasons.push(p.reason);
+  const ss = S.sightings.filter(x => x.sv_id === svId);
+  const body = `<div class="form-grid">
+    <div class="fg"><label>${L('Pause time', '停工時間')} *</label><input id="pStart" type="datetime-local" value="${esc(p ? p.start : nowLocal())}"></div>
+    <div class="fg"><label>${L('Resume time', '復工時間')}</label><input id="pEnd" type="datetime-local" value="${esc(p ? (p.end || (resume ? nowLocal() : '')) : '')}"></div>
+    <div class="fg full"><label>${L('Reason', '原因')}</label><select id="pReason">${opts(reasons.map(r => ({ v: r, t: biName(r) })), p ? p.reason : reasons[0])}</select></div>
+    <div class="fg full"><label>${L('Related sighting', '相關目擊紀錄')}</label><select id="pSight">${opts(ss.map(x => ({ v: x.id, t: fmtT(x.time, true) + ' ' + biName(x.species) + (x.min_distance_m ? ' · ' + x.min_distance_m + ' m' : '') })), p ? p.sighting_id : '', '—')}</select></div>
+    <div class="fg full"><label>${L('Remark', '備註')}</label><input id="pRemark" value="${esc(p ? p.remark : '')}"></div></div>
+    ${resume ? `<div class="alert blue" style="margin-top:12px">${L('Guideline: resume only after the animals have left the alert zone for ', '作業指引：鯨豚離開警戒區後需持續觀察 ')}${settingsNum('clear_min', 30)}${L(' minutes.', ' 分鐘才可復工。')}</div>` : ''}`;
+  openModal(resume ? L('Resume work', '復工') : (p ? L('Edit pause', '編輯停工') : L('Pause work', '停工')), body, {
+    foot: p ? `<button class="btn btn-danger w" style="margin-right:auto" onclick="delRec('pause.delete','${p.id}',this)">🗑 ${L('Delete', '刪除')}</button>` : '',
+    onSave: async (bg, btn) => {
+      await mut('pause.save', { id: p ? p.id : '', sv_id: svId, start: val(bg, 'pStart'), end: val(bg, 'pEnd'), reason: val(bg, 'pReason'), sighting_id: val(bg, 'pSight'), remark: val(bg, 'pRemark') }, L('Saved', '已儲存'), btn);
+    } });
+}
+async function delRec(action, id, btn) {
+  if (!(await confirmBox(L('Delete this record?', '確定刪除此紀錄？'), L('Delete', '刪除'), true))) return;
+  btn.closest('.modal-bg').remove();
+  mut(action, { id }, L('Deleted', '已刪除')).catch(() => {});
+}
+
+function sightingModal(svId, id) {
+  const x = id ? S.sightings.find(z => z.id === id) : null;
+  const sv = S.svs.find(z => z.id === svId);
+  const species = lines(S.settings.species);
+  if (x && x.species && species.indexOf(x.species) < 0) species.push(x.species);
+  const det = ['目視 | Visual', 'PAM 被動聲學 | PAM', '目視＋PAM | Visual + PAM', '熱顯像 | Thermal'];
+  const acts = ['停工 | Pause work', '延後開工 | Delay start', '持續觀察 | Continue monitoring', '無需處置 | No action'];
+  const alertM = settingsNum('alert_zone_m', 750);
+  const working = sv.checks.status === 'work';
+  const body = `<div class="form-grid">
+    <div class="fg"><label>${L('Sighting time', '目擊時間')} *</label><input id="sTime" type="datetime-local" value="${esc(x ? x.time : nowLocal())}"></div>
+    <div class="fg"><label>${L('Detection', '偵測方式')}</label><select id="sDet">${opts(det.map(d => ({ v: d, t: biName(d) })), x ? x.detection : det[0])}</select></div>
+    <div class="fg"><label>${L('Species', '物種')}</label><select id="sSp">${opts(species.map(d => ({ v: d, t: biName(d) })), x ? x.species : '')}</select></div>
+    <div class="fg"><label>${L('Count', '數量')}</label><input id="sCnt" inputmode="numeric" value="${esc(x ? x.count : '')}"></div>
+    <div class="fg"><label>${L('Closest distance to construction (m)', '與施工點最近距離（m）')}</label><input id="sDist" inputmode="numeric" value="${esc(x ? x.min_distance_m : '')}"></div>
+    <div class="fg"><label>&nbsp;</label><label class="chk"><input type="checkbox" id="sZone" ${x && bool(x.in_alert_zone) ? 'checked' : ''}> ${L('Entered alert zone', '進入警戒區')} (${alertM} m)</label></div>
+    <div class="fg"><label>${L('Action taken', '處置')}</label><select id="sAct">${opts(acts.map(d => ({ v: d, t: biName(d) })), x ? x.action : (working ? acts[0] : acts[2]))}</select></div>
+    <div class="fg"><label>${L('Left alert zone / last seen', '離開警戒區／最後目擊時間')}</label><input id="sLeft" type="datetime-local" value="${esc(x ? x.left_time : '')}"></div>
+    <div class="fg"><label>${L('Latitude', '緯度')}</label><input id="sLat" inputmode="decimal" value="${esc(x ? x.lat : sv.lat || '')}"></div>
+    <div class="fg"><label>${L('Longitude', '經度')}</label><input id="sLon" inputmode="decimal" value="${esc(x ? x.lon : sv.lon || '')}"></div>
+    <div class="fg full"><label>${L('Behaviour', '行為')}</label><input id="sBeh" value="${esc(x ? x.behavior : '')}" placeholder="${L('e.g. travelling north, feeding', '例：往北移動、覓食')}"></div>
+    <div class="fg full"><label>${L('Remark', '備註')}</label><textarea id="sRem">${esc(x ? x.remark : '')}</textarea></div>
+    ${!x && working ? `<label class="chk full"><input type="checkbox" id="sAuto" checked> ${L('Also record a work pause starting at the sighting time', '同時建立停工紀錄（停工時間＝目擊時間）')}</label>` : ''}
+  </div><div class="small muted" style="margin-top:10px">${L('Fill in the paper sighting form as usual and upload it under “Sighting record”.', '紙本目擊紀錄表照常填寫，並於「上傳」區的目擊紀錄表上傳掃描檔。')}</div>`;
+  const bg = openModal(x ? L('Edit sighting', '編輯目擊紀錄') : L('Record sighting', '登錄目擊') + ' — ' + esc(sv.vessel_name), body, { wide: true,
+    foot: x ? `<button class="btn btn-danger w" style="margin-right:auto" onclick="delRec('sighting.delete','${x.id}',this)">🗑 ${L('Delete', '刪除')}</button>` : '',
+    onSave: async (bg, btn) => {
+      await mut('sighting.save', { id: x ? x.id : '', sv_id: svId, time: val(bg, 'sTime'), detection: val(bg, 'sDet'), species: val(bg, 'sSp'), count: val(bg, 'sCnt'),
+        min_distance_m: val(bg, 'sDist'), in_alert_zone: val(bg, 'sZone'), action: val(bg, 'sAct'), left_time: val(bg, 'sLeft'),
+        lat: val(bg, 'sLat'), lon: val(bg, 'sLon'), behavior: val(bg, 'sBeh'), remark: val(bg, 'sRem'), auto_pause: !!val(bg, 'sAuto') }, L('Sighting saved', '目擊紀錄已儲存'), btn);
+    } });
+  const d = bg.querySelector('#sDist'), z = bg.querySelector('#sZone');
+  d.oninput = () => { if (d.value !== '' && isFinite(Number(d.value))) z.checked = Number(d.value) <= alertM; };
+}
+
+function posModal(svId) {
+  const sv = S.svs.find(x => x.id === svId);
+  openModal(L('Position & sea state', '船位與海況') + ' — ' + esc(sv.vessel_name), `<div class="form-grid">
+    <div class="fg"><label>${L('Latitude (decimal)', '緯度（十進位）')}</label><input id="ppLat" inputmode="decimal" value="${esc(sv.lat)}" placeholder="24.4700"></div>
+    <div class="fg"><label>${L('Longitude (decimal)', '經度（十進位）')}</label><input id="ppLon" inputmode="decimal" value="${esc(sv.lon)}" placeholder="120.5500"></div>
+    <div class="fg"><label>${L('Fix time', '定位時間')}</label><input id="ppTime" type="datetime-local" value="${esc(sv.pos_time || nowLocal())}"></div>
+    <div class="fg"><label>${L('Sea state (Beaufort)', '海況（蒲福風級）')}</label><select id="ppSea">${opts([0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(String), sv.sea_state, '—')}</select></div>
+    <div class="full"><button class="btn btn-sm" type="button" id="ppGps">📱 ${L('Use this device’s GPS', '使用本機 GPS 定位')}</button></div></div>`,
+    { onSave: async (bg, btn) => {
+      await mut('sv.save', { id: svId, lat: val(bg, 'ppLat'), lon: val(bg, 'ppLon'), pos_time: val(bg, 'ppTime'), sea_state: val(bg, 'ppSea'), pos_source: bg.__src || 'manual' }, L('Saved', '已儲存'), btn);
+    } });
+  const bg = $('modals').lastElementChild;
+  bg.querySelector('#ppGps').onclick = () => {
+    if (!navigator.geolocation) return toast('GPS not available', 'error');
+    navigator.geolocation.getCurrentPosition(p => {
+      bg.querySelector('#ppLat').value = p.coords.latitude.toFixed(5); bg.querySelector('#ppLon').value = p.coords.longitude.toFixed(5);
+      bg.querySelector('#ppTime').value = nowLocal(); bg.__src = 'GPS';
+    }, e => toast(e.message, 'error'), { enableHighAccuracy: true, timeout: 15000 });
+  };
+}
+async function fetchPos(svId) {
+  const sv = S.svs.find(x => x.id === svId);
+  showLoading(L('Getting position…', '取得船位中…'));
+  try {
+    const r = await api('pos.fetch', { mmsi: sv.mmsi });
+    hideLoading();
+    await mut('sv.save', { id: svId, lat: String(r.lat), lon: String(r.lon), pos_time: nowLocal(), pos_source: 'AIS' }, L('Position updated', '船位已更新'));
+  } catch (e) { hideLoading(); toast(e.message, 'error'); }
+}
+// Open-Meteo：預報 API（含過去 3 個月）抓風／能見度，Marine API 抓浪高；取預觀測開始那一小時
+async function fetchWeather(svId, quiet) {
+  const sv = S.svs.find(x => x.id === svId), s = shiftOf(sv.shift_id);
+  let lat = parseFloat(sv.lat), lon = parseFloat(sv.lon);
+  if (!isFinite(lat) || !isFinite(lon)) { const site = sites().find(x => x.name === s.site) || sites()[0]; if (site) { lat = site.lat; lon = site.lon; } }
+  if (!isFinite(lat) || !isFinite(lon)) { if (!quiet) toast(L('Record a position or set site coordinates first', '請先記錄船位，或在後台設定工區座標'), 'error'); return; }
+  const t = sv.pre_start || sv.work_start || nowLocal();
+  const day = t.slice(0, 10), hour = t.slice(0, 13) + ':00';
+  const q = `latitude=${lat}&longitude=${lon}&timezone=Asia%2FTaipei&start_date=${day}&end_date=${day}`;
+  if (!quiet) showLoading(L('Fetching weather…', '取得天氣中…'));
+  try {
+    const get = u => fetch(u).then(r => r.json()).then(j => { if (j.error) throw new Error(j.reason || 'weather error'); return j; });
+    const [f, m] = await Promise.all([
+      get(`https://api.open-meteo.com/v1/forecast?${q}&wind_speed_unit=kn&hourly=temperature_2m,weather_code,wind_speed_10m,wind_direction_10m,wind_gusts_10m,visibility,precipitation`)
+        .catch(() => get(`https://archive-api.open-meteo.com/v1/archive?${q}&wind_speed_unit=kn&hourly=temperature_2m,weather_code,wind_speed_10m,wind_direction_10m,wind_gusts_10m,precipitation`)),
+      get(`https://marine-api.open-meteo.com/v1/marine?${q}&hourly=wave_height,wave_direction,wave_period`).catch(() => null)
+    ]);
+    const i = f.hourly.time.indexOf(hour);
+    const g = (o, k, idx) => o && o.hourly && o.hourly[k] && idx >= 0 && o.hourly[k][idx] !== null && o.hourly[k][idx] !== undefined ? o.hourly[k][idx] : undefined;
+    const mi = m ? m.hourly.time.indexOf(hour) : -1;
+    const vis = g(f, 'visibility', i);
+    const wx = { time: hour, lat, lon, wind: round1(g(f, 'wind_speed_10m', i)), gust: round1(g(f, 'wind_gusts_10m', i)), wdir: g(f, 'wind_direction_10m', i),
+      temp: round1(g(f, 'temperature_2m', i)), code: g(f, 'weather_code', i), rain: g(f, 'precipitation', i), vis: vis !== undefined ? round1(vis / 1000) : undefined,
+      wave: round1(g(m, 'wave_height', mi)), wave_dir: g(m, 'wave_direction', mi), wave_period: round1(g(m, 'wave_period', mi)), src: 'Open-Meteo' };
+    if (!quiet) hideLoading();
+    await mut('sv.save', { id: svId, weather: wx }, quiet ? '' : L('Weather recorded', '已記錄天氣'));
+  } catch (e) { if (!quiet) { hideLoading(); toast(L('Could not load weather: ', '無法取得天氣：') + e.message, 'error'); } }
+}
+function round1(v) { return v === undefined || v === null || isNaN(v) ? undefined : Math.round(v * 10) / 10; }
+
+// ==================== Uploads ====================
+function itemsActive() { return S.items.filter(i => bool(i.active)).sort((a, b) => Number(a.sort) - Number(b.sort)); }
+function uploadGrid(sv, ed) {
+  const hasS = S.sightings.some(x => x.sv_id === sv.id), hasP = S.pauses.some(x => x.sv_id === sv.id);
+  const list = itemsActive().concat(S.items.filter(i => !bool(i.active) && S.files.some(f => f.sv_id === sv.id && f.item_id === i.id)));
+  const groups = [['doc', L('Documents', '文件'), '📄'], ['photo', L('Photos', '照片'), '📷']];
+  return groups.map(([kind, title, ico]) => {
+    const items = list.filter(i => (i.kind === 'photo' ? 'photo' : 'doc') === kind);
+    if (!items.length) return '';
+    return `<h4 style="font-size:13px;color:var(--muted);margin:4px 0 10px">${ico} ${title}</h4><div class="items" style="margin-bottom:16px">${items.map(i => {
+      const fs = S.files.filter(f => f.sv_id === sv.id && f.item_id === i.id);
+      const needed = bool(i.required) && (i.cond !== 'sighting' || hasS) && (i.cond !== 'pause' || hasP);
+      const cond = i.cond === 'sighting' ? L('if sighting', '有目擊時') : i.cond === 'pause' ? L('if paused', '有停工時') : '';
+      const nm = LANG === 'zh' ? i.name_zh : (i.name_en || i.name_zh);
+      return `<div class="item ${fs.length ? 'ok' : (needed ? 'miss' : '')}">
+        <div class="item-h"><div><b>${esc(nm)}</b><div class="small muted">${needed ? L('Required', '必傳') : (bool(i.required) ? L('Not needed', '免傳') : L('Optional', '選填'))}${cond ? ' · ' + cond : ''}</div></div>
+          ${fs.length ? `<span class="tag green">✓ ${fs.length}</span>` : (needed ? `<span class="tag amber">${L('Missing', '缺')}</span>` : '')}</div>
+        ${kind === 'photo' ? `<div class="thumbs">${fs.map(f => `<div class="thumb" onclick="viewFile('${f.id}')" title="${esc(f.name)}">${THUMBS[f.id] ? `<img src="${THUMBS[f.id]}">` : '📷'}
+            ${ed ? `<button class="x w" onclick="event.stopPropagation();delFile('${f.id}')">×</button>` : ''}</div>`).join('')}</div>`
+          : `<div class="files">${fs.map(f => `<div class="file">${f.mime.indexOf('pdf') >= 0 ? '📕' : f.mime.indexOf('image') === 0 ? '🖼' : '📄'}<a onclick="viewFile('${f.id}')" title="${esc(f.name)}">${esc(f.name)}</a>
+            <span class="muted">${fmtSize(f.size)}</span>${ed ? `<button class="btn btn-sm w" style="padding:1px 6px" onclick="delFile('${f.id}')">×</button>` : ''}</div>`).join('')}</div>`}
+        ${ed ? `<label class="btn btn-sm w" style="justify-content:center">⬆ ${L('Upload', '上傳')}<input type="file" multiple hidden ${kind === 'photo' ? 'accept="image/*"' : 'accept=".pdf,image/*,.doc,.docx,.xls,.xlsx"'} onchange="uploadFiles('${sv.id}','${i.id}',this)"></label>` : ''}
+      </div>`;
+    }).join('')}</div>`;
+  }).join('');
+}
+function fmtSize(n) { n = Number(n) || 0; return n > 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB'; }
+async function loadThumbs(shiftId, force) {
+  if (THUMB_LOADED[shiftId] && !force) {
+    if (S.files.some(f => f.shift_id === shiftId && f.kind === 'photo' && THUMBS[f.id] === undefined)) force = true; else return;
+  }
+  THUMB_LOADED[shiftId] = true;
+  try {
+    const r = await api('shift.files', { id: shiftId });
+    r.files.forEach(f => { THUMBS[f.id] = f.thumb || ''; });
+    if (PAGE === 'shift' && CUR.shift === shiftId && !$('modals').children.length) renderShift();
+  } catch (e) {}
+}
+function readAsDataURL(file) { return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file); }); }
+function loadImg(src) { return new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src; }); }
+function scaleTo(img, max, q) {
+  const r = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+  const c = document.createElement('canvas');
+  c.width = Math.round(img.naturalWidth * r); c.height = Math.round(img.naturalHeight * r);
+  c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+  return c.toDataURL('image/jpeg', q);
+}
+async function uploadFiles(svId, itemId, input) {
+  const files = Array.from(input.files || []);
+  input.value = '';
+  if (!files.length) return;
+  const item = S.items.find(i => i.id === itemId);
+  let ok = 0;
+  for (let n = 0; n < files.length; n++) {
+    const f = files[n];
+    showLoading(L(`Uploading ${n + 1}/${files.length}: `, `上傳中 ${n + 1}/${files.length}：`) + f.name);
+    try {
+      let dataUrl = await readAsDataURL(f), name = f.name, mime = f.type || 'application/octet-stream', thumb = '';
+      if (/^image\/(jpeg|png|webp|heic|heif)/.test(mime) || (/^image\//.test(mime) && item.kind === 'photo')) {
+        try {
+          const img = await loadImg(dataUrl);
+          if (item.kind === 'photo' || f.size > 3 * 1024 * 1024) { dataUrl = scaleTo(img, 2400, 0.85); mime = 'image/jpeg'; name = name.replace(/\.\w+$/, '') + '.jpg'; }
+          thumb = scaleTo(img, 240, 0.6);
+        } catch (e) { /* 瀏覽器無法解碼（如 HEIC）就原檔上傳 */ }
+      }
+      const data = dataUrl.slice(dataUrl.indexOf(',') + 1);
+      if (data.length * 0.75 > MAX_UPLOAD) throw new Error(f.name + L(' is larger than 20 MB', ' 超過 20 MB'));
+      const rec = await api('file.upload', { sv_id: svId, item_id: itemId, file: { name, mime, data }, thumb });
+      THUMBS[rec.id] = thumb;
+      ok++;
+    } catch (e) { toast(e.message, 'error'); }
+  }
+  hideLoading();
+  try { S = await api('data.load'); LAST_REV = S.rev; } catch (e) {}
+  if (ok) toast(L(`${ok} file(s) uploaded`, `已上傳 ${ok} 個檔案`));
+  render();
+}
+async function delFile(id) {
+  const f = S.files.find(x => x.id === id);
+  if (!(await confirmBox(L(`Delete “${esc(f.name)}”? It will be moved to the Drive trash.`, `確定刪除「${esc(f.name)}」？檔案會移到 Drive 垃圾桶。`), L('Delete', '刪除'), true))) return;
+  mut('file.delete', { id }, L('Deleted', '已刪除')).catch(() => {});
+}
+async function viewFile(id) {
+  const f = S.files.find(x => x.id === id);
+  const drive = `https://drive.google.com/file/d/${esc(f.drive_id)}/view`;
+  if (f.mime.indexOf('image') === 0) {
+    const bg = openModal(esc(f.name), `<div style="text-align:center">${THUMBS[id] ? `<img class="viewer-img" id="fvImg" src="${THUMBS[id]}" style="filter:blur(2px)">` : '<div class="spinner" style="margin:30px auto"></div>'}</div>
+      <div class="small muted" style="margin-top:8px">${esc(f.item_name)} · ${esc(f.uploaded_by)} · ${fmtT(f.uploaded_at, true)} · <a href="${drive}" target="_blank">Drive ↗</a></div>`, { wide: true });
+    try {
+      const r = await api('file.get', { id });
+      const body = bg.querySelector('.modal-body > div');
+      body.innerHTML = `<img class="viewer-img" src="data:${r.mime};base64,${r.data}">`;
+    } catch (e) { toast(e.message, 'error'); }
+    return;
+  }
+  showLoading(L('Opening…', '開啟中…'));
+  try {
+    const r = await api('file.get', { id });
+    const bin = atob(r.data), arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    const url = URL.createObjectURL(new Blob([arr], { type: r.mime }));
+    const w = window.open(url, '_blank');
+    if (!w) { const a = document.createElement('a'); a.href = url; a.download = r.name; a.click(); }
+  } catch (e) { toast(e.message, 'error'); }
+  finally { hideLoading(); }
+}
+
+// ==================== Sightings page ====================
+let SFILTER = { month: '', zone: false };
+function renderSightings() {
+  setTitle(L('Sightings', '目擊紀錄'));
+  const months = Array.from(new Set(S.sightings.map(x => x.time.slice(0, 7)))).sort().reverse();
+  let list = S.sightings.slice().sort((a, b) => b.time.localeCompare(a.time));
+  if (SFILTER.month) list = list.filter(x => x.time.slice(0, 7) === SFILTER.month);
+  if (SFILTER.zone) list = list.filter(x => bool(x.in_alert_zone));
+  const row = x => { const s = shiftOf(x.shift_id) || {}, sv = S.svs.find(v => v.id === x.sv_id) || {}; return { s, sv }; };
+  const bySpecies = {};
+  list.forEach(x => { const k = biName(x.species) || '—'; bySpecies[k] = (bySpecies[k] || 0) + 1; });
+  $('content').innerHTML = `
+    <div class="stat-grid">
+      <div class="stat amber"><div class="v">${list.length}</div><div class="l">${L('Sightings', '目擊次數')}</div></div>
+      <div class="stat red"><div class="v">${list.filter(x => bool(x.in_alert_zone)).length}</div><div class="l">${L('In alert zone', '進入警戒區')}</div></div>
+      <div class="stat blue"><div class="v">${list.reduce((n, x) => n + (parseInt(x.count, 10) || 0), 0)}</div><div class="l">${L('Animals counted', '累計隻數')}</div></div>
+      ${Object.keys(bySpecies).slice(0, 3).map(k => `<div class="stat"><div class="v">${bySpecies[k]}</div><div class="l">${esc(k)}</div></div>`).join('')}
+    </div>
+    <div class="section"><div class="section-header"><div class="toolbar">
+      <select style="width:auto" onchange="SFILTER.month=this.value;renderSightings()">${opts(months, SFILTER.month, L('All months', '全部月份'))}</select>
+      <label class="chk"><input type="checkbox" ${SFILTER.zone ? 'checked' : ''} onchange="SFILTER.zone=this.checked;renderSightings()"> ${L('Alert zone only', '只看警戒區內')}</label></div>
+      <button class="btn btn-sm" onclick="exportSightings()">⬇ CSV</button></div>
+    ${list.length ? `<div class="table-wrap"><table class="tbl"><tr><th>${L('Time', '時間')}</th><th>${L('Shift', '班次')}</th><th>${L('MMO vessel', 'MMO 船')}</th><th>${L('Species', '物種')}</th><th>${L('Count', '數量')}</th><th>${L('Detection', '偵測')}</th><th>${L('Distance', '距離')}</th><th>${L('Action', '處置')}</th><th>${L('Position', '位置')}</th></tr>
+      ${list.map(x => { const r = row(x); return `<tr class="click" onclick="go('shift','${x.shift_id}','${x.sv_id}')"><td class="mono">${fmtT(x.time, true)}</td><td>${esc(r.s.date || '')} #${esc(r.s.shift_no || '')}</td><td>${esc(r.sv.vessel_name || '')}</td>
+        <td>${esc(biName(x.species))}</td><td>${esc(x.count)}</td><td>${esc(biName(x.detection))}</td><td>${x.min_distance_m ? esc(x.min_distance_m) + ' m' : '—'} ${bool(x.in_alert_zone) ? `<span class="tag red">${L('Alert', '警戒區')}</span>` : ''}</td>
+        <td>${esc(biName(x.action))}</td><td class="mono">${x.lat ? esc(x.lat + ', ' + x.lon) : '—'}</td></tr>`; }).join('')}</table></div>` : `<div class="empty">${L('No sightings', '沒有目擊紀錄')}</div>`}</div>`;
+}
+function exportSightings() {
+  const rows = [['日期', '班次', '工區', '施工船', 'MMO 船', '目擊時間', '物種', '數量', '偵測方式', '最近距離(m)', '進入警戒區', '處置', '離開警戒區時間', '緯度', '經度', '行為', '備註']];
+  S.sightings.slice().sort((a, b) => a.time.localeCompare(b.time)).forEach(x => {
+    const s = shiftOf(x.shift_id) || {}, sv = S.svs.find(v => v.id === x.sv_id) || {};
+    rows.push([s.date, s.shift_no, s.site, s.construction_vessel, sv.vessel_name, x.time.replace('T', ' '), x.species, x.count, x.detection, x.min_distance_m, bool(x.in_alert_zone) ? '是' : '否', x.action, (x.left_time || '').replace('T', ' '), x.lat, x.lon, x.behavior, x.remark]);
+  });
+  downloadCsv('MMO_sightings_' + today() + '.csv', rows);
+}
+
+// ==================== Summary page ====================
+function summaryRows() {
+  const slots = lines(S.settings.crew_slots);
+  const head = ['日期', '班次', '工區', '工作範疇', '施工船', 'MMO 船'].concat(slots).concat(['預觀測開始', '預觀測結束', '預觀測(分)', '施工開始', '施工結束', '施工時長(分)', '停工次數', '目擊次數', '文件', '照片', '缺件', '規則提醒', '狀態']);
+  const rows = [];
+  S.shifts.slice().sort((a, b) => (b.date + String(b.shift_no).padStart(6, '0')).localeCompare(a.date + String(a.shift_no).padStart(6, '0'))).forEach(s => svsOf(s.id).forEach(sv => {
+    const crew = json(sv.crew, {}), ck = sv.checks, n = v => isNaN(v) ? '' : v;
+    rows.push({ s, sv, cells: [s.date, s.shift_no, s.site, s.scope, s.construction_vessel, sv.vessel_name].concat(slots.map(k => (crew[k] && crew[k].name) || ''))
+      .concat([(sv.pre_start || '').replace('T', ' '), (sv.pre_end || '').replace('T', ' '), n(mins(sv.pre_start, sv.pre_end)), (sv.work_start || '').replace('T', ' '), (sv.work_end || '').replace('T', ' '),
+        n(mins(sv.work_start, sv.work_end)), S.pauses.filter(p => p.sv_id === sv.id).length, S.sightings.filter(x => x.sv_id === sv.id).length,
+        ck.docs[0] + '/' + ck.docs[1], ck.photos[0] + '/' + ck.photos[1], ck.missing.map(m => m.zh).join('、'), ck.warnings.map(w => w.zh).join('；'), STATUS[ck.status][1] + (shiftClosed(s) ? '（結案）' : '')]) });
+  }));
+  return { head, rows };
+}
+function renderSummary() {
+  setTitle(L('Summary sheet', '總表'));
+  const { head, rows } = summaryRows();
+  $('content').innerHTML = `<div class="alert blue">${L('The Google Sheet “MMO 鯨豚觀察總表” in the Drive folder is rebuilt automatically after every change (tabs “總表” and “目擊總表”).', 'Drive 資料夾裡的 Google 試算表「MMO 鯨豚觀察總表」會在每次異動後自動重建（分頁「總表」與「目擊總表」）。')}</div>
+    <div class="section"><div class="section-header"><h3>${L('One row per shift × MMO vessel', '每列＝一個班次的一艘 MMO 船')} <span class="muted">(${rows.length})</span></h3>
+      <div class="toolbar"><a class="btn btn-sm" target="_blank" href="${esc(S.sheetUrl)}">📗 ${L('Open Google Sheet', '開啟 Google 試算表')}</a>
+        <a class="btn btn-sm" target="_blank" href="${esc(S.rootUrl)}">📁 ${L('Drive folder', 'Drive 資料夾')}</a>
+        <button class="btn btn-sm" onclick="downloadCsv('MMO_summary_'+today()+'.csv',[summaryRows().head].concat(summaryRows().rows.map(r=>r.cells)))">⬇ CSV</button>
+        <button class="btn btn-sm adm" onclick="rebuildSheet(this)">🔄 ${L('Rebuild sheet', '重建試算表')}</button></div></div>
+      ${rows.length ? `<div class="table-wrap"><table class="tbl" style="font-size:12px"><tr>${head.map(h => `<th>${esc(h)}</th>`).join('')}</tr>
+        ${rows.map(r => `<tr class="click" onclick="go('shift','${r.s.id}','${r.sv.id}')">${r.cells.map((c, i) => `<td style="${i >= head.length - 3 ? '' : 'white-space:nowrap'}">${esc(c)}</td>`).join('')}</tr>`).join('')}</table></div>`
+        : `<div class="empty">${L('No data yet', '尚無資料')}</div>`}</div>`;
+}
+async function rebuildSheet(btn) {
+  btn.disabled = true;
+  try { await api('summary.rebuild'); toast(L('Sheet rebuilt', '試算表已重建')); } catch (e) { toast(e.message, 'error'); }
+  btn.disabled = false;
+}
+
+// ==================== Admin ====================
+const ADMIN_TABS = [['vessels', 'Vessels', '船舶'], ['observers', 'Observers', '觀察員'], ['items', 'Upload items', '上傳項目'], ['settings', 'Rules & lists', '規則與清單'], ['users', 'Accounts', '帳號'], ['audit', 'Activity log', '操作紀錄']];
+function renderAdmin() {
+  setTitle(L('Back office', '後台管理'));
+  const tabs = `<div class="admin-tabs">${ADMIN_TABS.map(t => `<div class="${ADMIN_TAB === t[0] ? 'active' : ''}" onclick="ADMIN_TAB='${t[0]}';renderAdmin()">${L(t[1], t[2])}</div>`).join('')}</div>`;
+  const T = { vessels: adminVessels, observers: adminObservers, items: adminItems, settings: adminSettings, users: adminUsers, audit: adminAudit };
+  $('content').innerHTML = tabs + '<div id="adminBody"></div>';
+  T[ADMIN_TAB]();
+}
+function yes(v) { return bool(v) ? `<span class="tag green">${L('Active', '啟用')}</span>` : `<span class="tag">${L('Inactive', '停用')}</span>`; }
+function adminVessels() {
+  const list = S.vessels.slice().sort((a, b) => (a.kind + (Number(a.sort) || 999) + a.name).localeCompare(b.kind + (Number(b.sort) || 999) + b.name));
+  const kinds = { mmo: L('MMO vessel', 'MMO 觀察船'), construction: L('Construction vessel', '施工船') };
+  $('adminBody').innerHTML = `<div class="section"><div class="section-header"><h3>${L('Vessels', '船舶')}</h3><button class="btn btn-green btn-sm" onclick="vesselModal()">＋ ${L('Add vessel', '新增船舶')}</button></div>
+    ${list.length ? `<div class="table-wrap"><table class="tbl"><tr><th>${L('Name', '船名')}</th><th>${L('Type', '類別')}</th><th>MMSI</th><th>IMO</th><th>${L('Operator', '船東/營運')}</th><th>${L('Status', '狀態')}</th></tr>
+      ${list.map(v => `<tr class="click" onclick="vesselModal('${v.id}')"><td><b>${esc(v.name)}</b>${v.type ? `<div class="small muted">${esc(v.type)}</div>` : ''}</td><td>${kinds[v.kind] || esc(v.kind)}</td><td class="mono">${esc(v.mmsi)}</td><td class="mono">${esc(v.imo)}</td><td>${esc(v.operator)}</td><td>${yes(v.active)}</td></tr>`).join('')}</table></div>`
+      : `<div class="empty">${L('Add MMO vessels (e.g. T1, T8) and construction vessels (e.g. Arzana).', '請新增 MMO 觀察船（如 T1、T8）與施工船（如 Arzana）。')}</div>`}</div>`;
+}
+function vesselModal(id) {
+  const v = id ? S.vessels.find(x => x.id === id) : { kind: 'mmo', active: 'TRUE' };
+  openModal(id ? L('Edit vessel', '編輯船舶') : L('Add vessel', '新增船舶'), `<div class="form-grid">
+    <div class="fg"><label>${L('Name', '船名')} *</label><input id="vName" value="${esc(v.name)}"></div>
+    <div class="fg"><label>${L('Category', '類別')} *</label><select id="vKind">${opts([{ v: 'mmo', t: L('MMO vessel', 'MMO 觀察船') }, { v: 'construction', t: L('Construction vessel', '施工船') }], v.kind)}</select></div>
+    <div class="fg"><label>MMSI</label><input id="vMmsi" class="mono" value="${esc(v.mmsi)}"></div>
+    <div class="fg"><label>IMO</label><input id="vImo" class="mono" value="${esc(v.imo)}"></div>
+    <div class="fg"><label>${L('Vessel type', '船型')}</label><input id="vType" value="${esc(v.type)}"></div>
+    <div class="fg"><label>${L('Operator', '船東/營運')}</label><input id="vOp" value="${esc(v.operator)}"></div>
+    <div class="fg"><label>${L('Sort order', '排序')}</label><input id="vSort" inputmode="numeric" value="${esc(v.sort)}"></div>
+    <div class="fg"><label>&nbsp;</label><label class="chk"><input type="checkbox" id="vAct" ${bool(v.active) ? 'checked' : ''}> ${L('Active', '啟用')}</label></div>
+    <div class="fg full"><label>${L('Remark', '備註')}</label><input id="vRem" value="${esc(v.remark)}"></div></div>`, {
+    foot: id ? `<button class="btn btn-danger" style="margin-right:auto" onclick="delMaster('vessel.delete','${id}',this)">🗑</button>` : '',
+    onSave: async (bg, btn) => mut('vessel.save', { id: id || '', name: val(bg, 'vName'), kind: val(bg, 'vKind'), mmsi: val(bg, 'vMmsi'), imo: val(bg, 'vImo'), type: val(bg, 'vType'),
+      operator: val(bg, 'vOp'), sort: val(bg, 'vSort'), active: val(bg, 'vAct'), remark: val(bg, 'vRem') }, L('Saved', '已儲存'), btn) });
+}
+async function delMaster(action, id, btn) {
+  if (!(await confirmBox(L('Delete this record?', '確定刪除？'), L('Delete', '刪除'), true))) return;
+  btn.closest('.modal-bg').remove();
+  mut(action, { id }, L('Deleted', '已刪除')).catch(() => {});
+}
+function adminObservers() {
+  const list = S.observers.slice().sort((a, b) => a.name.localeCompare(b.name));
+  const roles = { TCO: 'TCO', PAMO: 'PAMO', both: 'TCO / PAMO' };
+  $('adminBody').innerHTML = `<div class="section"><div class="section-header"><h3>${L('Observers (TCO / PAMO)', '觀察員（TCO／PAMO）')}</h3>
+    <div class="toolbar"><button class="btn btn-sm" onclick="bulkObservers()">📋 ${L('Bulk add', '批次新增')}</button><button class="btn btn-green btn-sm" onclick="observerModal()">＋ ${L('Add', '新增')}</button></div></div>
+    ${list.length ? `<div class="table-wrap"><table class="tbl"><tr><th>${L('Name', '姓名')}</th><th>${L('Role', '職務')}</th><th>${L('Company', '公司')}</th><th>${L('Phone', '電話')}</th><th>${L('Cert no.', '證號')}</th><th>${L('Status', '狀態')}</th></tr>
+      ${list.map(o => `<tr class="click" onclick="observerModal('${o.id}')"><td><b>${esc(o.name)}</b></td><td>${esc(roles[o.role] || o.role || '—')}</td><td>${esc(o.company)}</td><td>${esc(o.phone)}</td><td class="mono">${esc(o.cert_no)}</td><td>${yes(o.active)}</td></tr>`).join('')}</table></div>`
+      : `<div class="empty">${L('No observers yet', '尚無觀察員')}</div>`}</div>`;
+}
+function observerModal(id) {
+  const o = id ? S.observers.find(x => x.id === id) : { role: 'TCO', active: 'TRUE' };
+  openModal(id ? L('Edit observer', '編輯觀察員') : L('Add observer', '新增觀察員'), `<div class="form-grid">
+    <div class="fg"><label>${L('Name', '姓名')} *</label><input id="oName" value="${esc(o.name)}"></div>
+    <div class="fg"><label>${L('Role', '職務')}</label><select id="oRole">${opts([{ v: 'TCO', t: 'TCO' }, { v: 'PAMO', t: 'PAMO' }, { v: 'both', t: 'TCO / PAMO' }], o.role)}</select></div>
+    <div class="fg"><label>${L('Company', '公司')}</label><input id="oCo" value="${esc(o.company)}"></div>
+    <div class="fg"><label>${L('Phone', '電話')}</label><input id="oPh" value="${esc(o.phone)}"></div>
+    <div class="fg"><label>${L('MMO certificate no.', '鯨豚觀察員證號')}</label><input id="oCert" value="${esc(o.cert_no)}"></div>
+    <div class="fg"><label>&nbsp;</label><label class="chk"><input type="checkbox" id="oAct" ${bool(o.active) ? 'checked' : ''}> ${L('Active', '啟用')}</label></div>
+    <div class="fg full"><label>${L('Remark', '備註')}</label><input id="oRem" value="${esc(o.remark)}"></div></div>`, {
+    foot: id ? `<button class="btn btn-danger" style="margin-right:auto" onclick="delMaster('observer.delete','${id}',this)">🗑</button>` : '',
+    onSave: async (bg, btn) => mut('observer.save', { id: id || '', name: val(bg, 'oName'), role: val(bg, 'oRole'), company: val(bg, 'oCo'), phone: val(bg, 'oPh'),
+      cert_no: val(bg, 'oCert'), active: val(bg, 'oAct'), remark: val(bg, 'oRem') }, L('Saved', '已儲存'), btn) });
+}
+function bulkObservers() {
+  openModal(L('Bulk add observers', '批次新增觀察員'), `<div class="fg"><label>${L('One per line: name, role (TCO/PAMO), company', '每行一位：姓名, 職務(TCO/PAMO), 公司')}</label>
+    <textarea id="boText" rows="10" placeholder="莊子毅, TCO, ABC&#10;潘昀展, PAMO, ABC"></textarea></div>`, { onSave: async (bg, btn) => {
+    const rows = lines(val(bg, 'boText')).map(l => l.split(/[,，\t]/).map(x => x.trim()));
+    btn.disabled = true; showLoading(L('Saving…', '儲存中…'));
+    let n = 0;
+    try {
+      for (const r of rows) {
+        if (!r[0] || S.observers.some(o => o.name === r[0])) continue;
+        const role = /pam/i.test(r[1] || '') ? 'PAMO' : 'TCO';
+        await api('observer.save', { name: r[0], role, company: r[2] || '', active: true }); n++;
+      }
+      S = await api('data.load'); LAST_REV = S.rev;
+    } catch (e) { toast(e.message, 'error'); }
+    hideLoading(); toast(L(`${n} added`, `新增 ${n} 位`)); render();
+  } });
+}
+function adminItems() {
+  const list = S.items.slice().sort((a, b) => (a.kind + String(a.sort).padStart(4, '0')).localeCompare(b.kind + String(b.sort).padStart(4, '0')));
+  const cond = { always: L('Always', '每班次'), sighting: L('Only if a sighting', '有目擊時'), pause: L('Only if paused', '有停工時') };
+  $('adminBody').innerHTML = `<div class="alert blue">${L('Every MMO vessel in every shift must upload each active required item. Changes apply to all shifts (past shifts are re-checked).', '每個班次的每艘 MMO 船都要上傳啟用中的必傳項目。修改後所有班次都會重新檢核缺件。')}</div>
+    <div class="section"><div class="section-header"><h3>${L('Upload items', '上傳項目')}</h3><button class="btn btn-green btn-sm" onclick="itemModal()">＋ ${L('Add item', '新增項目')}</button></div>
+    <div class="table-wrap"><table class="tbl"><tr><th>${L('Kind', '類型')}</th><th>${L('Name', '名稱')}</th><th>${L('Required', '必傳')}</th><th>${L('When', '條件')}</th><th>${L('Sort', '排序')}</th><th>${L('Status', '狀態')}</th></tr>
+      ${list.map(i => `<tr class="click" onclick="itemModal('${i.id}')"><td>${i.kind === 'photo' ? '📷 ' + L('Photo', '照片') : '📄 ' + L('Document', '文件')}</td><td><b>${esc(i.name_zh)}</b><div class="small muted">${esc(i.name_en)}</div></td>
+        <td>${bool(i.required) ? '✓' : '—'}</td><td>${cond[i.cond] || cond.always}</td><td>${esc(i.sort)}</td><td>${yes(i.active)}</td></tr>`).join('')}</table></div></div>`;
+}
+function itemModal(id) {
+  const i = id ? S.items.find(x => x.id === id) : { kind: 'doc', required: 'TRUE', cond: 'always', active: 'TRUE', sort: String(S.items.length + 1) };
+  openModal(id ? L('Edit upload item', '編輯上傳項目') : L('Add upload item', '新增上傳項目'), `<div class="form-grid">
+    <div class="fg"><label>${L('Name (Chinese)', '名稱（中文）')} *</label><input id="iZh" value="${esc(i.name_zh)}"></div>
+    <div class="fg"><label>${L('Name (English)', '名稱（英文）')}</label><input id="iEn" value="${esc(i.name_en)}"></div>
+    <div class="fg"><label>${L('Kind', '類型')}</label><select id="iKind">${opts([{ v: 'doc', t: L('Document', '文件') }, { v: 'photo', t: L('Photo', '照片') }], i.kind)}</select></div>
+    <div class="fg"><label>${L('When required', '何時需要')}</label><select id="iCond">${opts([{ v: 'always', t: L('Every shift', '每班次') }, { v: 'sighting', t: L('Only if a sighting', '有目擊時') }, { v: 'pause', t: L('Only if paused', '有停工時') }], i.cond || 'always')}</select></div>
+    <div class="fg"><label>${L('Sort order', '排序')}</label><input id="iSort" inputmode="numeric" value="${esc(i.sort)}"></div>
+    <div class="fg"><label>&nbsp;</label><div class="toolbar"><label class="chk"><input type="checkbox" id="iReq" ${bool(i.required) ? 'checked' : ''}> ${L('Required', '必傳')}</label>
+      <label class="chk"><input type="checkbox" id="iAct" ${bool(i.active) ? 'checked' : ''}> ${L('Active', '啟用')}</label></div></div></div>`, {
+    foot: id ? `<button class="btn btn-danger" style="margin-right:auto" onclick="delMaster('item.delete','${id}',this)">🗑</button>` : '',
+    onSave: async (bg, btn) => mut('item.save', { id: id || '', name_zh: val(bg, 'iZh'), name_en: val(bg, 'iEn'), kind: val(bg, 'iKind'), cond: val(bg, 'iCond'), sort: val(bg, 'iSort'),
+      required: val(bg, 'iReq'), active: val(bg, 'iAct') }, L('Saved', '已儲存'), btn) });
+}
+function adminSettings() {
+  const st = S.settings;
+  const ta = (k, en, zh, hint, rows) => `<div class="fg full"><label>${L(en, zh)}</label><textarea id="st_${k}" rows="${rows || 5}" class="${k === 'sites' ? 'mono' : ''}">${esc(st[k])}</textarea>${hint ? `<span class="small muted">${hint}</span>` : ''}</div>`;
+  $('adminBody').innerHTML = `<div class="section"><div class="section-header"><h3>${L('Guideline parameters', '作業指引參數')}</h3></div><div class="section-body"><div class="form-grid">
+      <div class="fg full"><label>${L('System name', '系統名稱')}</label><input id="st_project_name" value="${esc(st.project_name)}"></div>
+      <div class="fg"><label>${L('Pre-watch duration (min)', '預觀測時間（分鐘）')}</label><input id="st_pre_watch_min" inputmode="numeric" value="${esc(st.pre_watch_min)}"></div>
+      <div class="fg"><label>${L('Alert zone radius (m)', '警戒區半徑（m）')}</label><input id="st_alert_zone_m" inputmode="numeric" value="${esc(st.alert_zone_m)}"></div>
+      <div class="fg"><label>${L('Observation zone radius (m)', '觀察區半徑（m）')}</label><input id="st_watch_zone_m" inputmode="numeric" value="${esc(st.watch_zone_m)}"></div>
+      <div class="fg"><label>${L('Clear time before resuming (min)', '鯨豚離開警戒區後需再觀察（分鐘）')}</label><input id="st_clear_min" inputmode="numeric" value="${esc(st.clear_min)}"></div>
+    </div></div></div>
+    <div class="section"><div class="section-header"><h3>${L('Lists', '清單')}</h3></div><div class="section-body"><div class="form-grid">
+      ${ta('sites', 'Sites (name, latitude, longitude per line)', '工區（每行：名稱, 緯度, 經度）', L('Coordinates are used for weather when no vessel position is recorded.', '沒有船位時，天氣會用工區座標抓取。'), 3)}
+      ${ta('crew_slots', 'Crew positions on each MMO vessel (one per line)', '每艘 MMO 船的人員職位（每行一個）', '', 5)}
+      ${ta('scopes', 'Scopes of work', '工作範疇 Scope', L('“中文 English” per line — the UI shows the part for the current language.', '每行「中文 English」，介面依語言顯示。'), 5)}
+      ${ta('species', 'Species', '物種', '', 8)}
+      ${ta('pause_reasons', 'Pause reasons', '停工原因', '', 5)}
+    </div></div></div>
+    <div class="section"><div class="section-header"><h3>📡 ${L('Vessel position API (paid AIS)', '船位 API（付費 AIS）')}</h3></div><div class="section-body"><div class="form-grid">
+      <div class="fg full"><label>${L('API URL — use {mmsi} and {key} placeholders', 'API 網址，可用 {mmsi} 與 {key} 代入')}</label><input id="st_ais_api_url" class="mono" value="${esc(st.ais_api_url)}" placeholder="https://api.example.com/vessel?mmsi={mmsi}&apikey={key}"></div>
+      <div class="fg full"><label>${L('API key (stored on the server only)', 'API 金鑰（只存在伺服器端）')}</label><input id="st_ais_api_key" class="mono" value="${esc(st.ais_api_key)}"></div>
+    </div></div></div>
+    <button class="btn btn-primary" onclick="saveSettings(this)">💾 ${L('Save settings', '儲存設定')}</button>`;
+}
+function saveSettings(btn) {
+  const p = {};
+  ['project_name', 'pre_watch_min', 'alert_zone_m', 'watch_zone_m', 'clear_min', 'sites', 'crew_slots', 'scopes', 'species', 'pause_reasons', 'ais_api_url', 'ais_api_key'].forEach(k => { p[k] = $('st_' + k).value.trim(); });
+  mut('settings.save', p, L('Settings saved', '設定已儲存'), btn).catch(() => {});
+}
+function adminUsers() {
+  const roles = { admin: L('Administrator', '系統管理員'), mmo: L('MMO (data entry)', 'MMO 填報人員'), viewer: L('Guest (read-only)', '訪客（唯讀）') };
+  $('adminBody').innerHTML = `<div class="section"><div class="section-header"><h3>${L('Accounts', '帳號')}</h3><button class="btn btn-green btn-sm" onclick="userModal()">＋ ${L('Add account', '新增帳號')}</button></div>
+    <div class="table-wrap"><table class="tbl"><tr><th>${L('Username', '帳號')}</th><th>${L('Name', '姓名')}</th><th>Email</th><th>${L('Role', '角色')}</th><th>${L('Last login', '最後登入')}</th><th>${L('Status', '狀態')}</th></tr>
+    ${(S.users || []).map(u => `<tr class="click" onclick="userModal('${u.id}')"><td class="mono">${esc(u.username)}</td><td>${esc(u.name)}</td><td>${esc(u.email)}</td><td>${roles[u.role] || esc(u.role)}</td><td class="mono">${fmtT(u.last_login, true)}</td><td>${yes(u.active)}</td></tr>`).join('')}</table></div></div>`;
+}
+function userModal(id) {
+  const u = id ? S.users.find(x => x.id === id) : { role: 'mmo', active: true };
+  openModal(id ? L('Edit account', '編輯帳號') : L('Add account', '新增帳號'), `<div class="form-grid">
+    <div class="fg"><label>${L('Username', '帳號')} *</label><input id="uUser" value="${esc(u.username)}"></div>
+    <div class="fg"><label>${L('Name', '姓名')}</label><input id="uName" value="${esc(u.name)}"></div>
+    <div class="fg"><label>Email</label><input id="uEmail" type="email" value="${esc(u.email)}"></div>
+    <div class="fg"><label>${L('Role', '角色')}</label><select id="uRole">${opts([{ v: 'admin', t: L('Administrator', '系統管理員') }, { v: 'mmo', t: L('MMO (data entry)', 'MMO 填報人員') }, { v: 'viewer', t: L('Guest (read-only)', '訪客（唯讀）') }], u.role)}</select></div>
+    <div class="fg"><label>${id ? L('Reset password (blank = keep)', '重設密碼（空白＝不變）') : L('Temporary password *', '臨時密碼 *')}</label><input id="uPass" type="text" autocomplete="off"></div>
+    <div class="fg"><label>&nbsp;</label><label class="chk"><input type="checkbox" id="uAct" ${u.active === true || bool(u.active) ? 'checked' : ''}> ${L('Active', '啟用')}</label></div></div>
+    <div class="small muted" style="margin-top:10px">${L('The user must change the temporary password at first sign-in.', '使用者首次登入時須更改臨時密碼。')}</div>`, {
+    foot: id && id !== S.user.id ? `<button class="btn btn-danger" style="margin-right:auto" onclick="delMaster('user.delete','${id}',this)">🗑</button>` : '',
+    onSave: async (bg, btn) => mut('user.save', { id: id || '', username: val(bg, 'uUser'), name: val(bg, 'uName'), email: val(bg, 'uEmail'), role: val(bg, 'uRole'),
+      password: val(bg, 'uPass'), active: val(bg, 'uAct') }, L('Saved', '已儲存'), btn) });
+}
+async function adminAudit() {
+  $('adminBody').innerHTML = `<div class="section"><div class="empty"><div class="spinner" style="margin:0 auto"></div></div></div>`;
+  try {
+    const r = await api('audit.list', { limit: 500 });
+    if (ADMIN_TAB !== 'audit') return;
+    $('adminBody').innerHTML = `<div class="section"><div class="section-header"><h3>${L('Activity log (latest 500)', '操作紀錄（最近 500 筆）')}</h3></div>
+      <div class="table-wrap"><table class="tbl" style="font-size:12px"><tr><th>${L('Time', '時間')}</th><th>${L('User', '使用者')}</th><th>${L('Action', '動作')}</th><th>${L('Target', '對象')}</th><th>${L('Detail', '內容')}</th></tr>
+      ${r.rows.map(x => `<tr><td class="mono" style="white-space:nowrap">${fmtT(x.time, true)}</td><td>${esc(x.user)}</td><td class="mono">${esc(x.action)} ${x.ok === 'TRUE' ? '' : `<span class="tag red">${esc(x.error)}</span>`}</td>
+        <td class="mono">${esc(x.target)}</td><td class="mono" style="max-width:420px;word-break:break-all">${esc(x.detail)}</td></tr>`).join('')}</table></div></div>`;
+  } catch (e) { $('adminBody').innerHTML = `<div class="alert red">${esc(e.message)}</div>`; }
+}
+
+boot();
+</script>
+</body>
+</html>
