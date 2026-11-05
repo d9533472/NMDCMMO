@@ -298,6 +298,9 @@ textarea{resize:vertical;min-height:64px}
 .vp-meta{font-size:12px;color:var(--muted);grid-column:1/-1;display:flex;flex-wrap:wrap;gap:2px 12px}
 .vp-meta b{color:var(--text);font-weight:600}
 .vp-act{display:flex;gap:6px;align-items:flex-start}
+.vp-trk{grid-column:1/-1;display:flex;flex-wrap:wrap;align-items:center;gap:2px 12px;font-size:12px;background:var(--danger-bg);color:#a11d1d;border-radius:8px;padding:6px 10px}
+.vp-trk b{font-weight:700}
+.vp-warn{grid-column:1/-1;font-size:12px;color:var(--warn);background:var(--warn-bg);border-radius:8px;padding:6px 10px;line-height:1.5}
 @media (max-width:1100px){.dash-top{grid-template-columns:1fr}}
 @media (max-width:900px){
   .sidebar{transform:translateX(-100%)}
@@ -1209,17 +1212,27 @@ function vesselPosSection() {
     const t = bool(v.tracking) && S.tracks.find(x => x.id === v.track_id);
     return `<div class="vp">
       <div class="vp-name">${v.kind === 'construction' ? '🏗' : '⛴'} ${esc(v.name)} <span class="mono small muted" style="font-weight:400">${esc(v.mmsi)}</span>
-        ${t ? `<span class="tag red"><span class="rec"></span>${L('Recording since ', '軌跡記錄中・')}${fmtT(t.start)}</span>` : ''}</div>
+</div>
       <div class="vp-act">${apiOn ? (bool(v.tracking)
         ? `<button class="btn btn-sm btn-danger w" onclick="trackStop('${v.id}', this)">■ ${L('Stop', '停止記錄')}</button>`
         : `<button class="btn btn-sm btn-green w" onclick="trackStart('${v.id}', this)">▶ ${L('Track', '記錄軌跡')}</button>`) : ''}
         <a class="btn btn-sm" target="_blank" href="${vfUrl(v.mmsi)}" title="VesselFinder">↗</a></div>
+      ${t ? (() => {
+        const n = S.positions.filter(p => p.track_id === t.id).length;
+        return `<div class="vp-trk"><span class="rec"></span><b>${L('Recording track', '軌跡記錄中')}</b>
+          <span>${L('Started ', '開始記錄 ')}<b>${fmtT(t.start, true)}</b></span>
+          <span>${L('Last query ', '最近一次更新 ')}<b>${v.last_fetch ? fmtT(v.last_fetch, true) : '—'}</b></span>
+          <span>${L('Every ', '每 ')}${esc(t.interval_min)}${L(' min', ' 分鐘')} · ${L('saved points: ', '已存 ')}${n}${L('', ' 點')}</span></div>`;
+      })() : ''}
       <div class="vp-meta">${v.last_fix
-        ? `<span>🕒 <b>${fmtT(v.last_fix, true)}</b> <span style="${age > 120 ? 'color:var(--warn);font-weight:600' : ''}">(${fmtDur(age)}${L(' ago', ' 前')})</span></span>
+        ? `<span title="${L('Time the vessel last broadcast its AIS position', '船舶最後一次發送 AIS 位置的時間')}">📡 ${L('AIS fix ', 'AIS 船位回報 ')}<b>${fmtT(v.last_fix, true)}</b> <span style="${age > 60 ? 'color:var(--warn);font-weight:600' : ''}">(${fmtDur(age)}${L(' ago', ' 前')})</span></span>
+           ${!t && v.last_fetch ? `<span>🔄 ${L('Last query ', '最近查詢 ')}<b>${fmtT(v.last_fetch)}</b></span>` : ''}
            <span>📍 <b class="mono">${esc(parseFloat(v.last_lat).toFixed(5) + ', ' + parseFloat(v.last_lon).toFixed(5))}</b></span>
            <span>🧭 <b>${v.last_speed !== '' && v.last_speed !== undefined ? esc(v.last_speed) + ' kn' : '—'}${v.last_course ? ' · ' + esc(v.last_course) + '°' : ''}</b></span>`
         : `<span>${L('No position yet', '尚無船位')}</span>`}
         ${v.last_error ? `<span style="color:var(--danger)">⚠ ${esc(v.last_error)}</span>` : ''}</div>
+      ${t && age > 30 ? `<div class="vp-warn">⚠ ${L(`No new AIS position for ${fmtDur(age)} — the vessel may be outside shore-based AIS coverage, so no new track points are being added. The system keeps checking every ${esc(t.interval_min)} min.`,
+        `已 ${fmtDur(age)} 沒有收到新的 AIS 船位，船可能在岸基 AIS 收不到的範圍，所以軌跡暫時沒有新增點；系統仍持續每 ${esc(t.interval_min)} 分鐘查詢。`)}</div>` : ''}
     </div>`;
   }).join('')}</div></div>`;
 }
@@ -1862,10 +1875,10 @@ function renderTracks() {
       </div></div></div>
     <div id="tqResult"></div>
     <div class="section"><div class="section-header"><h3>⏺ ${L('Recorded track sessions', '軌跡記錄紀錄')}</h3><span class="small muted">${L('Click a row to select that period', '點一列即選取該時段')}</span></div>
-      ${sessions.length ? `<div class="table-wrap"><table class="tbl"><tr><th>${L('Vessel', '船舶')}</th><th>${L('Start', '開始')}</th><th>${L('End', '結束')}</th><th>${L('Duration', '時長')}</th><th>${L('Interval', '間隔')}</th><th>${L('By', '操作者')}</th></tr>
+      ${sessions.length ? `<div class="table-wrap"><table class="tbl"><tr><th>${L('Vessel', '船舶')}</th><th>${L('Start', '開始')}</th><th>${L('End', '結束')}</th><th>${L('Duration', '時長')}</th><th>${L('Interval', '間隔')}</th><th>${L('Last update', '最近一次更新')}</th><th>${L('By', '操作者')}</th></tr>
         ${sessions.map(t => `<tr class="click" onclick="tqSession('${t.id}')"><td><b>${esc(t.vessel_name)}</b></td><td class="mono">${fmtT(t.start, true)}</td>
           <td class="mono">${t.end ? fmtT(t.end, true) : `<span class="rec"></span>${L('Recording', '記錄中')}`}</td><td>${fmtDur(mins(t.start, t.end || nowLocal()))}</td>
-          <td>${esc(t.interval_min)} min</td><td class="small">${esc(t.started_by)}${t.stopped_by && t.stopped_by !== t.started_by ? ' / ' + esc(t.stopped_by) : ''}</td></tr>`).join('')}</table></div>`
+          <td>${esc(t.interval_min)} min</td><td class="mono">${(() => { const v = S.vessels.find(x => x.id === t.vessel_id); return !t.end && v && v.last_fetch ? fmtT(v.last_fetch, true) : (t.end ? '—' : '—'); })()}</td><td class="small">${esc(t.started_by)}${t.stopped_by && t.stopped_by !== t.started_by ? ' / ' + esc(t.stopped_by) : ''}</td></tr>`).join('')}</table></div>`
         : `<div class="empty">${L('No track sessions yet — start one from the Dashboard.', '還沒有軌跡記錄，請在儀表板按「開始記錄軌跡」。')}</div>`}</div>`;
   if (TQ.data) tqRender();
 }
