@@ -229,7 +229,8 @@ textarea{resize:vertical;min-height:64px}
 .wxs-now small{font-weight:400;color:var(--text-2,#5b6b7d)}
 .wxs-strip{display:flex;height:6px;border-radius:3px;overflow:hidden;margin:0 7px}
 .wxs-strip i{flex:1}.wxs-strip i.ok{background:#0a8a43}.wxs-strip i.warn{background:#d98a00}.wxs-strip i.bad{background:#c62828}.wxs-strip i.na{background:#cfd8e0}
-.wxs input[type=range]{width:100%;margin:4px 0 0;accent-color:var(--navy);cursor:pointer;height:22px}
+.wxs input[type=range]{width:100%;margin:4px 0 0;accent-color:var(--navy);cursor:pointer;height:22px;padding:0;border:0;border-radius:0;background:transparent}
+.wxs input[type=range]:focus{outline:none;border:0}
 .wxs-days{position:relative;height:16px;font-size:11px;color:#5b6b7d;margin:0 7px}
 .wxs-days span{position:absolute;top:0;white-space:nowrap;border-left:1px solid #b9c6d2;padding-left:3px}
 .wxc-hint{font-size:12px;color:var(--muted)}
@@ -889,7 +890,10 @@ function wxRenderSlider(c) {
       });
       return `<i class="${tone}" title="${esc(wxHourLab(t))}"></i>`;
     }).join('');
-    const days = tl.map((t, k) => (k && wxLocal(t).slice(11, 13) === '00') || !k
+    // 第一個日期標籤離下一個午夜太近（< 12% 寬，例如晚上 9 點以後）就不畫，避免兩個日期疊在一起
+    const firstMid = tl.findIndex((t, k) => k && wxLocal(t).slice(11, 13) === '00');
+    const skipFirst = firstMid > 0 && firstMid / Math.max(1, tl.length - 1) < 0.12;
+    const days = tl.map((t, k) => (k && wxLocal(t).slice(11, 13) === '00') || (!k && !skipFirst)
       ? `<span style="left:${(k / Math.max(1, tl.length - 1) * 100).toFixed(2)}%">${esc(wxHourLab(t).replace(/ \d\d:\d\d$/, ''))}</span>` : '').join('');
     box.innerHTML = `<button type="button" class="wxs-play" id="wxPlayBtn" onclick="wxPlay()"></button>
       <div class="wxs-body"><div class="wxs-now"><span id="wxHourLab"></span><small id="wxHourSub"></small></div>
