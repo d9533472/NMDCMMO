@@ -1124,9 +1124,12 @@ function wxVessels() {
       ${bool(v.tracking) ? '<br><span class="rec"></span>' + L('Recording track', '軌跡記錄中') : ''}`).addTo(WX.vlayer);
     pts.push([lat, lon]);
   });
-  if (pts.length && !WX.vfit) {
+  // 只把工區附近（預報點範圍外 0.15° 內）的船納入初始視野，遠方的船不讓地圖縮太小；需要時可自行縮放
+  if (!WX.vfit) {
     WX.vfit = true;
-    WX.map.fitBounds(WX.bounds ? WX.bounds.extend(L_.latLngBounds(pts)) : L_.latLngBounds(pts).pad(0.2), { maxZoom: 11 });
+    const near = WX.bounds ? pts.filter(p => WX.bounds.pad(0.5).contains(p)) : pts;
+    if (WX.bounds) { if (near.length) WX.map.fitBounds(L_.latLngBounds(WX.bounds.getSouthWest(), WX.bounds.getNorthEast()).extend(L_.latLngBounds(near)), { maxZoom: 11 }); }
+    else if (pts.length) WX.map.fitBounds(L_.latLngBounds(pts).pad(0.2), { maxZoom: 11 });
   }
 }
 
