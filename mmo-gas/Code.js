@@ -498,7 +498,35 @@ function auditList_(p) {
 }
 
 // ============ Load ============
+// 共用資料（跟使用者無關的部分）依資料版本 rev 快取在 CacheService：同一版本只讀一次試算表。
+// 單一快取值上限 100 KB，所以切成 90 KB 一段存；最多存 1 小時（近 24 小時船位會隨時間變動）。
 function loadData_(u) {
+  const out = Object.assign({}, sharedState_());
+  out.user = publicUser_(u);
+  out.posTick = PropertiesService.getScriptProperties().getProperty('pos_tick') || '';
+  if (u.role === 'admin') out.users = Repo.all('Users').map(publicUser_);
+  return out;
+}
+function sharedState_() {
+  const rev = dataRev_(), cache = CacheService.getScriptCache(), key = 'st_' + rev;
+  try {
+    const n = Number(cache.get(key + '_n'));
+    if (n > 0) {
+      const parts = cache.getAll(Array.from({ length: n }, (x, i) => key + '_' + i));
+      const txt = Array.from({ length: n }, (x, i) => parts[key + '_' + i]);
+      if (txt.every(t => typeof t === 'string')) return JSON.parse(txt.join(''));
+    }
+  } catch (e) { console.warn('state cache read: ' + e.message); }
+  const st = buildState_(rev);
+  try {
+    const txt = JSON.stringify(st), size = 90000, put = {};
+    let i = 0;
+    for (; i * size < txt.length; i++) put[key + '_' + i] = txt.slice(i * size, (i + 1) * size);
+    if (i <= 50) { put[key + '_n'] = String(i); cache.putAll(put, 3600); }
+  } catch (e) { console.warn('state cache write: ' + e.message); }
+  return st;
+}
+function buildState_(rev) {
   const st = settings_();
   const pub = {};
   Object.keys(st).forEach(k => { pub[k] = SECRET_SETTINGS[k] ? (st[k] ? '••••' : '') : st[k]; });
@@ -510,7 +538,7 @@ function loadData_(u) {
   const items = Repo.all('UploadItems');
   svs.forEach(sv => { sv.checks = checks_(sv, pauses, sightings, files, items, st, posFor_(sv, shifts.find(x => x.id === sv.shift_id), st)); });
   const out = {
-    user: publicUser_(u), version: VERSION, settings: pub, rev: dataRev_(),
+    version: VERSION, settings: pub, rev: rev,
     vessels: Repo.all('Vessels'), observers: Repo.all('Observers'), items: items,
     shifts: shifts, svs: svs, pauses: pauses, sightings: sightings, files: files,
     sheetUrl: 'https://docs.google.com/spreadsheets/d/' + PropertiesService.getScriptProperties().getProperty('ss_id'),
@@ -518,8 +546,6 @@ function loadData_(u) {
   };
   out.tracks = Repo.all('Tracks');
   out.positions = recentPositions_(24);
-  out.posTick = PropertiesService.getScriptProperties().getProperty('pos_tick') || '';
-  if (u.role === 'admin') out.users = Repo.all('Users').map(publicUser_);
   return out;
 }
 

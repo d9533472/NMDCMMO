@@ -286,6 +286,19 @@ textarea{resize:vertical;min-height:64px}
   body.print-trk .print-only{display:block!important}
 }
 .print-only{display:none}
+/* 儀表板第一列 */
+.dash-top{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:16px;align-items:stretch;margin-bottom:16px}
+.dash-top>div{min-width:0;display:flex;flex-direction:column}
+.dash-top .section,.dash-top .wxc,.dash-top .wx-empty{margin-bottom:0;flex:1}
+#dashWeather{flex:1;display:flex;flex-direction:column}
+.vp-list{display:flex;flex-direction:column}
+.vp{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 10px;padding:11px 14px;border-bottom:1px solid var(--border)}
+.vp:last-child{border-bottom:0}
+.vp-name{font-weight:700;color:var(--navy);display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.vp-meta{font-size:12px;color:var(--muted);grid-column:1/-1;display:flex;flex-wrap:wrap;gap:2px 12px}
+.vp-meta b{color:var(--text);font-weight:600}
+.vp-act{display:flex;gap:6px;align-items:flex-start}
+@media (max-width:1100px){.dash-top{grid-template-columns:1fr}}
 @media (max-width:900px){
   .sidebar{transform:translateX(-100%)}
   body.nav-open .sidebar{transform:none}
@@ -346,6 +359,7 @@ textarea{resize:vertical;min-height:64px}
 // ==================== CONFIG ====================
 const API_URL = 'https://script.google.com/macros/s/AKfycby_ZrSFXKGi9xWZAGWXgEmAcKwK7HeAdXiO7Op9yyADqrshz-iH-jjnfMpZtsmdofcjmA/exec';
 const TOKEN_KEY = 'mmo_token';
+const CACHE_KEY = 'mmo_state';   // 上次載入的資料（只為了開頁秒開；登出即清除）
 const MAX_UPLOAD = 20 * 1024 * 1024;
 const POLL_MS = 30000;
 
@@ -455,7 +469,9 @@ function trErr(m) {
   r = m.match(/^(.+) already has records in this shift and cannot be removed$/); if (r) return r[1] + ' 在此班次已有紀錄，不能移除';
   return m;
 }
-function setToken(t) { TOKEN = t || ''; try { if (t) localStorage.setItem(TOKEN_KEY, t); else localStorage.removeItem(TOKEN_KEY); } catch (e) {} }
+function setToken(t) { TOKEN = t || ''; try { if (t) localStorage.setItem(TOKEN_KEY, t); else { localStorage.removeItem(TOKEN_KEY); localStorage.removeItem(CACHE_KEY); } } catch (e) {} }
+function saveCache() { try { if (S && S.shifts && TOKEN) localStorage.setItem(CACHE_KEY, JSON.stringify(S)); } catch (e) {} }
+function readCache() { try { const c = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null'); return c && c.shifts && c.user ? c : null; } catch (e) { return null; } }
 
 // ==================== UI utils ====================
 function toast(msg, type) {
@@ -533,7 +549,9 @@ function authView(which, msg) {
   $('authTitle').textContent = L('Marine Mammal Observation System', '鯨豚觀察作業系統');
   $('authSub').textContent = L('Based on the Taiwan MMO Operation Guideline (4th ed.)', '依台灣鯨豚觀察員制度作業指引（第四版）');
   const b = $('authBody');
-  if (which === 'loading') b.innerHTML = `<div style="text-align:center;padding:20px"><div class="spinner" style="margin:0 auto"></div></div>`;
+  if (which === 'loading') b.innerHTML = `<div style="text-align:center;padding:14px 0 6px"><div class="spinner" style="margin:0 auto 12px"></div>
+    <div style="font-weight:600;color:var(--navy)">${L('Signing you in…', '登入中…')}</div>
+    <div class="small muted" style="margin-top:4px">${L('Loading data from the server (about 5 seconds)', '正在從伺服器載入資料（約 5 秒）')}</div></div>`;
   if (which === 'login') {
     b.innerHTML = `<h2>${L('Sign in', '登入')}</h2><p>${L('Use the account created by your administrator.', '請使用管理員建立的帳號登入。')}</p>
       <div class="fg"><label>${L('Username or email', '帳號或 Email')}</label><input id="liUser" autocomplete="username"></div>
@@ -561,10 +579,18 @@ async function boot() {
   applyLangButtons();
   authView('loading');
   if (TOKEN) {
+    // 有上次的資料就先顯示（秒開），伺服器資料回來再更新畫面
+    const cached = readCache();
+    if (cached) { S = cached; LAST_REV = ''; enterApp(); setSync(true); }
     for (let i = 0; i < 3 && TOKEN; i++) {
-      try { S = await api('data.load'); LAST_REV = S.rev; enterApp(); return; }
-      catch (e) { if (!TOKEN) break; await new Promise(r => setTimeout(r, 1500 * (i + 1))); }
+      try {
+        const fresh = await api('data.load');
+        S = fresh; LAST_REV = S.rev; setSync(false);
+        if (cached) { if (!$('modals').children.length) render(); } else enterApp();
+        return;
+      } catch (e) { if (!TOKEN) break; await new Promise(r => setTimeout(r, 1500 * (i + 1))); }
     }
+    if (TOKEN && cached) { setSync(false, true); return; }
     if (TOKEN) { authView('login', L('Could not reach the server. Please reload.', '無法連線到伺服器，請重新整理頁面。')); return; }
   }
   authView('login');
@@ -639,6 +665,7 @@ function go(page, shiftId, svId) {
 }
 function render() {
   if (!S || !S.shifts) return;
+  saveCache();
   $('sideProject').textContent = S.settings.project_name || '';
   const missingCount = S.svs.filter(x => x.checks.missing.length && (x.checks.status === 'done' || shiftClosed(shiftOf(x.shift_id)))).length;
   $('nav').innerHTML = PAGES.filter(p => !p.admin || isAdmin()).map(p =>
@@ -647,11 +674,16 @@ function render() {
   $('sideFoot').innerHTML = `v${esc(S.version)} · ${L('TCO Manual 4th ed.', '作業手冊第四版')}<br>${L('Pre-watch', '預觀測')} ${settingsNum('pre_watch_min', 30)} min · ${L('Alert zone', '警戒區')} ${settingsNum('alert_zone_m', 750)} m`;
   const role = { admin: 'Admin', mmo: 'MMO', viewer: L('Guest', '訪客') }[S.user.role];
   $('userChip').innerHTML = `👤 <span class="nm">${esc(S.user.name || S.user.username)}</span><span class="role">${role}</span>`;
-  $('liveTxt').textContent = L('Live', '即時');
+  if (!/…|離線|Offline/.test($('liveTxt').textContent)) $('liveTxt').textContent = L('Live', '即時');
   const P = { tracks: renderTracks, dashboard: renderDashboard, shifts: renderShifts, shift: renderShift, sightings: renderSightings, summary: renderSummary, admin: renderAdmin };
   if (PAGE === 'admin' && !isAdmin()) PAGE = 'dashboard';
   if (PAGE === 'shift' && !shiftOf(CUR.shift)) PAGE = 'shifts';
   (P[PAGE] || renderDashboard)();
+}
+function setSync(on, failed) {
+  const el = $('liveTxt'); if (!el) return;
+  el.textContent = on ? L('Syncing…', '同步中…') : failed ? L('Offline (showing last data)', '離線（顯示上次資料）') : L('Live', '即時');
+  el.parentElement.style.color = failed ? 'var(--danger)' : '';
 }
 function setTitle(t) { $('pageTitle').textContent = t; }
 function toggleUserMenu(e) {
@@ -1135,8 +1167,7 @@ function renderDashboard() {
   };
   const recent = S.sightings.slice().sort((a, b) => b.time.localeCompare(a.time)).slice(0, 8);
   $('content').innerHTML = `
-    <div id="dashWeather"></div>
-    ${vesselPosSection()}
+    <div class="dash-top"><div class="dash-left">${vesselPosSection()}</div><div class="dash-right"><div id="dashWeather"></div></div></div>
     <div class="stat-grid">
       <div class="stat blue"><div class="v">${open.length}</div><div class="l">${L('Open shifts', '進行中班次')}</div></div>
       <div class="stat green"><div class="v">${working}</div><div class="l">${L('Vessels working', '施工中船舶')}</div></div>
@@ -1165,26 +1196,29 @@ function vesselPosSection() {
   const vs = S.vessels.filter(v => bool(v.active) && v.mmsi).sort((a, b) => (a.kind + a.name).localeCompare(b.kind + b.name));
   const iv = Number(S.settings.pos_interval_min), tiv = Number(S.settings.track_interval_min) || 10;
   const apiOn = !!S.settings.ais_api_url && !!S.settings.ais_api_key;
-  const head = `<div class="section-header"><h3>🛰 ${L('Vessel positions (AIS)', '船舶即時位置（AIS）')}</h3>
-    <div class="toolbar"><span class="small muted">${apiOn ? (iv > 0 ? L('Auto update every ' + iv + ' min', '每 ' + iv + ' 分鐘自動更新') : L('Auto update off', '自動更新已關閉')) + ' · ' + L('tracks every ' + tiv + ' min', '軌跡每 ' + tiv + ' 分鐘') : L('Position API not set up', '尚未設定船位 API')}${S.posTick ? ' · ' + L('last run ', '排程最後執行 ') + fmtT(S.posTick) : ''}</span>
-      ${apiOn ? `<button class="btn btn-sm w" onclick="refreshPos('', this)">📡 ${L('Update all now', '全部立即更新')}</button>` : ''}
-      <button class="btn btn-sm" onclick="go('tracks')">🗺 ${L('Tracks & export', '軌跡查詢／匯出')}</button></div></div>`;
+  const head = `<div class="section-header"><div><h3>🛰 ${L('Vessel positions (AIS)', '船舶即時位置（AIS）')}</h3>
+      <div class="small muted" style="margin-top:2px">${apiOn ? (iv > 0 ? L('Auto update every ' + iv + ' min', '每 ' + iv + ' 分鐘自動更新') : L('Auto update off', '自動更新已關閉')) + ' · ' + L('tracks every ' + tiv + ' min', '軌跡每 ' + tiv + ' 分鐘') : L('Position API not set up', '尚未設定船位 API')}${S.posTick ? ' · ' + L('last run ', '排程 ') + fmtT(S.posTick) : ''}</div></div>
+    <div class="toolbar">${apiOn ? `<button class="btn btn-sm w" onclick="refreshPos('', this)" title="${L('Update all now', '全部立即更新')}">📡 ${L('Update', '更新')}</button>` : ''}
+      <button class="btn btn-sm" onclick="go('tracks')">🗺 ${L('Tracks', '軌跡')}</button></div></div>`;
   if (!vs.length) return `<div class="section">${head}<div class="empty">${L('Add MMSI numbers to vessels under Back office › Vessels.', '請到 後台管理 › 船舶 填入 MMSI。')}</div></div>`;
-  return `<div class="section">${head}<div class="table-wrap"><table class="tbl"><tr><th>${L('Vessel', '船舶')}</th><th>${L('AIS fix', 'AIS 定位時間')}</th><th>${L('Position', '位置')}</th><th>${L('Speed / course', '航速／航向')}</th><th>${L('Track', '軌跡')}</th><th></th></tr>
-    ${vs.map(v => {
-      const age = mins(v.last_fix, nowLocal());
-      const t = bool(v.tracking) && S.tracks.find(x => x.id === v.track_id);
-      return `<tr><td><b>${v.kind === 'construction' ? '🏗' : '⛴'} ${esc(v.name)}</b><div class="small muted mono">${esc(v.mmsi)}</div></td>
-        <td>${v.last_fix ? `<span class="mono">${fmtT(v.last_fix, true)}</span><div class="small ${age > 120 ? '' : 'muted'}" style="${age > 120 ? 'color:var(--warn)' : ''}">${fmtDur(age)}${L(' ago', ' 前')}</div>` : '<span class="muted">—</span>'}
-          ${v.last_error ? `<div class="small" style="color:var(--danger)">⚠ ${esc(v.last_error)}</div>` : ''}</td>
-        <td class="mono">${v.last_lat ? esc(parseFloat(v.last_lat).toFixed(5) + ', ' + parseFloat(v.last_lon).toFixed(5)) : '—'}</td>
-        <td>${v.last_speed !== '' && v.last_speed !== undefined ? esc(v.last_speed) + ' kn' : '—'}${v.last_course ? ' · ' + esc(v.last_course) + '°' : ''}</td>
-        <td>${t ? `<span class="rec"></span><b style="color:#d32f2f">${L('Recording', '記錄中')}</b><div class="small muted">${L('since ', '開始於 ')}${fmtT(t.start, true)}</div>` : '<span class="muted">—</span>'}</td>
-        <td><div class="toolbar">${apiOn ? (bool(v.tracking)
-          ? `<button class="btn btn-sm btn-danger w" onclick="trackStop('${v.id}', this)">■ ${L('Stop track', '停止記錄')}</button>`
-          : `<button class="btn btn-sm btn-green w" onclick="trackStart('${v.id}', this)">▶ ${L('Start track', '開始記錄軌跡')}</button>`) : ''}
-          <a class="btn btn-sm" target="_blank" href="${vfUrl(v.mmsi)}">↗</a></div></td></tr>`;
-    }).join('')}</table></div></div>`;
+  return `<div class="section">${head}<div class="vp-list">${vs.map(v => {
+    const age = mins(v.last_fix, nowLocal());
+    const t = bool(v.tracking) && S.tracks.find(x => x.id === v.track_id);
+    return `<div class="vp">
+      <div class="vp-name">${v.kind === 'construction' ? '🏗' : '⛴'} ${esc(v.name)} <span class="mono small muted" style="font-weight:400">${esc(v.mmsi)}</span>
+        ${t ? `<span class="tag red"><span class="rec"></span>${L('Recording since ', '軌跡記錄中・')}${fmtT(t.start)}</span>` : ''}</div>
+      <div class="vp-act">${apiOn ? (bool(v.tracking)
+        ? `<button class="btn btn-sm btn-danger w" onclick="trackStop('${v.id}', this)">■ ${L('Stop', '停止記錄')}</button>`
+        : `<button class="btn btn-sm btn-green w" onclick="trackStart('${v.id}', this)">▶ ${L('Track', '記錄軌跡')}</button>`) : ''}
+        <a class="btn btn-sm" target="_blank" href="${vfUrl(v.mmsi)}" title="VesselFinder">↗</a></div>
+      <div class="vp-meta">${v.last_fix
+        ? `<span>🕒 <b>${fmtT(v.last_fix, true)}</b> <span style="${age > 120 ? 'color:var(--warn);font-weight:600' : ''}">(${fmtDur(age)}${L(' ago', ' 前')})</span></span>
+           <span>📍 <b class="mono">${esc(parseFloat(v.last_lat).toFixed(5) + ', ' + parseFloat(v.last_lon).toFixed(5))}</b></span>
+           <span>🧭 <b>${v.last_speed !== '' && v.last_speed !== undefined ? esc(v.last_speed) + ' kn' : '—'}${v.last_course ? ' · ' + esc(v.last_course) + '°' : ''}</b></span>`
+        : `<span>${L('No position yet', '尚無船位')}</span>`}
+        ${v.last_error ? `<span style="color:var(--danger)">⚠ ${esc(v.last_error)}</span>` : ''}</div>
+    </div>`;
+  }).join('')}</div></div>`;
 }
 async function refreshPos(id, btn) {
   try { const r = await mut('pos.refresh', { vessel_id: id || '' }, '', btn); const bad = (r.done || []).filter(x => x.error); toast(bad.length ? '⚠ ' + bad.map(x => x.error).join('；') : L('Positions updated', '船位已更新'), bad.length ? 'error' : ''); } catch (e) {}
