@@ -10,7 +10,7 @@
 // 角色：admin（全部＋後台）、mmo（建立／填報班次、上傳）、viewer（唯讀）
 // ============================================================
 
-const VERSION = '1.1';
+const VERSION = '1.2';
 const ROOT_FOLDER_ID = '1uVkbv4tndRVERhrHmHUzaTvPlHaFV4em';
 const SS_NAME = 'MMO 鯨豚觀察總表';
 const TZ = 'Asia/Taipei';
@@ -19,7 +19,9 @@ const SCHEMAS = {
   Users: ['id','username','name','email','role','password_salt','password_hash','active','must_change','last_login','created_at','updated_at'],
   Sessions: ['token','user_id','expires_at','created_at'],
   Settings: ['key','value'],
-  Vessels: ['id','name','kind','mmsi','imo','type','operator','remark','active','sort','created_at','updated_at'],
+  Vessels: ['id','name','kind','mmsi','imo','type','operator','remark','active','sort','created_at','updated_at',
+    'last_lat','last_lon','last_fix','last_speed','last_course','last_fetch','last_error','tracking','track_id'],
+  Tracks: ['id','vessel_id','vessel_name','mmsi','start','end','interval_min','started_by','stopped_by','remark'],
   Observers: ['id','name','role','company','phone','cert_no','remark','active','created_at','updated_at'],
   UploadItems: ['id','kind','name_zh','name_en','required','cond','active','sort','note'],
   Shifts: ['id','shift_no','date','site','scope','turbine_no','construction_vessel_id','construction_vessel','status','remark','folder_id',
@@ -49,7 +51,13 @@ const DEFAULT_SETTINGS = {
   species: '台灣白海豚 Taiwanese humpback dolphin\n印太瓶鼻海豚 Indo-Pacific bottlenose dolphin\n瓶鼻海豚 Common bottlenose dolphin\n印太露脊鼠海豚 Indo-Pacific finless porpoise\n熱帶斑海豚 Pantropical spotted dolphin\n飛旋海豚 Spinner dolphin\n糙齒海豚 Rough-toothed dolphin\n未知鯨豚 Unidentified cetacean',
   pause_reasons: '目擊鯨豚進入警戒區 Cetacean in alert zone\nPAM 偵測到鯨豚 PAM detection\n天氣／能見度不佳 Poor weather / visibility\n設備故障 Equipment failure\n其他 Other',
   ais_api_url: '',              // 之後接付費船位 API（伺服器端呼叫，金鑰不給前端）
-  ais_api_key: ''
+  ais_api_key: '',
+  pos_interval_min: '60',       // 儀表板自動更新船位（分鐘；0＝關閉），所有啟用且有 MMSI 的船
+  track_interval_min: '10',     // 記錄軌跡中的船：每幾分鐘抓一次
+  weather_name: '',             // 儀表板海象地圖標題
+  weather_points: '',           // 海象預報點：每行「名稱, 緯度, 經度」（空白＝用工區座標）
+  weather_wave_limit: '1.5',
+  weather_wind_limit: '25'
 };
 const SECRET_SETTINGS = { ais_api_key: 1 };
 
@@ -66,7 +74,7 @@ const ITEM_SEED = [
 ];
 
 const ROLES = ['admin', 'mmo', 'viewer'];
-const VIEWER_OK = { 'data.load': 1, 'data.rev': 1, 'file.get': 1, 'shift.files': 1, 'auth.logout': 1 };
+const VIEWER_OK = { 'data.load': 1, 'data.rev': 1, 'file.get': 1, 'shift.files': 1, 'pos.list': 1, 'auth.logout': 1 };
 const SESSION_DAYS = 14;
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
 const MAX_THUMB_CHARS = 40000;
@@ -87,8 +95,8 @@ function json_(o) { return ContentService.createTextOutput(JSON.stringify(o)).se
 
 const PUBLIC = { 'ping': 1, 'auth.status': 1, 'auth.setup': 1, 'auth.login': 1, 'data.rev': 1 };
 const NO_REV = { 'ping': 1, 'auth.status': 1, 'auth.login': 1, 'auth.logout': 1, 'auth.changePassword': 1, 'data.load': 1, 'data.rev': 1,
-  'audit.list': 1, 'file.get': 1, 'shift.files': 1, 'pos.fetch': 1, 'pos.test': 1 };
-const AUDIT_SKIP = { 'ping': 1, 'auth.status': 1, 'data.load': 1, 'data.rev': 1, 'audit.list': 1, 'file.get': 1, 'shift.files': 1 };
+  'audit.list': 1, 'file.get': 1, 'shift.files': 1, 'pos.fetch': 1, 'pos.test': 1, 'pos.list': 1 };
+const AUDIT_SKIP = { 'ping': 1, 'auth.status': 1, 'data.load': 1, 'data.rev': 1, 'audit.list': 1, 'file.get': 1, 'shift.files': 1, 'pos.list': 1 };
 // 這些寫入會改到班次資料 → 重建試算表「總表」
 const SUMMARY_ACTIONS = /^(shift|sv|pause|sighting|file)\.(save|delete|close|reopen|upload)$/;
 
@@ -143,6 +151,10 @@ const ROUTES = {
   'file.get': (u, p) => getFile_(p.id),
   'pos.fetch': (u, p) => fetchPosition_(p),
   'pos.test': (u) => { requireRole_(u, ['admin']); return testPositionApi_(); },
+  'pos.refresh': (u, p) => refreshPositions_(p.vessel_id ? [p.vessel_id] : null, true),
+  'pos.list': (u, p) => listPositions_(p),
+  'track.start': (u, p) => startTrack_(u, p),
+  'track.stop': (u, p) => stopTrack_(u, p),
 
   'vessel.save': (u, p) => { requireRole_(u, ['admin']); return saveMaster_('Vessels', p, ['name','kind','mmsi','imo','type','operator','remark','active','sort'], ['name','kind']); },
   'vessel.delete': (u, p) => { requireRole_(u, ['admin']); return deleteMaster_('Vessels', p.id); },
@@ -292,7 +304,9 @@ function setup() {
   PropertiesService.getScriptProperties().deleteProperty('schema_version');
   ensureSchema_();
   rebuildSummary_();
-  Logger.log('OK — 總表: ' + ss_().getUrl() + ' · root folder: ' + DriveApp.getFolderById(ROOT_FOLDER_ID).getName());
+  ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === 'positionTick').forEach(t => ScriptApp.deleteTrigger(t));
+  ScriptApp.newTrigger('positionTick').timeBased().everyMinutes(5).create();
+  Logger.log('OK — 總表: ' + ss_().getUrl() + ' · root folder: ' + DriveApp.getFolderById(ROOT_FOLDER_ID).getName() + ' · positionTick every 5 min');
 }
 
 // ============ Utility ============
@@ -502,6 +516,9 @@ function loadData_(u) {
     sheetUrl: 'https://docs.google.com/spreadsheets/d/' + PropertiesService.getScriptProperties().getProperty('ss_id'),
     rootUrl: 'https://drive.google.com/drive/folders/' + ROOT_FOLDER_ID
   };
+  out.tracks = Repo.all('Tracks');
+  out.positions = recentPositions_(24);
+  out.posTick = PropertiesService.getScriptProperties().getProperty('pos_tick') || '';
   if (u.role === 'admin') out.users = Repo.all('Users').map(publicUser_);
   return out;
 }
@@ -833,6 +850,110 @@ function testPositionApi_() {
   const base = (String(st.ais_api_url).match(/^https?:\/\/[^/]+\/api\/v0\//) || ['https://api.datalastic.com/api/v0/'])[0];
   const j = JSON.parse(aisFetch_(base + 'stat', st).getContentText());
   return j.data || j;
+}
+// ============ 船位排程（positionTick 每 5 分鐘）與軌跡 ============
+const POS_SHEET = 'Positions';
+const POS_HEAD = ['time','vessel_id','vessel_name','mmsi','lat','lon','speed','course','track_id','source','fetched_at'];
+function posSheet_() {
+  const sh = Repo.sheet(POS_SHEET);
+  if (sh.getLastRow() === 0) { sh.getRange(1, 1, 1, POS_HEAD.length).setValues([POS_HEAD]).setFontWeight('bold'); sh.setFrozenRows(1); }
+  return sh;
+}
+function posRows_(sh, first, n) {
+  if (n <= 0) return [];
+  return sh.getRange(first, 1, n, POS_HEAD.length).getValues().map(r => {
+    const o = {};
+    POS_HEAD.forEach((h, i) => { o[h] = r[i] instanceof Date ? Utilities.formatDate(r[i], TZ, "yyyy-MM-dd'T'HH:mm:ss") : String(r[i]); });
+    return o;
+  });
+}
+/** 近 N 小時的船位（只讀表尾，表再大也很快） */
+function recentPositions_(hours) {
+  const sh = posSheet_(), last = sh.getLastRow();
+  if (last < 2) return [];
+  const n = Math.min(last - 1, 3000);
+  const since = Utilities.formatDate(new Date(Date.now() - hours * 3600e3), TZ, "yyyy-MM-dd'T'HH:mm:ss");
+  return posRows_(sh, last - n + 1, n).filter(p => p.time >= since);
+}
+function listPositions_(p) {
+  const from = dt_(p.from), to = dt_(p.to);
+  if (!from || !to) fail_('Select a start and end time');
+  const ids = Array.isArray(p.vessel_ids) ? p.vessel_ids.map(String) : [];
+  const sh = posSheet_(), last = sh.getLastRow();
+  const rows = last < 2 ? [] : posRows_(sh, 2, last - 1);
+  const out = rows.filter(x => x.time >= from && x.time <= to + ':59' && (!ids.length || ids.indexOf(x.vessel_id) >= 0));
+  out.sort((a, b) => a.time.localeCompare(b.time));
+  return { positions: out };
+}
+/** 抓一艘船並寫入：更新 Vessels.last_*；AIS 定位時間跟上一筆不同才新增到 Positions（避免重複點） */
+function recordPosition_(v, st) {
+  const now = nowIso_();
+  let f;
+  try { f = fetchPosition_({ mmsi: v.mmsi }); }
+  catch (e) { Repo.update('Vessels', v.id, { last_fetch: now, last_error: String(e.message).slice(0, 200) }); return { id: v.id, error: e.message }; }
+  const fix = f.time ? f.time + (f.time.length === 16 ? ':00' : '') : now;
+  const isNew = fix !== v.last_fix;
+  Repo.update('Vessels', v.id, { last_lat: String(f.lat), last_lon: String(f.lon), last_fix: fix, last_speed: String(f.speed), last_course: String(f.course),
+    last_fetch: now, last_error: '' });
+  if (isNew) {
+    posSheet_().appendRow([fix, v.id, v.name, v.mmsi, f.lat, f.lon, f.speed, f.course, bool_(v.tracking) ? v.track_id : '', 'AIS', now]);
+  }
+  return { id: v.id, lat: f.lat, lon: f.lon, time: fix, isNew: isNew };
+}
+/** ids＝null 代表全部到期的船；force＝不管間隔，立即抓 */
+function refreshPositions_(ids, force) {
+  const st = settings_();
+  if (!st.ais_api_url || !st.ais_api_key) { if (force) fail_('Vessel position API is not configured yet', 'NOT_CONFIGURED'); return { done: [] }; }
+  const posInt = Number(st.pos_interval_min), trkInt = Number(st.track_interval_min) || 10;
+  const nowMs = Date.now();
+  const due = v => {
+    if (force) return true;
+    const iv = bool_(v.tracking) ? trkInt : posInt;
+    if (!iv || iv <= 0) return false;
+    const last = v.last_fetch ? tms_(v.last_fetch) : 0;
+    return !last || nowMs - last >= (iv - 2) * 60000;
+  };
+  return withLock_(() => {
+    const list = Repo.all('Vessels').filter(v => bool_(v.active) && v.mmsi && (!ids || ids.indexOf(v.id) >= 0) && due(v));
+    const done = list.map(v => recordPosition_(v, st));
+    return { done: done };
+  });
+}
+/** 時間觸發（setup 建立）：每 5 分鐘檢查哪些船到期要更新 */
+function positionTick() {
+  try {
+    ensureSchema_();
+    const r = refreshPositions_(null, false);
+    PropertiesService.getScriptProperties().setProperty('pos_tick', nowIso_());
+    if (r.done.length) bumpRev_();
+  } catch (e) { console.warn('positionTick: ' + e.message); }
+}
+function startTrack_(u, p) {
+  const v = Repo.get('Vessels', p.vessel_id);
+  if (!v) fail_('Vessel not found', 'NOT_FOUND');
+  if (!v.mmsi) fail_('This vessel has no MMSI');
+  const st = settings_();
+  if (!st.ais_api_url || !st.ais_api_key) fail_('Vessel position API is not configured yet', 'NOT_CONFIGURED');
+  const t = withLock_(() => {
+    if (bool_(v.tracking)) fail_('This vessel is already recording a track');
+    const rec = { id: genId_(), vessel_id: v.id, vessel_name: v.name, mmsi: v.mmsi, start: nowIso_(), end: '', interval_min: String(Number(st.track_interval_min) || 10),
+      started_by: u.username, stopped_by: '', remark: str_(p.remark) };
+    Repo.insert('Tracks', rec);
+    Repo.update('Vessels', v.id, { tracking: 'TRUE', track_id: rec.id });
+    return rec;
+  });
+  try { refreshPositions_([v.id], true); } catch (e) {}
+  return t;
+}
+function stopTrack_(u, p) {
+  return withLock_(() => {
+    const v = Repo.get('Vessels', p.vessel_id);
+    if (!v || !bool_(v.tracking)) fail_('This vessel is not recording a track');
+    const t = v.track_id && Repo.get('Tracks', v.track_id);
+    if (t) Repo.update('Tracks', t.id, { end: nowIso_(), stopped_by: u.username });
+    Repo.update('Vessels', v.id, { tracking: 'FALSE', track_id: '' });
+    return { id: t ? t.id : '', name: v.name };
+  });
 }
 function fetchPosition_(p) {
   const st = settings_();
