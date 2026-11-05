@@ -87,7 +87,7 @@ function json_(o) { return ContentService.createTextOutput(JSON.stringify(o)).se
 
 const PUBLIC = { 'ping': 1, 'auth.status': 1, 'auth.setup': 1, 'auth.login': 1, 'data.rev': 1 };
 const NO_REV = { 'ping': 1, 'auth.status': 1, 'auth.login': 1, 'auth.logout': 1, 'auth.changePassword': 1, 'data.load': 1, 'data.rev': 1,
-  'audit.list': 1, 'file.get': 1, 'shift.files': 1, 'pos.fetch': 1 };
+  'audit.list': 1, 'file.get': 1, 'shift.files': 1, 'pos.fetch': 1, 'pos.test': 1 };
 const AUDIT_SKIP = { 'ping': 1, 'auth.status': 1, 'data.load': 1, 'data.rev': 1, 'audit.list': 1, 'file.get': 1, 'shift.files': 1 };
 // 這些寫入會改到班次資料 → 重建試算表「總表」
 const SUMMARY_ACTIONS = /^(shift|sv|pause|sighting|file)\.(save|delete|close|reopen|upload)$/;
@@ -142,6 +142,7 @@ const ROUTES = {
   'file.delete': (u, p) => deleteFile_(u, p.id),
   'file.get': (u, p) => getFile_(p.id),
   'pos.fetch': (u, p) => fetchPosition_(p),
+  'pos.test': (u) => { requireRole_(u, ['admin']); return testPositionApi_(); },
 
   'vessel.save': (u, p) => { requireRole_(u, ['admin']); return saveMaster_('Vessels', p, ['name','kind','mmsi','imo','type','operator','remark','active','sort'], ['name','kind']); },
   'vessel.delete': (u, p) => { requireRole_(u, ['admin']); return deleteMaster_('Vessels', p.id); },
@@ -814,15 +815,31 @@ function getFile_(id) {
   return { name: r.name, mime: blob.getContentType(), data: Utilities.base64Encode(blob.getBytes()) };
 }
 
-// ============ 船位（之後接付費 API） ============
+// ============ 船位（Datalastic；網址沒有 {key} 時金鑰改走 x-api-key 標頭，官方建議做法） ============
+function aisFetch_(url, st) {
+  const opt = { muteHttpExceptions: true };
+  if (url.indexOf('{key}') >= 0) url = url.replace('{key}', encodeURIComponent(st.ais_api_key || ''));
+  else if (st.ais_api_key) opt.headers = { 'x-api-key': st.ais_api_key };
+  const res = UrlFetchApp.fetch(url, opt);
+  const code = res.getResponseCode();
+  if (code === 401 || code === 403) fail_('Position API rejected the key (HTTP ' + code + ') — check the API key in Back office');
+  if (code === 404) fail_('Vessel not found by the position API (HTTP 404) — check the MMSI');
+  if (code !== 200) fail_('Position API returned HTTP ' + code);
+  return res;
+}
+function testPositionApi_() {
+  const st = settings_();
+  if (!st.ais_api_key) fail_('Enter the API key first');
+  const base = (String(st.ais_api_url).match(/^https?:\/\/[^/]+\/api\/v0\//) || ['https://api.datalastic.com/api/v0/'])[0];
+  const j = JSON.parse(aisFetch_(base + 'stat', st).getContentText());
+  return j.data || j;
+}
 function fetchPosition_(p) {
   const st = settings_();
   if (!st.ais_api_url) fail_('Vessel position API is not configured yet', 'NOT_CONFIGURED');
   const mmsi = str_(p.mmsi);
   if (!mmsi) fail_('This vessel has no MMSI');
-  const url = st.ais_api_url.replace('{mmsi}', encodeURIComponent(mmsi)).replace('{key}', encodeURIComponent(st.ais_api_key || ''));
-  const res = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
-  if (res.getResponseCode() !== 200) fail_('Position API returned HTTP ' + res.getResponseCode());
+  const res = aisFetch_(st.ais_api_url.replace('{mmsi}', encodeURIComponent(mmsi)), st);
   const j = JSON.parse(res.getContentText());
   // 通用解析：找第一個有 lat/lon（或 latitude/longitude）的物件；接上實際 API 時再依格式調整
   const found = (function walk(o) {

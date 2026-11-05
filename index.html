@@ -349,7 +349,11 @@ const ERR_ZH = {
   'Vessel position API is not configured yet': '尚未設定船位 API（後台 › 規則與清單）', 'This vessel has no MMSI': '這艘船沒有 MMSI',
   'File is larger than 20 MB': '檔案超過 20 MB', 'This vessel is used in shifts — set it inactive instead': '這艘船已用於班次，請改為停用',
   'Files were uploaded under this item — set it inactive instead': '此項目已有上傳檔案，請改為停用',
-  'You cannot delete your own account': '不能刪除自己的帳號', 'You cannot demote or disable your own account': '不能降級或停用自己的帳號'
+  'You cannot delete your own account': '不能刪除自己的帳號', 'Enter the API key first': '請先輸入並儲存 API 金鑰',
+  'Position API rejected the key (HTTP 401) — check the API key in Back office': '船位 API 拒絕此金鑰（401），請檢查後台的 API 金鑰',
+  'Position API rejected the key (HTTP 403) — check the API key in Back office': '船位 API 拒絕此金鑰（403），請檢查方案或金鑰',
+  'Vessel not found by the position API (HTTP 404) — check the MMSI': '船位 API 找不到這艘船（404），請檢查 MMSI',
+  'Could not find a position in the API response': 'API 回應中沒有船位資料', 'You cannot demote or disable your own account': '不能降級或停用自己的帳號'
 };
 function trErr(m) {
   if (LANG !== 'zh') return m;
@@ -1401,10 +1405,24 @@ function adminSettings() {
       ${ta('pause_reasons', 'Pause reasons', '停工原因', '', 5)}
     </div></div></div>
     <div class="section"><div class="section-header"><h3>📡 ${L('Vessel position API (paid AIS)', '船位 API（付費 AIS）')}</h3></div><div class="section-body"><div class="form-grid">
-      <div class="fg full"><label>${L('API URL — use {mmsi} and {key} placeholders', 'API 網址，可用 {mmsi} 與 {key} 代入')}</label><input id="st_ais_api_url" class="mono" value="${esc(st.ais_api_url)}" onfocus="if(!this.value)this.value=this.placeholder" placeholder="https://api.datalastic.com/api/v0/vessel?api-key={key}&mmsi={mmsi}"></div>
+      <div class="fg full"><label>${L('API URL — {mmsi} is replaced by the vessel MMSI (the key is sent in the x-api-key header)', 'API 網址：{mmsi} 會代入船舶 MMSI（金鑰以 x-api-key 標頭傳送）')}</label><input id="st_ais_api_url" class="mono" value="${esc(st.ais_api_url)}" onfocus="if(!this.value)this.value=this.placeholder" placeholder="https://api.datalastic.com/api/v0/vessel?mmsi={mmsi}"></div>
       <div class="fg full"><label>${L('API key (stored on the server only)', 'API 金鑰（只存在伺服器端）')}</label><input id="st_ais_api_key" class="mono" value="${esc(st.ais_api_key)}"></div>
+      <div class="full toolbar"><button class="btn btn-sm" type="button" onclick="testAis(this)">🔑 ${L('Test key (free, no credits used)', '測試金鑰（不扣點）')}</button><span class="small muted" id="aisTest">${L('Save settings first, then test.', '請先儲存設定再測試。')}</span></div>
     </div></div></div>
     <button class="btn btn-primary" onclick="saveSettings(this)">💾 ${L('Save settings', '儲存設定')}</button>`;
+}
+async function testAis(btn) {
+  btn.disabled = true;
+  const out = $('aisTest');
+  out.textContent = L('Testing…', '測試中…');
+  try {
+    const d = await api('pos.test');
+    const pick = k => d[k] !== undefined ? d[k] : '';
+    const rest = pick('requests_remaining') !== '' ? pick('requests_remaining') : pick('credits_remaining');
+    out.innerHTML = '✅ ' + esc(L('Key OK', '金鑰有效')) + (rest !== '' ? ' · ' + esc(L('remaining: ', '剩餘：')) + esc(rest) : '') +
+      ` <span class="mono" style="font-size:11px">${esc(JSON.stringify(d).slice(0, 200))}</span>`;
+  } catch (e) { out.textContent = '❌ ' + e.message; }
+  btn.disabled = false;
 }
 function saveSettings(btn) {
   const p = {};
