@@ -829,7 +829,14 @@ function fetchPosition_(p) {
     if (!o || typeof o !== 'object') return null;
     const lat = o.lat !== undefined ? o.lat : (o.latitude !== undefined ? o.latitude : o.LAT);
     const lon = o.lon !== undefined ? o.lon : (o.lng !== undefined ? o.lng : (o.longitude !== undefined ? o.longitude : o.LON));
-    if (lat !== undefined && lon !== undefined && isFinite(Number(lat)) && isFinite(Number(lon))) return { lat: Number(lat), lon: Number(lon), time: o.timestamp || o.time || o.TIMESTAMP || '' };
+    if (lat !== undefined && lon !== undefined && lat !== null && lon !== null && isFinite(Number(lat)) && isFinite(Number(lon))) {
+      // Datalastic：last_position_epoch（秒）／last_position_UTC；其他供應商：timestamp／time
+      const ep = Number(o.last_position_epoch);
+      const raw = o.last_position_UTC || o.timestamp || o.time || o.TIMESTAMP || '';
+      const d = ep > 0 ? new Date(ep * 1000) : (raw ? new Date(raw) : null);
+      return { lat: Number(lat), lon: Number(lon), speed: o.speed !== undefined ? o.speed : '', course: o.course !== undefined ? o.course : '',
+        time: d && !isNaN(d.getTime()) ? Utilities.formatDate(d, TZ, "yyyy-MM-dd'T'HH:mm") : '' };
+    }
     for (const k in o) { const r = walk(o[k]); if (r) return r; }
     return null;
   })(j);

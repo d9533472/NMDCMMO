@@ -1064,7 +1064,9 @@ async function fetchPos(svId) {
   try {
     const r = await api('pos.fetch', { mmsi: sv.mmsi });
     hideLoading();
-    await mut('sv.save', { id: svId, lat: String(r.lat), lon: String(r.lon), pos_time: nowLocal(), pos_source: 'AIS' }, L('Position updated', '船位已更新'));
+    const age = r.time ? mins(r.time, nowLocal()) : NaN;
+    await mut('sv.save', { id: svId, lat: String(r.lat), lon: String(r.lon), pos_time: r.time || nowLocal(), pos_source: 'AIS' },
+      L('Position updated', '船位已更新') + (age > 30 ? L(` — note: last AIS fix was ${fmtDur(age)} ago`, `（注意：AIS 最後定位是 ${fmtDur(age)} 前）`) : ''));
   } catch (e) { hideLoading(); toast(e.message, 'error'); }
 }
 // Open-Meteo：預報 API（含過去 3 個月）抓風／能見度，Marine API 抓浪高；取預觀測開始那一小時
@@ -1399,7 +1401,7 @@ function adminSettings() {
       ${ta('pause_reasons', 'Pause reasons', '停工原因', '', 5)}
     </div></div></div>
     <div class="section"><div class="section-header"><h3>📡 ${L('Vessel position API (paid AIS)', '船位 API（付費 AIS）')}</h3></div><div class="section-body"><div class="form-grid">
-      <div class="fg full"><label>${L('API URL — use {mmsi} and {key} placeholders', 'API 網址，可用 {mmsi} 與 {key} 代入')}</label><input id="st_ais_api_url" class="mono" value="${esc(st.ais_api_url)}" placeholder="https://api.example.com/vessel?mmsi={mmsi}&apikey={key}"></div>
+      <div class="fg full"><label>${L('API URL — use {mmsi} and {key} placeholders', 'API 網址，可用 {mmsi} 與 {key} 代入')}</label><input id="st_ais_api_url" class="mono" value="${esc(st.ais_api_url)}" onfocus="if(!this.value)this.value=this.placeholder" placeholder="https://api.datalastic.com/api/v0/vessel?api-key={key}&mmsi={mmsi}"></div>
       <div class="fg full"><label>${L('API key (stored on the server only)', 'API 金鑰（只存在伺服器端）')}</label><input id="st_ais_api_key" class="mono" value="${esc(st.ais_api_key)}"></div>
     </div></div></div>
     <button class="btn btn-primary" onclick="saveSettings(this)">💾 ${L('Save settings', '儲存設定')}</button>`;
