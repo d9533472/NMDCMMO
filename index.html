@@ -1694,6 +1694,20 @@ function svPanel(s, sv, ed) {
   const tRow = (k, en, zh, extra) => `<div class="trow"><label>${L(en, zh)}</label>
       <input type="datetime-local" value="${esc(sv[k] || '')}" ${ed ? '' : 'disabled'} onchange="saveSv('${sv.id}',{${k}:this.value})">
       <div class="toolbar">${ed ? `<button class="btn btn-sm w" onclick="saveSv('${sv.id}',{${k}:nowLocal()})">${L('Now', '現在')}</button>` : ''}${extra || ''}</div></div>`;
+  // 作業時間依實際順序：暫停施工 → （需要時）重新預觀測 → 回復施工；「現在」只出現在進行中暫停的下一步
+  const pRow = (p, f, en, zh, step, note) => `<div class="trow"><label>${L(en, zh)}${note ? `<div class="small muted" style="font-weight:400">${note}</div>` : ''}</label>
+      <input type="datetime-local" value="${esc(p[f] || '')}" ${ed && !(f === 'end' && !p.end && !step) ? '' : 'disabled'} onchange="savePause('${p.id}','${f}',this.value)">
+      <div class="toolbar">${ed && step ? `<button class="btn btn-sm w" onclick="doNext('${sv.id}','${step}')">${L('Now', '現在')}</button>` : ''}</div></div>`;
+  const pauseRows = () => ps.slice().sort((a, b) => tms(a.start) - tms(b.start)).map((p, i) => {
+    const st = pauseState(p), step = p.end ? '' : pauseStep(p), n = ps.length > 1 ? ' ' + (i + 1) : '';
+    const ended = p.end && sv.work_end && tms(p.end) >= tms(sv.work_end);
+    const showPre = (st.need && !ended) || p.pre_start || p.pre_end;
+    const why = st.zs.length ? L('Cetaceans in alert zone', '鯨豚進入警戒區') : L('Paused over ' + st.limit + ' min', '暫停超過 ' + st.limit + ' 分鐘');
+    return pRow(p, 'start', 'Work paused' + n, '暫停施工' + n, '') +
+      (showPre ? pRow(p, 'pre_start', 'New pre-watch start', '重新預觀測開始', step === 'rp_start' ? step : '', why) +
+        pRow(p, 'pre_end', 'New pre-watch end', '重新預觀測結束', step === 'rp_end' ? step : '', why) : '') +
+      pRow(p, 'end', 'Work resumed' + n, '回復施工' + n, step === 'resume' ? step : '');
+  }).join('');
   const pre = mins(sv.pre_start, sv.pre_end), work = mins(sv.work_start, sv.work_end);
   const wx = json(sv.weather, null);
   const site = sites().find(x => x.name === s.site);
@@ -1711,6 +1725,7 @@ function svPanel(s, sv, ed) {
       ${tRow('pre_start', 'Pre-watch start', '預觀測開始')}
       ${tRow('pre_end', 'Pre-watch end', '預觀測結束')}
       ${tRow('work_start', 'Observation start', '實際觀測開始')}
+      ${pauseRows()}
       ${tRow('work_end', 'Observation end', '實際觀測結束')}
     </div>
   </div>
@@ -1823,6 +1838,7 @@ function tick() {
   void now;
 }
 async function saveSv(id, patch) { try { await mut('sv.save', Object.assign({ id }, patch)); } catch (e) {} }
+async function savePause(id, field, value) { try { await mut('pause.save', { id, [field]: value }); } catch (e) {} }
 async function doNext(svId, k) {
   const sv = S.svs.find(x => x.id === svId);
   const openP = S.pauses.find(x => x.sv_id === svId && !x.end);
