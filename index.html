@@ -277,6 +277,15 @@ textarea{resize:vertical;min-height:64px}
 .rec{display:inline-block;width:8px;height:8px;border-radius:50%;background:#d32f2f;margin-right:4px;animation:pulse 1.4s infinite}
 #trkMap{height:440px;border-radius:var(--radius-lg);border:1px solid var(--border);background:#cfe3ef}
 @media(max-width:700px){#trkMap{height:320px}}
+.trk-card{pointer-events:none;max-width:270px;padding:7px 10px;background:rgba(255,255,255,.93);border:1px solid var(--border);border-radius:var(--radius);box-shadow:0 2px 8px rgba(0,32,56,.18);font:12px/1.6 'Inter','Noto Sans TC',sans-serif;color:var(--text)}
+.trk-card b{color:var(--navy)}
+.trk-card .ro{display:flex;flex-wrap:wrap;align-items:center;gap:2px 6px}
+.trk-card i{flex:none;display:inline-block}
+.trk-card .s{width:12px;height:12px;border:4px solid #00B050;border-radius:50%;background:#fff}
+.trk-card .e{width:10px;height:10px;margin-left:6px;border-radius:50%;background:#e5262b;box-shadow:0 0 0 1px #fff}
+.trk-card .g{width:28px;height:5px;border-radius:3px}
+.trk-card .d{width:24px;border-top:2px dashed #556}
+@media(max-width:700px){.trk-card{max-width:190px;font-size:11px}}
 @media print{
   body.print-trk .sidebar,body.print-trk .header,body.print-trk .toasts,body.print-trk #modals,body.print-trk .content > :not(#tqResult){display:none!important}
   body.print-trk .main{margin:0}
@@ -1859,6 +1868,32 @@ function nm(a, b) {
   const h = Math.sin(dLa / 2) ** 2 + Math.cos(a[0] * rad) * Math.cos(b[0] * rad) * Math.sin(dLo / 2) ** 2;
   return 2 * R * Math.asin(Math.sqrt(h));
 }
+const TQ_START = '#00B050', TQ_END = '#e5262b';
+// 同一艘船的顏色由淺到深：t＝0 最舊、t＝1 最新
+function tqShade(hex, t) {
+  const w = .6 * (1 - t), k = .25 * t;
+  return '#' + [1, 3, 5].map(i => Math.round(parseInt(hex.slice(i, i + 2), 16) * (1 - w) * (1 - k) + 255 * w).toString(16).padStart(2, '0')).join('');
+}
+function tqT(g, p) {
+  const t0 = tmsS(g.pts[0].time), span = tmsS(g.pts[g.pts.length - 1].time) - t0;
+  return span > 0 ? (tmsS(p.time) - t0) / span : 1;
+}
+// 斷訊門檻＝該段更新間隔的 3 倍（至少 30 分）：記錄軌跡中約 10 分一筆、平時約 60 分一筆
+function tqGapLimit(a, b) {
+  const t = a.track_id && a.track_id === b.track_id && S.tracks.find(x => x.id === a.track_id);
+  const iv = t ? Number(t.interval_min) || Number(S.settings.track_interval_min) || 10 : Number(S.settings.pos_interval_min) || 60;
+  return Math.max(30, iv * 3);
+}
+function tqSegs(g) {
+  return g.pts.slice(1).map((b, i) => {
+    const a = g.pts[i], gapMin = mins(a.time, b.time);
+    return { a, b, t: (tqT(g, a) + tqT(g, b)) / 2, gapMin, gap: gapMin > tqGapLimit(a, b) };
+  });
+}
+function tqPeriod(gs) {
+  const first = gs.map(g => g.pts[0].time).sort()[0], last = gs.map(g => g.pts[g.pts.length - 1].time).sort().pop();
+  return { first, last, text: fmtT(first, true) + ' → ' + fmtT(last, true), n: gs.reduce((s, g) => s + g.pts.length, 0) };
+}
 function renderTracks() {
   setTitle(L('Vessel tracks', '船舶軌跡'));
   const vs = S.vessels.filter(v => v.mmsi);
@@ -1924,9 +1959,10 @@ function tqRender() {
   const box = $('tqResult'); if (!box) return;
   const gs = tqGroups();
   if (!gs.length) { box.innerHTML = `<div class="section"><div class="empty">${L('No positions recorded for this period.', '這個時段沒有船位紀錄。')}</div></div>`; return; }
+  const per = tqPeriod(gs);
   box.innerHTML = `<div class="print-only" style="margin-bottom:8px"><b style="font-size:16px;color:var(--navy)">${esc(S.settings.project_name || '')} — ${L('Vessel track', '船舶軌跡')}</b>
-      <div class="small">${esc(gs.map(g => g.v.name + ' (MMSI ' + g.v.mmsi + ')').join('、'))} · ${esc(TQ.from.replace('T', ' '))} → ${esc(TQ.to.replace('T', ' '))} (UTC+8) · ${L('Source: AIS (Datalastic)', '資料來源：AIS（Datalastic）')}</div></div>
-    <div class="section"><div class="section-header"><h3>🗺 ${esc(fmtT(TQ.from, true))} → ${esc(fmtT(TQ.to, true))}</h3>
+      <div class="small">${esc(gs.map(g => g.v.name + ' (MMSI ' + g.v.mmsi + ')').join('、'))} · ${L('Data period', '資料期間')} ${esc(per.text)} (UTC+8) · ${L('Source: AIS (Datalastic)', '資料來源：AIS（Datalastic）')}</div></div>
+    <div class="section"><div class="section-header"><h3>🗺 ${L('Query period', '查詢時段')} ${esc(fmtT(TQ.from, true))} → ${esc(fmtT(TQ.to, true))}</h3>
       <div class="toolbar"><button class="btn btn-sm" onclick="tqExport('csv')">⬇ CSV</button><button class="btn btn-sm" onclick="tqExport('kml')">⬇ KML (Google Earth)</button><button class="btn btn-sm" onclick="tqExport('gpx')">⬇ GPX</button>
         <button class="btn btn-sm" onclick="tqPng(this)">🖼 PNG</button><button class="btn btn-sm" onclick="tqPdf()">📄 PDF</button></div></div>
     <div class="section-body"><div id="trkMap"></div>
@@ -1936,20 +1972,47 @@ function tqRender() {
       <div class="small muted" style="margin-top:6px">${L('Times are Taiwan local time (UTC+8); GPX/KML timestamps are exported in UTC as the formats require.', '時間為台灣時間（UTC+8）；GPX／KML 依格式規定以 UTC 輸出時間戳記。')}</div></div></div>`;
   if (TQ.map) { TQ.map.remove(); TQ.map = null; }
   if (!L_) return;
-  TQ.map = L_.map('trkMap', { scrollWheelZoom: false });
+  TQ.map = L_.map('trkMap', { scrollWheelZoom: false, zoomControl: false });
+  L_.control.zoom({ position: 'topright' }).addTo(TQ.map);
   L_.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Ocean/World_Ocean_Base/MapServer/tile/{z}/{y}/{x}', { maxZoom: 16, maxNativeZoom: 10, attribution: 'Esri, GEBCO, NOAA' }).addTo(TQ.map);
   L_.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Ocean/World_Ocean_Reference/MapServer/tile/{z}/{y}/{x}', { maxZoom: 16, maxNativeZoom: 10 }).addTo(TQ.map);
   const all = [];
+  const ll = p => [+p.lat, +p.lon], tip = (g, p, tag) => `${tag ? tag + ' · ' : ''}${esc(g.v.name)} ${esc(fmtT(p.time, true))}${p.speed !== '' ? ' · ' + esc(p.speed) + ' kn' : ''}`;
+  let hasGap = false;
   gs.forEach(g => {
-    const line = g.pts.map(p => [+p.lat, +p.lon]); all.push(...line);
-    const c = vColor(g.id);
-    L_.polyline(line, { color: c, weight: 3 }).addTo(TQ.map);
-    g.pts.forEach(p => L_.circleMarker([+p.lat, +p.lon], { radius: 3, color: c, fillOpacity: 1, weight: 1 })
-      .bindTooltip(`${esc(g.v.name)} ${esc(fmtT(p.time, true))}${p.speed !== '' ? ' · ' + esc(p.speed) + ' kn' : ''}`).addTo(TQ.map));
-    L_.marker(line[0], { icon: L_.divIcon({ className: '', iconSize: null, html: `<div class="vs-pin"><b>S</b>${esc(g.v.name)}</div>` }) }).addTo(TQ.map);
-    L_.marker(line[line.length - 1], { icon: L_.divIcon({ className: '', iconSize: null, html: `<div class="vs-pin trk"><b>E</b>${esc(g.v.name)}</div>` }) }).addTo(TQ.map);
+    all.push(...g.pts.map(ll));
+    const c = vColor(g.id), segs = tqSegs(g);
+    // 白邊先畫，淺色段才不會被海圖底色吃掉
+    segs.filter(s => !s.gap).forEach(s => L_.polyline([ll(s.a), ll(s.b)], { color: '#fff', weight: 5, opacity: .75, interactive: false }).addTo(TQ.map));
+    segs.forEach(s => {
+      if (!s.gap) return L_.polyline([ll(s.a), ll(s.b)], { color: tqShade(c, s.t), weight: 3, opacity: 1 }).addTo(TQ.map);
+      hasGap = true;
+      L_.polyline([ll(s.a), ll(s.b)], { color: tqShade(c, s.t), weight: 2.5, opacity: .9, dashArray: '6 7', lineCap: 'butt' })
+        .bindTooltip(L(`No AIS data for ${fmtDur(s.gapMin)}`, `約 ${fmtDur(s.gapMin)} 沒有 AIS 資料`), { sticky: true }).addTo(TQ.map);
+    });
+    g.pts.forEach(p => L_.circleMarker(ll(p), { radius: 3, color: '#fff', weight: 1, fillColor: tqShade(c, tqT(g, p)), fillOpacity: 1 })
+      .bindTooltip(tip(g, p)).addTo(TQ.map));
   });
-  TQ.map.fitBounds(L_.latLngBounds(all).pad(0.15), { maxZoom: 13 });
+  // 起訖點最後畫才不會被別艘船的線蓋住；船沒動時紅點落在綠環中間，兩個都看得到
+  gs.forEach(g => {
+    const a = g.pts[0], b = g.pts[g.pts.length - 1];
+    L_.circleMarker(ll(a), { radius: 10, stroke: false, fillColor: '#fff', fillOpacity: 1, interactive: false }).addTo(TQ.map);
+    L_.circleMarker(ll(a), { radius: 7, color: TQ_START, weight: 5, fillColor: '#fff', fillOpacity: 1 }).bindTooltip(tip(g, a, L('Start', '起點'))).addTo(TQ.map);
+    L_.circleMarker(ll(b), { radius: 5, color: '#fff', weight: 2, fillColor: TQ_END, fillOpacity: 1 }).bindTooltip(tip(g, b, L('End', '終點'))).addTo(TQ.map);
+  });
+  const card = L_.control({ position: 'topleft' });
+  card.onAdd = () => {
+    const d = L_.DomUtil.create('div', 'trk-card');
+    d.innerHTML = `<div><b>${L('Data period', '資料期間')}</b></div><div class="mono">${esc(per.text)}</div><div>${per.n} ${L('points', '點')}</div>
+      ${gs.map(g => `<div class="ro"><i class="g" style="background:linear-gradient(90deg,${tqShade(vColor(g.id), 0)},${tqShade(vColor(g.id), 1)})"></i>${esc(g.v.name)}</div>`).join('')}
+      <div class="ro"><i class="s"></i>${L('Start', '起點')}<i class="e"></i>${L('End', '終點')}</div>
+      <div>${L('Light → dark = older → newer', '顏色淺 → 深＝舊 → 新')}</div>
+      ${hasGap ? `<div class="ro"><i class="d"></i>${L('AIS gap (no data)', '斷訊（這段沒有資料）')}</div>` : ''}`;
+    return d;
+  };
+  card.addTo(TQ.map);
+  const mapBox = TQ.map.getContainer(), cardW = card.getContainer().offsetWidth + 16;
+  TQ.map.fitBounds(L_.latLngBounds(all).pad(0.15), { maxZoom: 13, paddingTopLeft: mapBox.offsetWidth > 600 ? [cardW, 0] : [0, 0] });
   setTimeout(() => { if (TQ.map) TQ.map.invalidateSize(); }, 50);
 }
 function tqFile() { return 'MMO_track_' + TQ.from.replace(/[:T-]/g, '').slice(0, 12) + '-' + TQ.to.replace(/[:T-]/g, '').slice(0, 12); }
@@ -1967,7 +2030,7 @@ async function tqPng(btn) {
   btn.disabled = true;
   try {
     const map = TQ.map, el = map.getContainer(), box = el.getBoundingClientRect();
-    const scale = 2, W = box.width, H = box.height, top = 54;
+    const scale = 2, W = box.width, H = box.height, top = 88;
     const c = document.createElement('canvas');
     c.width = W * scale; c.height = (H + top) * scale;
     const g = c.getContext('2d');
@@ -1983,26 +2046,50 @@ async function tqPng(btn) {
       im.onerror = () => res();
       im.src = t.src;
     })));
-    const gs = tqGroups();
+    const gs = tqGroups(), per = tqPeriod(gs);
+    const pt = p => { const q = map.latLngToContainerPoint([+p.lat, +p.lon]); return [q.x, q.y + top]; };
+    const ring = (x, y) => {
+      g.setLineDash([]); g.beginPath(); g.arc(x, y, 10, 0, 7); g.fillStyle = '#fff'; g.fill();
+      g.beginPath(); g.arc(x, y, 7, 0, 7); g.fill(); g.strokeStyle = TQ_START; g.lineWidth = 5; g.stroke();
+    };
+    const dot = (x, y) => { g.setLineDash([]); g.beginPath(); g.arc(x, y, 5, 0, 7); g.fillStyle = TQ_END; g.fill(); g.strokeStyle = '#fff'; g.lineWidth = 2; g.stroke(); };
+    let hasGap = false;
+    g.lineJoin = 'round';
     gs.forEach(gr => {
-      const col = vColor(gr.id);
-      const pt = p => { const q = map.latLngToContainerPoint([+p.lat, +p.lon]); return [q.x, q.y + top]; };
-      g.strokeStyle = col; g.lineWidth = 3; g.lineJoin = 'round'; g.beginPath();
-      gr.pts.forEach((p, i) => { const [x, y] = pt(p); i ? g.lineTo(x, y) : g.moveTo(x, y); }); g.stroke();
-      g.fillStyle = col; gr.pts.forEach(p => { const [x, y] = pt(p); g.beginPath(); g.arc(x, y, 2.5, 0, 7); g.fill(); });
-      [[gr.pts[0], 'S'], [gr.pts[gr.pts.length - 1], 'E']].forEach(([p, lab]) => {
-        const [x, y] = pt(p); g.beginPath(); g.arc(x, y, 8, 0, 7); g.fillStyle = lab === 'S' ? '#002038' : col; g.fill();
-        g.strokeStyle = '#fff'; g.lineWidth = 2; g.stroke(); g.fillStyle = '#fff'; g.font = 'bold 10px Inter,sans-serif'; g.textAlign = 'center'; g.fillText(lab, x, y + 3.5);
+      const col = vColor(gr.id), segs = tqSegs(gr);
+      const seg = s => { const [x1, y1] = pt(s.a), [x2, y2] = pt(s.b); g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2, y2); g.stroke(); };
+      g.setLineDash([]); g.lineCap = 'round'; g.lineWidth = 5; g.strokeStyle = 'rgba(255,255,255,.75)'; segs.filter(s => !s.gap).forEach(seg);
+      segs.forEach(s => {
+        g.strokeStyle = tqShade(col, s.t);
+        if (s.gap) { hasGap = true; g.setLineDash([6, 7]); g.lineCap = 'butt'; g.lineWidth = 2.5; }
+        else { g.setLineDash([]); g.lineCap = 'round'; g.lineWidth = 3; }
+        seg(s);
       });
+      g.setLineDash([]); g.strokeStyle = '#fff'; g.lineWidth = 1;
+      gr.pts.forEach(p => { const [x, y] = pt(p); g.beginPath(); g.arc(x, y, 3, 0, 7); g.fillStyle = tqShade(col, tqT(gr, p)); g.fill(); g.stroke(); });
     });
+    gs.forEach(gr => { ring(...pt(gr.pts[0])); dot(...pt(gr.pts[gr.pts.length - 1])); });
+    const font = '12px Inter,"Noto Sans TC",sans-serif';
+    g.fillStyle = '#ffffff'; g.fillRect(0, 0, W, top);   // 圖磚會超出地圖範圍，標題區要蓋回白底
     g.textAlign = 'left'; g.fillStyle = '#002038'; g.font = 'bold 15px Inter,"Noto Sans TC",sans-serif';
     g.fillText((S.settings.project_name || '') + ' — ' + L('Vessel track', '船舶軌跡'), 10, 20);
-    g.font = '12px Inter,"Noto Sans TC",sans-serif'; g.fillStyle = '#334';
-    g.fillText(TQ.from.replace('T', ' ') + ' → ' + TQ.to.replace('T', ' ') + ' (UTC+8) · AIS (Datalastic)', 10, 38);
-    let lx = W - 10; g.textAlign = 'right';
-    gs.slice().reverse().forEach(gr => {
-      const t = gr.v.name + ' ' + gr.dist.toFixed(1) + ' nm'; g.fillStyle = '#334'; g.fillText(t, lx, 38);
-      lx -= g.measureText(t).width + 6; g.fillStyle = vColor(gr.id); g.fillRect(lx - 12, 30, 12, 4); lx -= 22;
+    g.font = font; g.fillStyle = '#334';
+    g.fillText(L('Data period ', '資料期間 ') + per.text + ' (UTC+8) · ' + per.n + L(' points', ' 點') + ' · AIS (Datalastic)', 10, 38);
+    // 第三列：起訖與斷訊圖例；第四列：各船色帶
+    let lx = 19; const label = (t, gap) => { g.font = font; g.fillStyle = '#334'; g.fillText(t, lx, 60); lx += g.measureText(t).width + gap; };
+    ring(lx, 56); lx += 14; label(L('Start', '起點'), 16);
+    dot(lx, 56); lx += 10; label(L('End', '終點'), 16);
+    label(L('Light → dark = older → newer', '顏色淺 → 深＝舊 → 新'), 16);
+    if (hasGap) {
+      g.setLineDash([6, 7]); g.lineCap = 'butt'; g.lineWidth = 2.5; g.strokeStyle = '#556'; g.beginPath(); g.moveTo(lx, 56); g.lineTo(lx + 26, 56); g.stroke(); g.setLineDash([]);
+      lx += 32; label(L('AIS gap (no data)', '斷訊（這段沒有資料）'), 0);
+    }
+    lx = 10;
+    gs.forEach(gr => {
+      const grad = g.createLinearGradient(lx, 0, lx + 28, 0), col = vColor(gr.id);
+      grad.addColorStop(0, tqShade(col, 0)); grad.addColorStop(1, tqShade(col, 1));
+      g.fillStyle = grad; g.fillRect(lx, 73, 28, 5); lx += 34;
+      g.fillStyle = '#334'; const t = gr.v.name + ' ' + gr.dist.toFixed(1) + ' nm'; g.fillText(t, lx, 80); lx += g.measureText(t).width + 16;
     });
     g.textAlign = 'right'; g.font = '10px Inter,sans-serif'; g.fillStyle = '#556'; g.fillText('Map: Esri, GEBCO, NOAA', W - 6, H + top - 6);
     let url;
