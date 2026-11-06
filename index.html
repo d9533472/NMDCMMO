@@ -1954,7 +1954,7 @@ function pauseModal(svId, id, resume) {
         const v = sightVals(bg);
         if (!v) return false;
         if (!linked || v.time !== linked.time || v.species !== linked.species || v.count !== String(linked.count)) {
-          const d = await saveSightRec(Object.assign({ id: sightId, sv_id: svId, in_alert_zone: true }, v, linked ? {} : { action: SIGHT_ACT }));
+          const d = await saveSightRec(Object.assign({ id: sightId, sv_id: svId, in_alert_zone: true }, v, linked ? {} : { action: SIGHT_ACT, detection: /PAM/i.test(val(bg, 'pReason')) ? 'PAM 被動聲學 | PAM' : '' }));
           sightId = newSight = d.id;   // 暫停存檔失敗重按時更新同一筆，不重複新增
         }
       }
@@ -1978,7 +1978,7 @@ async function delRec(action, id, btn) {
 }
 
 const SIGHT_ACT = 'P 暫停施工 | P Pause work';
-const isSightReason = r => /目擊|sighting/i.test(r || '');
+const isSightReason = r => /鯨豚|cetacean|sighting/i.test(r || '');
 // 目擊只記時間、種類、數量，其餘寫在紙本目擊紀錄表
 function sightFields(x, time) {
   const species = lines(S.settings.species);
