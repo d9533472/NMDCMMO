@@ -1752,10 +1752,9 @@ function svPanel(s, sv, ed) {
         : `<div class="empty">${L('No pauses', '無暫停施工紀錄')}</div>`}</div>
     <div class="section"><div class="section-header"><h3>🐬 ${L('Sightings', '目擊紀錄')} <span class="muted">(${ss.length})</span></h3>
       ${ed ? `<button class="btn btn-sm w" onclick="sightingModal('${sv.id}')">＋ ${L('Add', '新增')}</button>` : ''}</div>
-      ${ss.length ? `<div class="table-wrap"><table class="tbl"><tr><th>${L('Time', '時間')}</th><th>${L('Species', '物種')}</th><th>${L('Count', '數量')}</th><th>${L('Distance', '距離')}</th><th>${L('Action', '處置')}</th><th></th></tr>
+      ${ss.length ? `<div class="table-wrap"><table class="tbl"><tr><th>${L('Time', '時間')}</th><th>${L('Species', '物種')}</th><th>${L('Count', '數量')}</th><th>${L('Alert zone', '警戒區')}</th><th></th></tr>
         ${ss.map(x => `<tr><td class="mono">${fmtT(x.time, true)}</td><td>${esc(biName(x.species))}<div class="small muted">${esc(biName(x.detection))}</div></td><td>${esc(x.count)}</td>
-          <td>${x.min_distance_m ? esc(x.min_distance_m) + ' m' : '—'} ${bool(x.in_alert_zone) ? `<span class="tag red">${L('Alert zone', '警戒區')}</span>` : ''}</td>
-          <td>${esc(biName(x.action))}${x.left_time ? `<div class="small muted">${L('Left', '離開')} ${fmtT(x.left_time)}</div>` : ''}</td>
+          <td>${inZone(x) ? `<span class="tag red">${L('Alert zone', '警戒區')}</span>` : '—'}${x.left_time ? `<div class="small muted">${L('Left', '離開')} ${fmtT(x.left_time)}</div>` : ''}</td>
           <td>${ed ? `<button class="btn btn-sm w" onclick="sightingModal('${sv.id}','${x.id}')">✏️</button>` : ''}</td></tr>`).join('')}</table></div>`
         : `<div class="empty">${L('No cetaceans sighted', '未目擊鯨豚')}</div>`}</div>
   </div>
@@ -1929,21 +1928,48 @@ function pauseModal(svId, id, resume) {
   const reasons = lines(S.settings.pause_reasons);
   if (p && p.reason && reasons.indexOf(p.reason) < 0) reasons.push(p.reason);
   const ss = S.sightings.filter(x => x.sv_id === svId);
+  const linked = p && p.sighting_id ? ss.find(x => x.id === p.sighting_id) : null;
+  // 舊資料補連結：只列還沒連到暫停施工的目擊，不選就直接新增一筆
+  const free = p && !linked ? ss.filter(x => !S.pauses.some(q => q.sighting_id === x.id)) : [];
+  let newSight = '';
   const body = `<div class="form-grid">
     <div class="fg"><label>${L('Pause time', '暫停施工時間')} *</label><input id="pStart" type="datetime-local" value="${esc(p ? p.start : nowLocal())}"></div>
     <div class="fg"><label>${L('Resume time', '回復施工時間')}</label><input id="pEnd" type="datetime-local" value="${esc(p ? (p.end || (resume ? nowLocal() : '')) : '')}"></div>
     <div class="fg full"><label>${L('Reason', '原因')}</label><select id="pReason">${opts(reasons.map(r => ({ v: r, t: biName(r) })), p ? p.reason : reasons[0])}</select></div>
-    <div class="fg full"><label>${L('Related sighting', '相關目擊紀錄')}</label><select id="pSight">${opts(ss.map(x => ({ v: x.id, t: fmtT(x.time, true) + ' ' + biName(x.species) + (x.min_distance_m ? ' · ' + x.min_distance_m + ' m' : '') })), p ? p.sighting_id : '', '—')}</select></div>
+    <div class="full form-grid" id="pSightBox">
+      ${free.length ? `<div class="fg full"><label>${L('Existing sighting', '選擇既有目擊紀錄')}</label><select id="pSight">${opts(free.map(x => ({ v: x.id, t: fmtT(x.time, true) + ' ' + biName(x.species) })), '', L('Add a new sighting', '新增一筆目擊'))}</select></div>` : ''}
+      ${sightFields(linked, p ? p.start : nowLocal())}
+    </div>
     <div class="fg"><label>${L('New pre-watch start', '重新預觀測開始')}</label><input id="pPreS" type="datetime-local" value="${esc(p ? p.pre_start : '')}"></div>
     <div class="fg"><label>${L('New pre-watch end', '重新預觀測結束')}</label><input id="pPreE" type="datetime-local" value="${esc(p ? p.pre_end : '')}"></div>
     <div class="fg full"><label>${L('Remark', '備註')}</label><input id="pRemark" value="${esc(p ? p.remark : '')}"></div></div>
     <div class="alert blue" style="margin-top:12px;font-size:12px">${L('A pause longer than ' + settingsNum('repre_pause_min', 60) + ' min, or cetaceans entering the ' + settingsNum('alert_zone_m', 750) + ' m alert zone (after they leave), requires a new ' + settingsNum('pre_watch_min', 30) + '-min pre-watch before work resumes.',
       '暫停施工超過 ' + settingsNum('repre_pause_min', 60) + ' 分鐘，或鯨豚進入 ' + settingsNum('alert_zone_m', 750) + ' m 警戒區（離開後），須重新預觀測 ' + settingsNum('pre_watch_min', 30) + ' 分鐘才可回復施工。')}</div>`;
-  openModal(resume ? L('Resume work', '回復施工') : (p ? L('Edit pause', '編輯暫停施工') : L('Pause work', '暫停施工')), body, {
+  const bg = openModal(resume ? L('Resume work', '回復施工') : (p ? L('Edit pause', '編輯暫停施工') : L('Pause work', '暫停施工')), body, {
     foot: p ? `<button class="btn btn-danger w" style="margin-right:auto" onclick="delRec('pause.delete','${p.id}',this)">🗑 ${L('Delete', '刪除')}</button>` : '',
     onSave: async (bg, btn) => {
-      await mut('pause.save', { id: p ? p.id : '', sv_id: svId, start: val(bg, 'pStart'), end: val(bg, 'pEnd'), reason: val(bg, 'pReason'), sighting_id: val(bg, 'pSight'), pre_start: val(bg, 'pPreS'), pre_end: val(bg, 'pPreE'), remark: val(bg, 'pRemark') }, L('Saved', '已儲存'), btn);
+      const sight = isSightReason(val(bg, 'pReason')), picked = sight ? val(bg, 'pSight') : '';
+      let sightId = !sight ? '' : (picked || (linked ? linked.id : newSight));
+      if (sight && !picked) {
+        const v = sightVals(bg);
+        if (!v) return false;
+        if (!linked || v.time !== linked.time || v.species !== linked.species || v.count !== String(linked.count)) {
+          const d = await saveSightRec(Object.assign({ id: sightId, sv_id: svId, in_alert_zone: true }, v, linked ? {} : { action: SIGHT_ACT }));
+          sightId = newSight = d.id;   // 暫停存檔失敗重按時更新同一筆，不重複新增
+        }
+      }
+      await mut('pause.save', { id: p ? p.id : '', sv_id: svId, start: val(bg, 'pStart'), end: val(bg, 'pEnd'), reason: val(bg, 'pReason'), sighting_id: sightId, pre_start: val(bg, 'pPreS'), pre_end: val(bg, 'pPreE'), remark: val(bg, 'pRemark') }, L('Saved', '已儲存'), btn);
     } });
+  const q = s => bg.querySelector(s);
+  const sync = () => {
+    q('#pSightBox').style.display = isSightReason(q('#pReason').value) ? '' : 'none';
+    const picked = q('#pSight') && q('#pSight').value;
+    bg.querySelectorAll('.sight-f').forEach(e => e.style.display = picked ? 'none' : '');
+  };
+  q('#pReason').addEventListener('change', sync);
+  if (q('#pSight')) q('#pSight').addEventListener('change', sync);
+  if (!p) q('#pStart').addEventListener('change', () => { q('#sTime').value = q('#pStart').value; });
+  sync();
 }
 async function delRec(action, id, btn) {
   if (!(await confirmBox(L('Delete this record?', '確定刪除此紀錄？'), L('Delete', '刪除'), true))) return;
@@ -1951,63 +1977,55 @@ async function delRec(action, id, btn) {
   mut(action, { id }, L('Deleted', '已刪除')).catch(() => {});
 }
 
-// 作業手冊第四版 F4A／F4C 代碼
-const DIRS = ['T 靠近 | T Toward', 'A 遠離 | A Away', 'S 與船艏同向平行 | S Parallel, same direction', 'O 與船艏反向平行 | O Parallel, opposite direction', 'C 從船艏穿越 | C Crossing ahead',
-  'V 多變 | V Variable', 'M 盤旋 | M Milling', 'I 停留 | I Stationary', 'X 其他 | X Other', 'U 不明 | U Unknown'];
-const DECKS = ['F 前方 | F Forward', 'R 右舷 | R Starboard', 'L 左舷 | L Port', 'B 後方 | B Behind', 'C 上甲板 | C Upper deck'];
-const PILE = ['O 未施工 | O Not working', 'W 施工中 | W Working', 'B 暫停施工 | B Work paused'];
-const IMGS = ['拍照 | Photo', '錄影 | Video', '拍照＋錄影 | Photo + video', '無 | None'];
+const SIGHT_ACT = 'P 暫停施工 | P Pause work';
+const isSightReason = r => /目擊|sighting/i.test(r || '');
+// 目擊只記時間、種類、數量，其餘寫在紙本目擊紀錄表
+function sightFields(x, time) {
+  const species = lines(S.settings.species);
+  if (x && x.species && species.indexOf(x.species) < 0) species.push(x.species);
+  return `<div class="fg sight-f"><label>${L('Sighting time', '目擊時間')} *</label><input id="sTime" type="datetime-local" value="${esc(x ? x.time : time)}"></div>
+    <div class="fg sight-f"><label>${L('Species', '鯨豚種類')} *</label><select id="sSp">${opts(species.map(d => ({ v: d, t: biName(d) })), x ? x.species : '', '—')}</select></div>
+    <div class="fg sight-f"><label>${L('Count', '鯨豚數量')} *</label><input id="sCnt" inputmode="numeric" value="${esc(x ? x.count : '')}"></div>`;
+}
+function sightVals(bg) {
+  const v = { time: val(bg, 'sTime'), species: val(bg, 'sSp'), count: val(bg, 'sCnt') };
+  if (v.time && v.species && v.count) return v;
+  toast(L('Enter the sighting time, species and count', '請填寫目擊時間、鯨豚種類與數量'), 'error');
+  return null;
+}
+async function saveSightRec(rec) {
+  try { return await api('sighting.save', rec); } catch (e) { toast(e.message, 'error'); throw e; }
+}
 function sightingModal(svId, id) {
   const x = id ? S.sightings.find(z => z.id === id) : null;
   const sv = S.svs.find(z => z.id === svId);
-  const species = lines(S.settings.species);
-  if (x && x.species && species.indexOf(x.species) < 0) species.push(x.species);
-  const det = ['目視 | Visual', 'PAM 被動聲學 | PAM', '目視＋PAM | Visual + PAM', '熱顯像 | Thermal'];
-  const acts = ['P 暫停施工 | P Pause work', 'D 延遲施工 | D Delay work', 'R 降低施工速度 | R Reduce work speed', 'I 提高減噪措施強度 | I Increase noise mitigation',
-    'N 通報 | N Notify', 'T 追蹤 | T Tracking'];
-  if (x && x.action && acts.indexOf(x.action) < 0) acts.push(x.action);   // 舊紀錄的選項保留，避免編輯時被清空
-  const workSt = x && x.piling_status && PILE.indexOf(x.piling_status) < 0 ? PILE.concat(x.piling_status) : PILE;
   const alertM = settingsNum('alert_zone_m', 750);
-  const working = sv.checks.status === 'work';
-  const body = `<div class="form-grid">
-    <div class="fg"><label>${L('Sighting time', '目擊時間')} *</label><input id="sTime" type="datetime-local" value="${esc(x ? x.time : nowLocal())}"></div>
-    <div class="fg"><label>${L('Detection', '偵測方式')}</label><select id="sDet">${opts(det.map(d => ({ v: d, t: biName(d) })), x ? x.detection : det[0])}</select></div>
-    <div class="fg"><label>${L('Species', '物種')}</label><select id="sSp">${opts(species.map(d => ({ v: d, t: biName(d) })), x ? x.species : '')}</select></div>
-    <div class="fg"><label>${L('Count', '數量')}</label><input id="sCnt" inputmode="numeric" value="${esc(x ? x.count : '')}"></div>
-    <div class="fg"><label>${L('Distance from work point (m)', '鯨豚與施工點距離（m）')}</label><input id="sDist" inputmode="numeric" value="${esc(x ? x.min_distance_m : '')}"></div>
-    <div class="fg"><label>&nbsp;</label><label class="chk"><input type="checkbox" id="sZone" ${x && bool(x.in_alert_zone) ? 'checked' : ''}> ${L('Entered alert zone', '進入警戒區')} (${alertM} m)</label></div>
-    <div class="fg"><label>${L('Action taken', '處置')}</label><select id="sAct">${opts(acts.map(d => ({ v: d, t: biName(d) })), x ? x.action : (working ? acts[0] : acts[2]))}</select></div>
-    <div class="fg"><label>${L('Last sighting / detection, or left alert zone', '最後目擊／最後偵測／離開警戒區時間')}</label><input id="sLeft" type="datetime-local" value="${esc(x ? x.left_time : '')}"></div>
-    <div class="fg"><label>${L('Latitude', '緯度')}</label><input id="sLat" inputmode="decimal" value="${esc(x ? x.lat : sv.lat || '')}"></div>
-    <div class="fg"><label>${L('Longitude', '經度')}</label><input id="sLon" inputmode="decimal" value="${esc(x ? x.lon : sv.lon || '')}"></div>
-    <div class="fg"><label>${L('Mother-calf pairs', '母子對')}</label><input id="sMc" inputmode="numeric" value="${esc(x ? x.mother_calf : '')}"></div>
-    <div class="fg"><label>${L('Work status at sighting', '目擊時施工狀態')}</label><select id="sPile">${opts(workSt.map(d => ({ v: d, t: biName(d) })), x ? x.piling_status : '', '—')}</select></div>
-    <div class="fg"><label>${L('Bearing (0–360°)', '觀察方位（0–360°）')}</label><input id="sBear" inputmode="numeric" value="${esc(x ? x.bearing : '')}"></div>
-    <div class="fg"><label>${L('Distance from vessel (m)', '觀察距離（與船，m）')}</label><input id="sVd" inputmode="numeric" value="${esc(x ? x.vessel_dist_m : '')}"></div>
-    <div class="fg"><label>${L('Direction of travel (relative to ship)', '鯨豚游行方向（相對船舶）')}</label><select id="sDir">${opts(DIRS.map(d => ({ v: d, t: biName(d) })), x ? x.direction : '', '—')}</select></div>
-    <div class="fg"><label>${L('Observation deck', '甲板觀察位置')}</label><select id="sDeck">${opts(DECKS.map(d => ({ v: d, t: biName(d) })), x ? x.deck : '', '—')}</select></div>
-    <div class="fg"><label>${L('Image taken', '影像紀錄')}</label><select id="sImg">${opts(IMGS.map(d => ({ v: d, t: biName(d) })), x ? x.image : '', '—')}</select></div>
-    <div class="fg"></div>
-    <div class="full pam-only" style="border-top:1px dashed var(--border);padding-top:10px"><b class="small" style="color:var(--navy)">🎧 ${L('PAM detection (form F4B)', 'PAM 偵測（偵測紀錄表 F4B）')}</b></div>
-    <div class="fg pam-only"><label>${L('Call type', '聲音類型')}</label><select id="sCall">${opts(['click', 'whistle', 'click + whistle'], x ? x.call_type : '', '—')}</select></div>
-    <div class="fg pam-only"><label>${L('Frequency range (kHz)', '頻率範圍（kHz）')}</label><input id="sFreq" value="${esc(x ? x.freq_khz : '')}" placeholder="5-20"></div>
-    <div class="fg pam-only"><label>${L('Distance to hydrophone (m, N/A if unknown)', '與水下麥克風距離（m，無法估算填 N/A）')}</label><input id="sHyd" value="${esc(x ? x.hydrophone_m : '')}"></div>
-    <div class="fg full"><label>${L('Behaviour', '行為')}</label><input id="sBeh" value="${esc(x ? x.behavior : '')}" placeholder="${L('e.g. travelling north, feeding', '例：往北移動、覓食')}"></div>
-    <div class="fg full"><label>${L('Remark', '備註')}</label><textarea id="sRem">${esc(x ? x.remark : '')}</textarea></div>
-    ${!x && working ? `<label class="chk full"><input type="checkbox" id="sAuto" checked> ${L('Also record a work pause starting at the sighting time', '同時建立暫停施工紀錄（暫停施工時間＝目擊時間）')}</label>` : ''}
-  </div><div class="small muted" style="margin-top:10px">${L('Fill in the paper sighting form as usual and upload it under “Sighting record”.', '紙本目擊紀錄表照常填寫，並於「上傳」區的目擊紀錄表上傳掃描檔。')}</div>`;
-  const bg = openModal(x ? L('Edit sighting', '編輯目擊紀錄') : L('Record sighting', '登錄目擊') + ' — ' + esc(sv.vessel_name), body, { wide: true,
+  const open = S.pauses.find(p => p.sv_id === svId && !p.end);
+  const stop = !x && sv.checks.status === 'work', link = !x && open && !open.sighting_id;
+  const zoneTxt = stop ? L('Entered the ' + alertM + ' m alert zone — also pause work', '進入 ' + alertM + ' m 警戒區，同時暫停施工') : L('Entered the ' + alertM + ' m alert zone', '進入 ' + alertM + ' m 警戒區');
+  const body = `<div class="form-grid">${sightFields(x, nowLocal())}
+    <label class="chk full"><input type="checkbox" id="sZone" ${!x || inZone(x) ? 'checked' : ''}> ${zoneTxt}</label>
+    ${x && inZone(x) ? `<div class="fg full"><label>${L('Left alert zone', '離開警戒區時間')}</label><input id="sLeft" type="datetime-local" value="${esc(x.left_time)}"></div>` : ''}
+  </div><div class="small muted" style="margin-top:10px">${L('Fill in the paper sighting form as usual and upload it under “Sighting record”.', '其他內容寫在紙本目擊紀錄表，並於「上傳」區上傳掃描檔。')}</div>`;
+  openModal(x ? L('Edit sighting', '編輯目擊紀錄') : L('Record sighting', '登錄目擊') + ' — ' + esc(sv.vessel_name), body, {
     foot: x ? `<button class="btn btn-danger w" style="margin-right:auto" onclick="delRec('sighting.delete','${x.id}',this)">🗑 ${L('Delete', '刪除')}</button>` : '',
     onSave: async (bg, btn) => {
-      await mut('sighting.save', { id: x ? x.id : '', sv_id: svId, time: val(bg, 'sTime'), detection: val(bg, 'sDet'), species: val(bg, 'sSp'), count: val(bg, 'sCnt'),
-        min_distance_m: val(bg, 'sDist'), in_alert_zone: val(bg, 'sZone'), action: val(bg, 'sAct'), left_time: val(bg, 'sLeft'),
-        lat: val(bg, 'sLat'), lon: val(bg, 'sLon'), behavior: val(bg, 'sBeh'), mother_calf: val(bg, 'sMc'), piling_status: val(bg, 'sPile'), bearing: val(bg, 'sBear'),
-        vessel_dist_m: val(bg, 'sVd'), direction: val(bg, 'sDir'), deck: val(bg, 'sDeck'), image: val(bg, 'sImg'), call_type: val(bg, 'sCall'), freq_khz: val(bg, 'sFreq'), hydrophone_m: val(bg, 'sHyd'), remark: val(bg, 'sRem'), auto_pause: !!val(bg, 'sAuto') }, L('Sighting saved', '目擊紀錄已儲存'), btn);
+      const v = sightVals(bg);
+      if (!v) return false;
+      const zone = val(bg, 'sZone'), rec = Object.assign({ id: x ? x.id : '', sv_id: svId, in_alert_zone: zone }, v);
+      if (x) {
+        if (bg.querySelector('#sLeft')) rec.left_time = val(bg, 'sLeft');
+        if (!zone) rec.min_distance_m = '';
+      } else if (zone && (stop || open)) rec.action = SIGHT_ACT;
+      // 暫停施工中登錄的目擊 → 連到這次暫停
+      if (zone && link) {
+        const d = await saveSightRec(rec);
+        await mut('pause.save', { id: open.id, sighting_id: d.id }, L('Sighting saved', '目擊紀錄已儲存'), btn);
+        return;
+      }
+      rec.auto_pause = zone && stop;
+      await mut('sighting.save', rec, rec.auto_pause ? L('Sighting saved, work paused', '目擊紀錄已儲存，已暫停施工') : L('Sighting saved', '目擊紀錄已儲存'), btn);
     } });
-  const pamSync = () => { const pam = /PAM/.test(bg.querySelector('#sDet').value); bg.querySelectorAll('.pam-only').forEach(e => e.style.display = pam ? '' : 'none'); };
-  bg.querySelector('#sDet').addEventListener('change', pamSync); pamSync();
-  const d = bg.querySelector('#sDist'), z = bg.querySelector('#sZone');
-  d.oninput = () => { if (d.value !== '' && isFinite(Number(d.value))) z.checked = Number(d.value) <= alertM; };
 }
 
 function posModal(svId) {
