@@ -10,7 +10,7 @@
 // 角色：admin（全部＋後台）、mmo（建立／填報批次、上傳）、viewer（唯讀）
 // ============================================================
 
-const VERSION = '1.4';
+const VERSION = '1.5';
 const ROOT_FOLDER_ID = '1uVkbv4tndRVERhrHmHUzaTvPlHaFV4em';
 const SS_NAME = 'MMO 鯨豚觀察總表';
 const TZ = 'Asia/Taipei';
@@ -44,7 +44,7 @@ const DEFAULT_SETTINGS = {
   response_min: '10',           // 警戒區內目擊後幾分鐘內須啟動應變（暫停施工）
   repre_pause_min: '60',        // 暫停施工超過幾分鐘須重新預觀測
   mmo_dist_tol_m: '150',        // 船距判定：警戒區半徑 ± 此值視為「在附近」
-  crew_slots: 'TCO1\nTCO2\nTCO3\nTCO4\nPAMO',
+  crew_slots: 'TCO\nPAMO',
   sites: '通霄 Tongxiao, 24.47, 120.55',
   scopes: '海管鋪設 Pipelay\n拋石作業 Rock placement\n後噴埋 Post-lay jetting\n回填作業 Backfilling\n超長段作業 Extra-long section',
   species: '台灣白海豚 Taiwanese humpback dolphin\n印太瓶鼻海豚 Indo-Pacific bottlenose dolphin\n瓶鼻海豚 Common bottlenose dolphin\n印太露脊鼠海豚 Indo-Pacific finless porpoise\n熱帶斑海豚 Pantropical spotted dolphin\n飛旋海豚 Spinner dolphin\n糙齒海豚 Rough-toothed dolphin\n未知鯨豚 Unidentified cetacean',
@@ -306,7 +306,27 @@ function ensureSchema_() {
     }
     const st = Repo.all('Settings');
     Object.keys(DEFAULT_SETTINGS).forEach(k => { if (!st.find(s => s.key === k)) Repo.insert('Settings', { key: k, value: DEFAULT_SETTINGS[k] }); });
-    // v1.4：批次改稱批次（舊資料夾跟著改名）、照片多一項 AIS 照片
+    // v1.5：職位 TCO1–4 併成 TCO，可勾多人；舊紀錄同步合併（後台自訂過職位的不動）
+    if (!props.getProperty('v15_crew')) {
+      const cur = Repo.all('Settings').find(x => x.key === 'crew_slots');
+      if (cur && /^TCO1\s+TCO2\s+TCO3\s+TCO4\s+PAMO\s*$/.test(cur.value)) {
+        Repo.update('Settings', 'crew_slots', { value: DEFAULT_SETTINGS.crew_slots });
+        Repo.all('ShiftVessels').forEach(sv => {
+          const old = parseJson_(sv.crew, {}), merged = {};
+          Object.keys(old).forEach(k => {
+            if (!old[k] || !old[k].name) return;
+            const m = merged[k.replace(/\d+$/, '')] = merged[k.replace(/\d+$/, '')] || { ids: [], names: [] };
+            if (m.names.indexOf(old[k].name) < 0) { m.names.push(old[k].name); if (old[k].id) m.ids.push(old[k].id); }
+          });
+          const out = {};
+          Object.keys(merged).forEach(k => { out[k] = { id: merged[k].ids.join(','), name: merged[k].names.join('、') }; });
+          Repo.update('ShiftVessels', sv.id, { crew: JSON.stringify(out) });
+        });
+      }
+      props.setProperty('v15_crew', '1');
+      bumpRev_();
+    }
+    // v1.4：資料夾改用批次名稱、照片多一項 AIS 照片
     if (!props.getProperty('v14_batch')) {
       Repo.all('Shifts').forEach(s => { if (s.folder_id) { try { DriveApp.getFolderById(s.folder_id).setName(shiftFolderName_(s)); } catch (e) {} } });
       const list = Repo.all('UploadItems');

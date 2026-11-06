@@ -323,6 +323,10 @@ textarea{resize:vertical;min-height:64px}
 .trk-card{pointer-events:none;max-width:270px;padding:7px 10px;background:rgba(255,255,255,.93);border:1px solid var(--border);border-radius:var(--radius);box-shadow:0 2px 8px rgba(0,32,56,.18);font:12px/1.6 'Inter','Noto Sans TC',sans-serif;color:var(--text)}
 .trk-card b{color:var(--navy)}
 .trk-lbl{font-size:11px;line-height:1.35;padding:3px 6px}
+.crew-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.crew-pick label:first-child{display:block;font-weight:600;font-size:13px;margin-bottom:4px}
+.crew-list{display:flex;flex-direction:column;gap:4px;max-height:150px;overflow-y:auto;margin-top:6px;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius)}
+@media(max-width:560px){.crew-grid{grid-template-columns:1fr}}
 .trk-card .ro{display:flex;flex-wrap:wrap;align-items:center;gap:2px 6px}
 .trk-card i{flex:none;display:inline-block}
 .trk-card .s{width:12px;height:12px;border:4px solid #00B050;border-radius:50%;background:#fff}
@@ -1562,9 +1566,7 @@ function shiftModal(id) {
   const crewGrid = vid => {
     const v = S.vessels.find(x => x.id === vid);
     return `<div class="crew-block" data-vid="${vid}" style="border:1px solid var(--border);border-radius:var(--radius);padding:10px;margin-top:8px">
-      <b style="color:var(--navy)">🚤 ${esc(v ? v.name : '')}</b>
-      <div class="form-grid" style="margin-top:8px;grid-template-columns:repeat(auto-fill,minmax(150px,1fr))">${slots.map(k => `<div class="fg"><label>${esc(k)}</label>
-        <select data-slot="${esc(k)}">${opts(obs.filter(o => !o.role || o.role === 'both' || k.toUpperCase().indexOf(o.role) === 0).map(o => ({ v: o.id, t: o.name })), '', '—')}</select></div>`).join('')}</div></div>`;
+      <b style="color:var(--navy)">🚤 ${esc(v ? v.name : '')}</b><div style="margin-top:8px">${crewPicker(slots, {}, obs)}</div></div>`;
   };
   const body = `<div class="form-grid">
     <div class="fg"><label>${L('Date', '日期')} *</label><input id="shDate" type="date" value="${esc(s ? s.date : today())}"></div>
@@ -1580,11 +1582,7 @@ function shiftModal(id) {
   const bg = openModal(s ? L('Edit batch', '編輯批次') : L('New batch', '新增批次'), body, { wide: true, onSave: async (bg, btn) => {
     const ids = Array.from(bg.querySelectorAll('.shV:checked')).map(x => x.value);
     const crew = {};
-    bg.querySelectorAll('.crew-block').forEach(b => {
-      const c = {};
-      b.querySelectorAll('select[data-slot]').forEach(sel => { if (sel.value) { const o = S.observers.find(x => x.id === sel.value); c[sel.dataset.slot] = { id: o.id, name: o.name }; } });
-      crew[b.dataset.vid] = c;
-    });
+    bg.querySelectorAll('.crew-block').forEach(b => { crew[b.dataset.vid] = crewRead(b); });
     const r = await mut('shift.save', { id: s ? s.id : '', date: val(bg, 'shDate'), shift_no: val(bg, 'shNo'), site: val(bg, 'shSite'), scope: val(bg, 'shScope'),
       construction_vessel_id: val(bg, 'shCv'), vessel_ids: ids, crew, remark: val(bg, 'shRemark') }, L('Batch saved', '批次已儲存'), btn);
     if (!s) go('shift', r.id);
@@ -1906,25 +1904,38 @@ async function deleteShift(id) {
   try { await mut('shift.delete', { id }, L('Deleted', '已刪除')); go('shifts'); } catch (e) {}
 }
 
+// 觀察人員：每個職位一個可搜尋的勾選清單；crew[職位]＝{ id:'a,b', name:'甲、乙' }，顯示與報表都直接用 name
+function crewPicker(slots, crew, obs) {
+  return `<div class="crew-grid">${slots.map(k => {
+    const ids = String((crew[k] && crew[k].id) || '').split(',').filter(Boolean);
+    const list = obs.filter(o => !o.role || o.role === 'both' || k.toUpperCase().indexOf(o.role) === 0 || ids.indexOf(o.id) >= 0);
+    return `<div class="crew-pick" data-slot="${esc(k)}"><label>${esc(k)} <span class="muted crew-n">${ids.length ? L(ids.length + ' selected', '已選 ' + ids.length) : ''}</span></label>
+      <input type="search" placeholder="${L('Search name…', '搜尋姓名…')}" oninput="crewFilter(this)">
+      <div class="crew-list" onchange="crewCount(this)">${list.map(o => `<label class="chk"><input type="checkbox" value="${o.id}" ${ids.indexOf(o.id) >= 0 ? 'checked' : ''}>${esc(o.name)}</label>`).join('') || `<span class="small muted">${L('No one in the personnel list', '人員清單沒有這個職位的人')}</span>`}</div></div>`;
+  }).join('')}</div>`;
+}
+function crewFilter(input) {
+  const q = input.value.trim().toLowerCase();
+  input.parentElement.querySelectorAll('.crew-list label').forEach(x => { x.style.display = x.textContent.toLowerCase().indexOf(q) >= 0 ? '' : 'none'; });
+}
+function crewCount(list) {
+  const n = list.querySelectorAll('input:checked').length;
+  list.parentElement.querySelector('.crew-n').textContent = n ? L(n + ' selected', '已選 ' + n) : '';
+}
+function crewRead(root) {
+  const c = {};
+  root.querySelectorAll('.crew-pick').forEach(b => {
+    const on = Array.from(b.querySelectorAll('.crew-list input:checked')).map(x => S.observers.find(o => o.id === x.value)).filter(Boolean);
+    if (on.length) c[b.dataset.slot] = { id: on.map(o => o.id).join(','), name: on.map(o => o.name).join('、') };
+  });
+  return c;
+}
 function crewModal(svId) {
   const sv = S.svs.find(x => x.id === svId), crew = json(sv.crew, {});
-  const slots = lines(S.settings.crew_slots);
-  const obs = S.observers.filter(o => bool(o.active) || Object.values(crew).some(c => c && c.id === o.id));
-  openModal(L('Observers', '觀察人員') + ' — ' + esc(sv.vessel_name), `<div class="form-grid">${slots.map(k => {
-    const cur = crew[k] || {};
-    const list = obs.filter(o => !o.role || o.role === 'both' || k.toUpperCase().indexOf(o.role) === 0 || o.id === cur.id).map(o => ({ v: o.id, t: o.name }));
-    if (cur.name && !cur.id) list.push({ v: 'free:' + cur.name, t: cur.name });
-    return `<div class="fg"><label>${esc(k)}</label><select data-slot="${esc(k)}">${opts(list, cur.id || (cur.name ? 'free:' + cur.name : ''), '—')}<option value="__new">＋ ${L('Other (type a name)', '其他（手動輸入）')}</option></select></div>`;
-  }).join('')}</div>`, { onSave: async (bg, btn) => {
-    const c = {};
-    for (const sel of bg.querySelectorAll('select[data-slot]')) {
-      let v = sel.value;
-      if (v === '__new') { const n = (prompt(sel.dataset.slot) || '').trim(); if (n) c[sel.dataset.slot] = { id: '', name: n }; continue; }
-      if (v.indexOf('free:') === 0) c[sel.dataset.slot] = { id: '', name: v.slice(5) };
-      else if (v) { const o = S.observers.find(x => x.id === v); c[sel.dataset.slot] = { id: o.id, name: o.name }; }
-    }
-    await mut('sv.save', { id: svId, crew: c }, L('Saved', '已儲存'), btn);
-  } });
+  const current = Object.values(crew).map(c => String((c && c.id) || '')).join(',').split(',');
+  const obs = S.observers.filter(o => bool(o.active) || current.indexOf(o.id) >= 0);
+  openModal(L('Observers', '觀察人員') + ' — ' + esc(sv.vessel_name), crewPicker(lines(S.settings.crew_slots), crew, obs), {
+    onSave: async (bg, btn) => { await mut('sv.save', { id: svId, crew: crewRead(bg) }, L('Saved', '已儲存'), btn); } });
 }
 
 function pauseModal(svId, id, resume) {
