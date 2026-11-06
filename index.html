@@ -1523,7 +1523,7 @@ function renderShifts() {
   let list = S.shifts.slice().sort((a, b) => (b.date + String(b.shift_no).padStart(6, '0')).localeCompare(a.date + String(a.shift_no).padStart(6, '0')));
   if (FILTER.month) list = list.filter(s => s.date.slice(0, 7) === FILTER.month);
   if (FILTER.status !== 'all') list = list.filter(s => (FILTER.status === 'closed') === shiftClosed(s));
-  if (FILTER.q) { const q = FILTER.q.toLowerCase(); list = list.filter(s => [s.shift_no, s.site, s.scope, s.turbine_no, s.construction_vessel].concat(svsOf(s.id).map(x => x.vessel_name)).join(' ').toLowerCase().includes(q)); }
+  if (FILTER.q) { const q = FILTER.q.toLowerCase(); list = list.filter(s => [s.shift_no, s.site, s.scope, s.construction_vessel].concat(svsOf(s.id).map(x => x.vessel_name)).join(' ').toLowerCase().includes(q)); }
   $('content').innerHTML = `<div class="section"><div class="section-header">
       <div class="toolbar">
         <select style="width:auto" onchange="FILTER.month=this.value;renderShifts()">${opts(months, FILTER.month, L('All months', '全部月份'))}</select>
@@ -1538,7 +1538,7 @@ function renderShifts() {
         const d = vs.reduce((a, x) => [a[0] + x.checks.docs[0] + x.checks.photos[0], a[1] + x.checks.docs[1] + x.checks.photos[1]], [0, 0]);
         const warn = vs.some(x => x.checks.warnings.length);
         return `<tr class="click" onclick="go('shift','${s.id}')"><td class="mono">${esc(s.date)}</td><td><b>#${esc(s.shift_no)}</b></td>
-          <td>${esc(s.site || '—')}<div class="small muted">${esc(biName(s.scope) || '')}${s.turbine_no ? ' · ' + esc(s.turbine_no) : ''}</div></td><td>${esc(s.construction_vessel || '—')}</td>
+          <td>${esc(s.site || '—')}<div class="small muted">${esc(biName(s.scope) || '')}</div></td><td>${esc(s.construction_vessel || '—')}</td>
           <td>${vs.map(x => `<div style="margin-bottom:3px">${esc(x.vessel_name)} ${stTag(x.checks.status)}</div>`).join('')}</td>
           <td>${sn ? `<span class="tag red">🐬 ${sn}</span>` : '<span class="muted">—</span>'}</td>
           <td><span class="tag ${d[0] >= d[1] ? 'green' : 'amber'}">${d[0]}/${d[1]}</span> ${warn ? '<span class="tag red" title="rule">⚠</span>' : ''}</td>
@@ -1570,7 +1570,6 @@ function shiftModal(id) {
     <div class="fg"><label>${L('Shift no. (blank = auto)', '班次編號（空白＝自動）')}</label><input id="shNo" value="${esc(s ? s.shift_no : '')}"></div>
     <div class="fg"><label>${L('Site', '工區')}</label><select id="shSite">${opts(siteList, s ? s.site : siteList[0] || '', '—')}</select></div>
     <div class="fg"><label>${L('Scope of work', '工作範疇 Scope')}</label><select id="shScope">${opts(scopes.map(x => ({ v: x, t: biName(x) })), s ? s.scope : '', '—')}</select></div>
-    <div class="fg"><label>${L('Work location / no.', '施工位置／編號')}</label><input id="shTurb" value="${esc(s ? s.turbine_no : '')}" placeholder="KP 12.5"></div>
     <div class="fg"><label>${L('Construction vessel', '施工船')}</label><select id="shCv">${opts(cvs.map(v => ({ v: v.id, t: v.name })), s ? s.construction_vessel_id : '', '—')}</select>
       ${cvs.length ? '' : `<span class="small muted">${L('Add construction vessels in Back office › Vessels', '請先到 後台管理 › 船舶 新增施工船')}</span>`}</div>
     <div class="fg full"><label>${L('MMO vessels', 'MMO 觀察船')} *</label>
@@ -1585,7 +1584,7 @@ function shiftModal(id) {
       b.querySelectorAll('select[data-slot]').forEach(sel => { if (sel.value) { const o = S.observers.find(x => x.id === sel.value); c[sel.dataset.slot] = { id: o.id, name: o.name }; } });
       crew[b.dataset.vid] = c;
     });
-    const r = await mut('shift.save', { id: s ? s.id : '', date: val(bg, 'shDate'), shift_no: val(bg, 'shNo'), site: val(bg, 'shSite'), scope: val(bg, 'shScope'), turbine_no: val(bg, 'shTurb'),
+    const r = await mut('shift.save', { id: s ? s.id : '', date: val(bg, 'shDate'), shift_no: val(bg, 'shNo'), site: val(bg, 'shSite'), scope: val(bg, 'shScope'),
       construction_vessel_id: val(bg, 'shCv'), vessel_ids: ids, crew, remark: val(bg, 'shRemark') }, L('Shift saved', '班次已儲存'), btn);
     if (!s) go('shift', r.id);
   } });
@@ -1617,7 +1616,7 @@ function renderShift() {
     ${closedBar}
     <div class="section"><div class="section-header">
       <div><h3 style="font-size:16px">${esc(shiftLabel(s))} ${shiftClosed(s) ? `<span class="tag navy">${L('Closed', '已結案')}</span>` : `<span class="tag green">${L('Open', '進行中')}</span>`}</h3>
-        <div class="small muted" style="margin-top:4px">📍 ${esc(s.site || '—')} · 🔧 ${esc(biName(s.scope) || '—')}${s.turbine_no ? ' · 🌀 ' + esc(s.turbine_no) : ''} · 🏗 ${esc(s.construction_vessel || '—')}${s.remark ? ' · ' + esc(s.remark) : ''}</div></div>
+        <div class="small muted" style="margin-top:4px">📍 ${esc(s.site || '—')} · 🔧 ${esc(biName(s.scope) || '—')} · 🏗 ${esc(s.construction_vessel || '—')}${s.remark ? ' · ' + esc(s.remark) : ''}</div></div>
       <div class="toolbar">
         ${s.folder_id ? `<a class="btn btn-sm" target="_blank" href="https://drive.google.com/drive/folders/${esc(s.folder_id)}">📁 Drive</a>` : ''}
         ${ed ? `<button class="btn btn-sm w" onclick="shiftModal('${s.id}')">✏️ ${L('Edit', '編輯')}</button>` : ''}
@@ -2211,11 +2210,11 @@ function renderSightings() {
         <td>${esc(biName(x.action))}</td><td class="mono">${x.lat ? esc(x.lat + ', ' + x.lon) : '—'}</td></tr>`; }).join('')}</table></div>` : `<div class="empty">${L('No sightings', '沒有目擊紀錄')}</div>`}</div>`;
 }
 function exportSightings() {
-  const rows = [['日期', '班次', '工區', '風機/基樁編號', '施工船', 'MMO 船', '目擊時間', '物種', '數量', '母子對', '偵測方式', '觀察方位(°)', '游行方向', '觀察位置', '與船距離(m)', '與樁距離(m)', '進入警戒區',
+  const rows = [['日期', '班次', '工區', '施工船', 'MMO 船', '目擊時間', '物種', '數量', '母子對', '偵測方式', '觀察方位(°)', '游行方向', '觀察位置', '與船距離(m)', '與施工點距離(m)', '進入警戒區',
     '施工狀態', '處置', '最後目擊/離開警戒區', '聲音類型', '頻率(kHz)', '與水下麥克風距離(m)', '影像', '緯度', '經度', '行為', '備註']];
   S.sightings.slice().sort((a, b) => a.time.localeCompare(b.time)).forEach(x => {
     const s = shiftOf(x.shift_id) || {}, sv = S.svs.find(v => v.id === x.sv_id) || {};
-    rows.push([s.date, s.shift_no, s.site, s.turbine_no, s.construction_vessel, sv.vessel_name, x.time.replace('T', ' '), x.species, x.count, x.mother_calf, x.detection, x.bearing, x.direction, x.deck,
+    rows.push([s.date, s.shift_no, s.site, s.construction_vessel, sv.vessel_name, x.time.replace('T', ' '), x.species, x.count, x.mother_calf, x.detection, x.bearing, x.direction, x.deck,
       x.vessel_dist_m, x.min_distance_m, bool(x.in_alert_zone) ? '是' : '否', x.piling_status, x.action, (x.left_time || '').replace('T', ' '), x.call_type, x.freq_khz, x.hydrophone_m, x.image, x.lat, x.lon, x.behavior, x.remark]);
   });
   downloadCsv('MMO_sightings_' + today() + '.csv', rows);
@@ -2497,11 +2496,11 @@ ${g.pts.map(p => '<gx:coord>' + p.lon + ' ' + p.lat + ' 0</gx:coord>').join('\n'
 // ==================== Summary page ====================
 function summaryRows() {
   const slots = lines(S.settings.crew_slots);
-  const head = ['日期', '班次', '工區', '工作範疇', '施工位置/編號', '施工船', 'MMO 船'].concat(slots).concat(['預觀測開始', '預觀測結束', '預觀測(分)', '實際觀測開始', '實際觀測結束', '實際觀測時長(分)', '暫停施工次數', '目擊次數', '文件', '照片', '缺件', '規則提醒', '狀態']);
+  const head = ['日期', '班次', '工區', '工作範疇', '施工船', 'MMO 船'].concat(slots).concat(['預觀測開始', '預觀測結束', '預觀測(分)', '實際觀測開始', '實際觀測結束', '實際觀測時長(分)', '暫停施工次數', '目擊次數', '文件', '照片', '缺件', '規則提醒', '狀態']);
   const rows = [];
   S.shifts.slice().sort((a, b) => (b.date + String(b.shift_no).padStart(6, '0')).localeCompare(a.date + String(a.shift_no).padStart(6, '0'))).forEach(s => svsOf(s.id).forEach(sv => {
     const crew = json(sv.crew, {}), ck = sv.checks, n = v => isNaN(v) ? '' : v;
-    rows.push({ s, sv, cells: [s.date, s.shift_no, s.site, s.scope, s.turbine_no, s.construction_vessel, sv.vessel_name].concat(slots.map(k => (crew[k] && crew[k].name) || ''))
+    rows.push({ s, sv, cells: [s.date, s.shift_no, s.site, s.scope, s.construction_vessel, sv.vessel_name].concat(slots.map(k => (crew[k] && crew[k].name) || ''))
       .concat([(sv.pre_start || '').replace('T', ' '), (sv.pre_end || '').replace('T', ' '), n(mins(sv.pre_start, sv.pre_end)), (sv.work_start || '').replace('T', ' '), (sv.work_end || '').replace('T', ' '),
         n(mins(sv.work_start, sv.work_end)), S.pauses.filter(p => p.sv_id === sv.id).length, S.sightings.filter(x => x.sv_id === sv.id).length,
         ck.docs[0] + '/' + ck.docs[1], ck.photos[0] + '/' + ck.photos[1], ck.missing.map(m => m.zh).join('、'), ck.warnings.map(w => w.zh).join('；'), STATUS[ck.status][1] + (shiftClosed(s) ? '（結案）' : '')]) });

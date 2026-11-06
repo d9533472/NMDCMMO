@@ -10,7 +10,7 @@
 // 角色：admin（全部＋後台）、mmo（建立／填報班次、上傳）、viewer（唯讀）
 // ============================================================
 
-const VERSION = '1.3.1';
+const VERSION = '1.3.2';
 const ROOT_FOLDER_ID = '1uVkbv4tndRVERhrHmHUzaTvPlHaFV4em';
 const SS_NAME = 'MMO 鯨豚觀察總表';
 const TZ = 'Asia/Taipei';
@@ -46,7 +46,7 @@ const DEFAULT_SETTINGS = {
   mmo_dist_tol_m: '150',        // 船距判定：警戒區半徑 ± 此值視為「在附近」
   crew_slots: 'TCO1\nTCO2\nTCO3\nTCO4\nPAMO',
   sites: '通霄 Tongxiao, 24.47, 120.55',
-  scopes: '打樁 Piling\n套管安裝 Jacket installation\n海纜敷設 Cable laying\n調查 Survey\n其他 Other',
+  scopes: '海管鋪設 Pipelay\n拋石作業 Rock placement\n後噴埋 Post-lay jetting\n回填作業 Backfilling\n超長段作業 Extra-long section',
   species: '台灣白海豚 Taiwanese humpback dolphin\n印太瓶鼻海豚 Indo-Pacific bottlenose dolphin\n瓶鼻海豚 Common bottlenose dolphin\n印太露脊鼠海豚 Indo-Pacific finless porpoise\n熱帶斑海豚 Pantropical spotted dolphin\n飛旋海豚 Spinner dolphin\n糙齒海豚 Rough-toothed dolphin\n未知鯨豚 Unidentified cetacean',
   pause_reasons: '目擊鯨豚進入警戒區 Cetacean in alert zone\nPAM 偵測到鯨豚 PAM detection\n天氣／能見度不佳 Poor weather / visibility\n設備故障 Equipment failure\n其他 Other',
   ais_api_url: '',              // 之後接付費船位 API（伺服器端呼叫，金鑰不給前端）
@@ -304,6 +304,12 @@ function ensureSchema_() {
     }
     const st = Repo.all('Settings');
     Object.keys(DEFAULT_SETTINGS).forEach(k => { if (!st.find(s => s.key === k)) Repo.insert('Settings', { key: k, value: DEFAULT_SETTINGS[k] }); });
+    // 只換一次工項清單：之後後台自己改的內容不會被蓋掉；舊班次的工項值保留不動
+    if (!props.getProperty('scopes_pipeline')) {
+      Repo.update('Settings', 'scopes', { value: DEFAULT_SETTINGS.scopes });
+      props.setProperty('scopes_pipeline', '1');
+      bumpRev_();
+    }
     props.setProperty('schema_version', VERSION);
   } finally { lock.releaseLock(); }
 }
@@ -608,7 +614,7 @@ function checks_(sv, pauses, sightings, files, items, st, pos) {
   if (sv.work_end && openPause) add('pause_open', 'A pause has no resume time', '有暫停施工未記錄回復施工時間');
   const respMin = Number(st.response_min) || 10, repreMin = Number(st.repre_pause_min) || 60;
   const inZone = s => bool_(s.in_alert_zone) || (s.min_distance_m !== '' && Number(s.min_distance_m) <= alertM);
-  // 手冊 P.21-5：打樁前監測及開始打樁應於白天（日落前）且視線良好（非大雨、大霧）
+  // 預觀測與實際觀測開始應於白天（日落前）且視線良好（非大雨、大霧）
   if (pos && isFinite(pos.lat) && isFinite(pos.lon)) {
     [['pre_start', 'Pre-watch', '預觀測'], ['work_start', 'Observation', '實際觀測']].forEach(f => {
       const v = sv[f[0]];
@@ -683,7 +689,7 @@ function saveShift_(u, p) {
     const cv = vessels.find(v => v.id === str_(p.construction_vessel_id));
     const shiftNo = str_(p.shift_no) || String(Repo.all('Shifts').reduce((m, x) => Math.max(m, parseInt(x.shift_no, 10) || 0), 0) + 1);
     if (Repo.all('Shifts').find(x => x.shift_no === shiftNo && x.id !== p.id)) fail_('Shift number ' + shiftNo + ' already exists');
-    const patch = { shift_no: shiftNo, date: date, site: str_(p.site), scope: str_(p.scope), turbine_no: str_(p.turbine_no),
+    const patch = { shift_no: shiftNo, date: date, site: str_(p.site), scope: str_(p.scope),
       construction_vessel_id: cv ? cv.id : '', construction_vessel: cv ? cv.name : str_(p.construction_vessel),
       remark: str_(p.remark), updated_by: u.username, updated_at: nowIso_() };
     let shift;
@@ -1150,7 +1156,7 @@ function rebuildSummary_() {
   const shifts = Repo.all('Shifts').sort((a, b) => (b.date + b.shift_no).localeCompare(a.date + a.shift_no, undefined, { numeric: true }));
   const svs = Repo.all('ShiftVessels'), pauses = Repo.all('Pauses'), sightings = Repo.all('Sightings'), files = Repo.all('Files'), items = Repo.all('UploadItems');
   const STATUS = { idle: '未開始', pre: '預觀測中', preDone: '預觀測完成', work: '實際觀測中', paused: '暫停施工中', done: '已完成' };
-  const head = ['日期', '班次', '工區', '工作範疇', '施工位置/編號', '施工船', 'MMO 船'].concat(slots).concat(['預觀測開始', '預觀測結束', '預觀測(分)',
+  const head = ['日期', '班次', '工區', '工作範疇', '施工船', 'MMO 船'].concat(slots).concat(['預觀測開始', '預觀測結束', '預觀測(分)',
     '實際觀測開始', '實際觀測結束', '實際觀測時長(分)', '暫停施工次數', '暫停施工總計(分)', '目擊次數', '物種', '警戒區內目擊', '緯度', '經度', '風速(kn)', '浪高(m)',
     '文件', '照片', '缺件', '規則提醒', '狀態', '班次結案', 'Drive 資料夾']);
   const rows = [];
@@ -1165,7 +1171,7 @@ function rebuildSummary_() {
       const n = v => (isNaN(v) ? '' : v);
       const alertM = Number(st.alert_zone_m) || 750;
       const folder = sv.folder_id || s.folder_id;
-      rows.push([s.date, s.shift_no, s.site, s.scope, s.turbine_no, s.construction_vessel, sv.vessel_name]
+      rows.push([s.date, s.shift_no, s.site, s.scope, s.construction_vessel, sv.vessel_name]
         .concat(slots.map(k => (crew[k] && crew[k].name) || ''))
         .concat([t_(sv.pre_start), t_(sv.pre_end), n(mins_(sv.pre_start, sv.pre_end)), t_(sv.work_start), t_(sv.work_end), n(mins_(sv.work_start, sv.work_end)),
           ps.length, pauseMin, ss.length, Array.from(new Set(ss.map(x => x.species).filter(Boolean))).join('、'),
@@ -1178,13 +1184,13 @@ function rebuildSummary_() {
   });
   writeTable_('總表', head, rows, 0);
 
-  const sHead = ['日期', '班次', '工區', '風機/基樁編號', '施工船', 'MMO 船', '目擊時間', '物種', '數量', '母子對', '偵測方式', '觀察方位(°)', '游行方向', '觀察位置', '與船距離(m)', '與樁距離(m)', '進入警戒區',
+  const sHead = ['日期', '班次', '工區', '施工船', 'MMO 船', '目擊時間', '物種', '數量', '母子對', '偵測方式', '觀察方位(°)', '游行方向', '觀察位置', '與船距離(m)', '與施工點距離(m)', '進入警戒區',
     '施工狀態', '處置', '最後目擊/離開警戒區', '聲音類型', '頻率(kHz)', '與水下麥克風距離(m)', '影像', '緯度', '經度', '行為', '備註', '登錄者'];
   const sRows = [];
   sightings.slice().sort((a, b) => b.time.localeCompare(a.time)).forEach(x => {
     const s = shifts.find(z => z.id === x.shift_id) || {};
     const sv = svs.find(z => z.id === x.sv_id) || {};
-    sRows.push([s.date || '', s.shift_no || '', s.site || '', s.turbine_no || '', s.construction_vessel || '', sv.vessel_name || '', t_(x.time), x.species, x.count,
+    sRows.push([s.date || '', s.shift_no || '', s.site || '', s.construction_vessel || '', sv.vessel_name || '', t_(x.time), x.species, x.count,
       x.mother_calf, x.detection, x.bearing, x.direction, x.deck, x.vessel_dist_m, x.min_distance_m, bool_(x.in_alert_zone) ? '是' : '否', x.piling_status,
       x.action, t_(x.left_time), x.call_type, x.freq_khz, x.hydrophone_m, x.image, x.lat, x.lon, x.behavior, x.remark, x.created_by]);
   });
