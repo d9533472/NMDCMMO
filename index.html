@@ -1730,7 +1730,7 @@ function svPanel(s, sv, ed) {
       <div><div class="timer" id="timer" data-k="${na.k}"></div><div class="small muted" id="timerHint"></div></div>
       ${ck.status === 'work' || ck.status === 'paused' || ck.status === 'preDone' || ck.status === 'pre' ? `<button class="btn w" style="margin-left:auto" onclick="sightingModal('${sv.id}')">🐬 ${L('Record sighting', '登錄目擊')}</button>` : ''}
       ${ck.status === 'work' || ck.status === 'paused' ? `<button class="btn w" onclick="doNext('${sv.id}','work_end')">■ ${L('End observation (work stopped)', '結束實際觀測（施工船宣布停工）')}</button>` : ''}</div>` :
-      `<div class="next-box"><div><div class="timer" id="timer" data-k="${na.k}"></div><div class="small muted" id="timerHint"></div></div></div>`}
+      `<div class="next-box"><div><div class="timer" id="timer" data-k="${na ? na.k : ''}"></div><div class="small muted" id="timerHint"></div></div></div>`}
     <div class="section-header"><h3>⏱ ${L('Operation times', '作業時間')}</h3>
       <span class="small muted">${L('Pre-watch', '預觀測')} ${isNaN(pre) ? '—' : `<b style="color:${pre < preMin ? 'var(--danger)' : 'var(--green-dark)'}">${pre} min</b>`} / ${preMin} · ${L('Observation', '實際觀測')} <b>${fmtDur(work)}</b></span></div>
     <div class="section-body" style="padding-top:6px;padding-bottom:6px">
