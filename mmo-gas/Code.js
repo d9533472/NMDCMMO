@@ -1,7 +1,7 @@
 // ============================================================
 // NMDC MMO — 鯨豚觀察作業系統 · Google Apps Script backend
 // 前端 https://d9533472.github.io/NMDCMMO/ ；原始碼 E:\NMDCMMO\mmo-gas\Code.js（clasp push + deploy -i <prod id>）
-// 依「台灣鯨豚觀察員制度作業指引（第四版）」：預觀測 → 施工 → 目擊／停工／復工 → 結束，紙本表單掃描上傳。
+// 依「台灣鯨豚觀察員制度作業指引（第四版）」：預觀測 → 施工 → 目擊／暫停施工／回復施工 → 結束，紙本表單掃描上傳。
 //
 // 協定：POST text/plain JSON {action, token, payload} → {ok:true, data, state?} / {ok:false, error, code}
 //       GET ?action=ping 僅供健康檢查（GET 不做任何寫入）
@@ -10,7 +10,7 @@
 // 角色：admin（全部＋後台）、mmo（建立／填報班次、上傳）、viewer（唯讀）
 // ============================================================
 
-const VERSION = '1.2';
+const VERSION = '1.3';
 const ROOT_FOLDER_ID = '1uVkbv4tndRVERhrHmHUzaTvPlHaFV4em';
 const SS_NAME = 'MMO 鯨豚觀察總表';
 const TZ = 'Asia/Taipei';
@@ -28,7 +28,7 @@ const SCHEMAS = {
     'created_by','created_at','updated_by','updated_at','closed_by','closed_at'],
   ShiftVessels: ['id','shift_id','vessel_id','vessel_name','mmsi','sort','crew','pre_start','pre_end','work_start','full_start','work_end',
     'lat','lon','pos_time','pos_source','weather','sea_state','remark','folder_id','updated_by','updated_at'],
-  Pauses: ['id','shift_id','sv_id','start','end','reason','sighting_id','monitoring','restart','remark','created_by','created_at','updated_at'],
+  Pauses: ['id','shift_id','sv_id','start','end','reason','sighting_id','monitoring','restart','remark','created_by','created_at','updated_at','pre_start','pre_end'],
   Sightings: ['id','shift_id','sv_id','time','species','count','detection','min_distance_m','in_alert_zone','action','left_time',
     'lat','lon','behavior','remark','bearing','direction','deck','vessel_dist_m','piling_status','mother_calf','image',
     'call_type','freq_khz','hydrophone_m','created_by','created_at','updated_at'],
@@ -41,10 +41,9 @@ const DEFAULT_SETTINGS = {
   pre_watch_min: '30',          // 預觀測時間（分）
   alert_zone_m: '750',          // 警戒區半徑（m）
   watch_zone_m: '1500',         // 觀察區半徑（m）
-  clear_min: '30',              // 鯨豚離開警戒區後須再觀察幾分鐘才可復工
-  response_min: '10',           // 警戒區內目擊後幾分鐘內須啟動應變（停止打樁）
-  restart_min: '30',            // 非目擊因素暫停達幾分鐘且未持續監測 → 須重新打樁前監測
-  soft_start_min: '30',         // 緩啟動最短時間（依環評承諾／監測計畫）
+  response_min: '10',           // 警戒區內目擊後幾分鐘內須啟動應變（暫停施工）
+  repre_pause_min: '60',        // 暫停施工超過幾分鐘須重新預觀測
+  mmo_dist_tol_m: '150',        // 船距判定：警戒區半徑 ± 此值視為「在附近」
   crew_slots: 'TCO1\nTCO2\nTCO3\nTCO4\nPAMO',
   sites: '通霄 Tongxiao, 24.47, 120.55',
   scopes: '打樁 Piling\n套管安裝 Jacket installation\n海纜敷設 Cable laying\n調查 Survey\n其他 Other',
@@ -95,10 +94,10 @@ function json_(o) { return ContentService.createTextOutput(JSON.stringify(o)).se
 
 const PUBLIC = { 'ping': 1, 'auth.status': 1, 'auth.setup': 1, 'auth.login': 1, 'data.rev': 1 };
 const NO_REV = { 'ping': 1, 'auth.status': 1, 'auth.login': 1, 'auth.logout': 1, 'auth.changePassword': 1, 'data.load': 1, 'data.rev': 1,
-  'audit.list': 1, 'file.get': 1, 'shift.files': 1, 'pos.fetch': 1, 'pos.test': 1, 'pos.list': 1 };
+  'audit.list': 1, 'file.get': 1, 'shift.files': 1, 'pos.fetch': 1, 'pos.test': 1, 'pos.list': 1, 'reset.request': 1 };
 const AUDIT_SKIP = { 'ping': 1, 'auth.status': 1, 'data.load': 1, 'data.rev': 1, 'audit.list': 1, 'file.get': 1, 'shift.files': 1, 'pos.list': 1 };
 // 這些寫入會改到班次資料 → 重建試算表「總表」
-const SUMMARY_ACTIONS = /^(shift|sv|pause|sighting|file)\.(save|delete|close|reopen|upload)$/;
+const SUMMARY_ACTIONS = /^((shift|sv|pause|sighting|file)\.(save|delete|close|reopen|upload)|reset\.confirm)$/;
 
 function handle_(req) {
   const action = String(req.action || '');
@@ -142,7 +141,7 @@ const ROUTES = {
   'shift.delete': (u, p) => { requireRole_(u, ['admin']); return deleteShift_(p.id); },
   'shift.files': (u, p) => ({ files: Repo.all('Files').filter(f => f.shift_id === p.id) }),
   'sv.save': (u, p) => saveShiftVessel_(u, p),
-  'pause.save': (u, p) => saveChild_(u, 'Pauses', p, ['start','end','reason','sighting_id','monitoring','restart','remark'], ['start']),
+  'pause.save': (u, p) => saveChild_(u, 'Pauses', p, PAUSE_FIELDS, ['start']),
   'pause.delete': (u, p) => deleteChild_(u, 'Pauses', p.id),
   'sighting.save': (u, p) => saveSighting_(u, p),
   'sighting.delete': (u, p) => deleteChild_(u, 'Sightings', p.id),
@@ -166,6 +165,8 @@ const ROUTES = {
   'user.save': (u, p) => { requireRole_(u, ['admin']); return saveUser_(u, p); },
   'user.delete': (u, p) => { requireRole_(u, ['admin']); return deleteUser_(u, p.id); },
   'audit.list': (u, p) => { requireRole_(u, ['admin']); return auditList_(p); },
+  'reset.request': (u, p) => { requireRole_(u, ['admin']); return resetRequest_(u, p); },
+  'reset.confirm': (u, p) => { requireRole_(u, ['admin']); return resetConfirm_(u, p); },
   'summary.rebuild': (u) => { requireRole_(u, ['admin']); rebuildSummary_(); return { url: ss_().getUrl() }; }
 };
 
@@ -264,6 +265,14 @@ const Repo = (function () {
       rows.forEach(n => t.sh.deleteRow(n));
       delete cache[name];
       return rows.length;
+    },
+    /** 清空資料列、保留標題列（Sheets 不允許刪掉所有未凍結列，所以用清除內容） */
+    clear: function (name) {
+      const t = load_(name), last = t.sh.getLastRow();
+      const n = t.rows.filter(r => r[key_(name)]).length;
+      if (last > 1) t.sh.getRange(2, 1, last - 1, t.sh.getLastColumn()).clearContent();
+      delete cache[name];
+      return n;
     },
     flush: function () { Object.keys(cache).forEach(k => delete cache[k]); }
   };
@@ -470,7 +479,7 @@ function deleteUser_(u, id) {
 }
 
 // ============ Audit ============
-const AUDIT_SECRET = { password: 1, oldPassword: 1, newPassword: 1, data: 1, thumb: 1, ais_api_key: 1 };
+const AUDIT_SECRET = { password: 1, oldPassword: 1, newPassword: 1, data: 1, thumb: 1, ais_api_key: 1, code: 1 };
 function audit_(action, user, payload, data, ok, err) {
   if (AUDIT_SKIP[action]) return;
   try {
@@ -577,7 +586,7 @@ function posFor_(sv, shift, st) {
 function checks_(sv, pauses, sightings, files, items, st, pos) {
   const W = [];
   const add = (code, en, zh) => W.push({ code: code, en: en, zh: zh });
-  const preMin = Number(st.pre_watch_min) || 30, alertM = Number(st.alert_zone_m) || 750, clearMin = Number(st.clear_min) || 30;
+  const preMin = Number(st.pre_watch_min) || 30, alertM = Number(st.alert_zone_m) || 750;
   const ps = pauses.filter(p => p.sv_id === sv.id);
   const ss = sightings.filter(s => s.sv_id === sv.id);
   const openPause = ps.find(p => !p.end);
@@ -592,14 +601,15 @@ function checks_(sv, pauses, sightings, files, items, st, pos) {
     if (d < 0) add('pre_order', 'Pre-watch end is before its start', '預觀測結束早於開始');
     else if (d < preMin) add('pre_short', 'Pre-watch only ' + d + ' min (< ' + preMin + ')', '預觀測僅 ' + d + ' 分鐘（未滿 ' + preMin + ' 分）');
   }
-  if (sv.work_start && !sv.pre_end) add('no_pre', 'Work started without a completed pre-watch', '未完成預觀測即開始施工');
-  if (sv.work_start && sv.pre_end && mins_(sv.pre_end, sv.work_start) < 0) add('work_early', 'Work started before pre-watch ended', '施工開始早於預觀測結束');
-  if (sv.work_start && sv.work_end && mins_(sv.work_start, sv.work_end) < 0) add('work_order', 'Work end is before work start', '施工結束早於施工開始');
-  if (sv.work_end && openPause) add('pause_open', 'A pause has no resume time', '有停工未記錄復工時間');
-  const respMin = Number(st.response_min) || 10, restartMin = Number(st.restart_min) || 30, softMin = Number(st.soft_start_min) || 30;
+  if (sv.work_start && !sv.pre_end) add('no_pre', 'Observation started without a completed pre-watch', '未完成預觀測即開始實際觀測');
+  if (sv.work_start && sv.pre_end && mins_(sv.pre_end, sv.work_start) < 0) add('work_early', 'Observation started before pre-watch ended', '實際觀測開始早於預觀測結束');
+  if (sv.work_start && sv.work_end && mins_(sv.work_start, sv.work_end) < 0) add('work_order', 'Observation end is before its start', '實際觀測結束早於開始');
+  if (sv.work_end && openPause) add('pause_open', 'A pause has no resume time', '有暫停施工未記錄回復施工時間');
+  const respMin = Number(st.response_min) || 10, repreMin = Number(st.repre_pause_min) || 60;
+  const inZone = s => bool_(s.in_alert_zone) || (s.min_distance_m !== '' && Number(s.min_distance_m) <= alertM);
   // 手冊 P.21-5：打樁前監測及開始打樁應於白天（日落前）且視線良好（非大雨、大霧）
   if (pos && isFinite(pos.lat) && isFinite(pos.lon)) {
-    [['pre_start', 'Pre-watch', '預觀測'], ['work_start', 'Work', '施工']].forEach(f => {
+    [['pre_start', 'Pre-watch', '預觀測'], ['work_start', 'Observation', '實際觀測']].forEach(f => {
       const v = sv[f[0]];
       if (!v) return;
       const sun = sunTimes_(v.slice(0, 10), pos.lat, pos.lon);
@@ -610,45 +620,35 @@ function checks_(sv, pauses, sightings, files, items, st, pos) {
   }
   const wx = parseJson_(sv.weather, {});
   if (wx && wx.vis !== undefined && wx.vis !== null && wx.vis !== '' && Number(wx.vis) < 1) add('low_vis', 'Visibility under 1 km at pre-watch (' + wx.vis + ' km)', '預觀測時能見度低於 1 公里（' + wx.vis + ' km）');
-  if (sv.full_start && sv.work_start) {
-    const d = mins_(sv.work_start, sv.full_start);
-    if (d < 0) add('soft_order', 'Full power started before work start', '全力道開始早於施工開始');
-    else if (d < softMin) add('soft_short', 'Soft-start only ' + d + ' min (< ' + softMin + ')', '緩啟動僅 ' + d + ' 分鐘（未滿 ' + softMin + ' 分）');
-  }
   ps.forEach(p => {
-    if (p.end && mins_(p.start, p.end) < 0) add('pause_order', 'Resume time is before pause time', '復工時間早於停工時間');
-    const s = p.sighting_id && ss.find(x => x.id === p.sighting_id);
-    if (s && p.end) {
-      const g = mins_(s.left_time || s.time, p.end);
-      if (g < clearMin) add('resume_early', 'Resumed ' + g + ' min after the last sighting / leaving the alert zone (< ' + clearMin + ')',
-        '最後目擊／鯨豚離開警戒區後 ' + g + ' 分鐘即復工（未滿 ' + clearMin + ' 分）');
-    }
-    // 手冊 P.6-5、P.21-7：因目擊鯨豚而暫停 → 一律以緩啟動重啟
-    if (p.end && s && p.restart === 'original') add('restart_soft', 'Pause at ' + p.start.slice(11, 16) + ' was caused by a sighting — restart must use soft-start',
-      p.start.slice(11, 16) + ' 的停工因目擊鯨豚所致，應以緩啟動程序重啟');
-    // 非目擊因素暫停達 30 分且未持續監測 → 須重新打樁前監測
-    if (p.end && !s && mins_(p.start, p.end) >= restartMin && !bool_(p.monitoring) && p.restart !== 'prewatch')
-      add('restart_prewatch', 'Pause at ' + p.start.slice(11, 16) + ' lasted ≥ ' + restartMin + ' min without continuous monitoring — a new pre-watch is required',
-        p.start.slice(11, 16) + ' 停工達 ' + restartMin + ' 分鐘且未持續監測，應重新進行打樁前監測');
+    if (p.end && mins_(p.start, p.end) < 0) add('pause_order', 'Resume time is before pause time', '回復施工時間早於暫停施工時間');
+    // 暫停施工超過門檻，或鯨豚進入警戒區（離開後）→ 回復施工前須重新預觀測
+    if (!p.end || (sv.work_end && tms_(p.end) >= tms_(sv.work_end)) || p.restart === 'prewatch') return;
+    const hh = p.start.slice(11, 16), end = tms_(p.end);
+    const zs = ss.filter(s => inZone(s) && (s.id === p.sighting_id || (tms_(s.time) <= end && (s.left_time ? tms_(s.left_time) > tms_(p.start) : tms_(s.time) >= tms_(p.start)))));
+    if (!zs.length && mins_(p.start, p.end) <= repreMin) return;
+    const last = zs.reduce((m, s) => Math.max(m, tms_(s.left_time || s.time)), 0);
+    if (!p.pre_start || !p.pre_end) add('repre_missing', 'Resumed after the pause at ' + hh + ' without a new pre-watch', hh + ' 暫停施工後未重新預觀測即回復施工');
+    else if (tms_(p.pre_start) < last) add('repre_early', 'New pre-watch after the pause at ' + hh + ' started before the cetaceans left', hh + ' 暫停施工的重新預觀測，開始時間早於鯨豚離開時間');
+    else if (mins_(p.pre_start, p.pre_end) < preMin) add('repre_short', 'New pre-watch after the pause at ' + hh + ' only ' + mins_(p.pre_start, p.pre_end) + ' min (< ' + preMin + ')',
+      hh + ' 暫停施工的重新預觀測僅 ' + mins_(p.pre_start, p.pre_end) + ' 分鐘（未滿 ' + preMin + ' 分）');
+    else if (tms_(p.pre_end) > end) add('repre_order', 'Work resumed before the new pre-watch ended (pause at ' + hh + ')', hh + ' 暫停施工在重新預觀測結束前就回復施工');
   });
   ss.forEach(s => {
-    const inZone = bool_(s.in_alert_zone) || (s.min_distance_m !== '' && Number(s.min_distance_m) <= alertM);
-    if (!inZone) return;
+    if (!inZone(s)) return;
     const t = tms_(s.time), hh = s.time.slice(11, 16);
-    // 打樁前（預觀測期間）警戒區內目擊 → 最後目擊／離開後至少 30 分才可開工
+    // 實際觀測開始前的警戒區內目擊 → 鯨豚離開後須重新預觀測（預觀測開始要晚於離開時間）
     if (sv.work_start && t < tms_(sv.work_start)) {
-      const g = mins_(s.left_time || s.time, sv.work_start);
-      if (g < clearMin) add('start_early', 'Work started ' + g + ' min after the pre-watch sighting at ' + hh + ' (< ' + clearMin + ')',
-        hh + ' 打樁前目擊後僅 ' + g + ' 分鐘即開始施工（未滿 ' + clearMin + ' 分）');
+      if (sv.pre_start && tms_(s.left_time || s.time) > tms_(sv.pre_start)) add('pre_redo', 'Pre-watch was not restarted after the sighting at ' + hh, hh + ' 目擊鯨豚後未重新開始預觀測');
       return;
     }
     if (!sv.work_start) return;
     const during = t >= tms_(sv.work_start) && (!sv.work_end || t <= tms_(sv.work_end));
     if (!during) return;
     const p = ps.find(x => x.sighting_id === s.id) || ps.find(x => tms_(x.start) >= t - 5 * 60000 && tms_(x.start) <= t + 30 * 60000);
-    if (!p) add('no_pause', 'Sighting in the alert zone at ' + hh + ' during work with no pause recorded', hh + ' 施工中於警戒區內目擊，但無停工紀錄');
+    if (!p) add('no_pause', 'Sighting in the alert zone at ' + hh + ' during observation with no pause recorded', hh + ' 實際觀測中於警戒區內目擊，但無暫停施工紀錄');
     else if (mins_(s.time, p.start) > respMin) add('slow_response', 'Work paused ' + mins_(s.time, p.start) + ' min after the sighting at ' + hh + ' (> ' + respMin + ')',
-      hh + ' 目擊後 ' + mins_(s.time, p.start) + ' 分鐘才停工（應於 ' + respMin + ' 分鐘內啟動應變）');
+      hh + ' 目擊後 ' + mins_(s.time, p.start) + ' 分鐘才暫停施工（應於 ' + respMin + ' 分鐘內啟動應變）');
   });
 
   const hasSighting = ss.length > 0, hasPause = ps.length > 0;
@@ -726,6 +726,59 @@ function setShiftStatus_(u, id, status) {
     return Repo.update('Shifts', s.id, patch);
   });
 }
+// ============ 清空資料（驗證碼寄到固定信箱；帳號、規則設定、上傳項目、操作紀錄一律保留） ============
+const RESET_EMAIL = 'paul.tong@nmdc-group.com';
+const RESET_GROUPS = {
+  shifts: ['Shifts', 'ShiftVessels', 'Pauses', 'Sightings', 'Files'],
+  tracks: ['Tracks'],
+  vessels: ['Vessels'],
+  observers: ['Observers']
+};
+function resetRequest_(u, p) {
+  const groups = (Array.isArray(p.groups) ? p.groups : []).filter(k => RESET_GROUPS[k]);
+  if (!groups.length) fail_('Tick at least one item to clear');
+  if (groups.indexOf('vessels') >= 0 && groups.indexOf('tracks') < 0) groups.push('tracks');   // 軌跡依附船舶
+  const code = String(parseInt(Utilities.getUuid().replace(/-/g, '').slice(0, 8), 16) % 900000 + 100000);
+  const state = { hash: hash_(code, 'reset'), groups: groups, by: u.id, tries: 0, exp: Date.now() + 10 * 60000 };
+  PropertiesService.getScriptProperties().setProperty('reset_pending', JSON.stringify(state));
+  try {
+    MailApp.sendEmail({ to: RESET_EMAIL, name: 'NMDC MMO', subject: '[MMO] Data reset verification code｜清空資料驗證碼：' + code,
+      body: '有人申請清空 NMDC MMO 鯨豚觀察系統的資料，請把驗證碼輸入系統以確認。\n\n驗證碼 Code：' + code + '\n申請人 Requested by：' + (u.name || u.username) + ' (' + u.username + ')\n將刪除 Data to delete：' + groups.join(', ') +
+        '\n有效時間 Valid for：10 分鐘 (10 minutes)\n\n若非本人申請，請忽略此信，資料不會被刪除。 If you did not request this, ignore this email.' });
+  } catch (e) { fail_('Could not send email: ' + e.message + ' — run setup() once in the Apps Script editor to authorise sending mail'); }
+  return { to: RESET_EMAIL.replace(/^(.).*(@.*)$/, '$1***$2'), groups: groups };
+}
+function resetConfirm_(u, p) {
+  const props = PropertiesService.getScriptProperties();
+  const raw = props.getProperty('reset_pending');
+  if (!raw) fail_('No reset request — send a new verification code');
+  const st = JSON.parse(raw);
+  if (st.by !== u.id) fail_('This code was requested by another administrator');
+  if (Date.now() > st.exp) { props.deleteProperty('reset_pending'); fail_('Verification code expired — send a new one'); }
+  if (hash_(str_(p.code), 'reset') !== st.hash) {
+    st.tries++;
+    if (st.tries >= 5) { props.deleteProperty('reset_pending'); fail_('Too many wrong codes — send a new one'); }
+    props.setProperty('reset_pending', JSON.stringify(st));
+    fail_('Wrong verification code (' + (5 - st.tries) + ' tries left)');
+  }
+  props.deleteProperty('reset_pending');
+  return withLock_(() => {
+    // 先備份整份試算表到同一資料夾：清掉的資料列無法從垃圾桶救回，備份失敗就不刪
+    const stamp = Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd HHmm');
+    const backup = DriveApp.getFileById(ss_().getId()).makeCopy(SS_NAME + ' 清空前備份 ' + stamp, DriveApp.getFolderById(ROOT_FOLDER_ID));
+    const g = st.groups;
+    let rows = 0, folders = 0;
+    if (g.indexOf('shifts') >= 0) Repo.all('Shifts').forEach(s => { if (s.folder_id) { try { DriveApp.getFolderById(s.folder_id).setTrashed(true); folders++; } catch (e) { console.warn('trash folder: ' + e.message); } } });
+    if (g.indexOf('tracks') >= 0) {
+      if (g.indexOf('vessels') < 0) Repo.all('Vessels').filter(v => bool_(v.tracking) || v.track_id).forEach(v => Repo.update('Vessels', v.id, { tracking: 'FALSE', track_id: '' }));
+      const sh = posSheet_(), last = sh.getLastRow();
+      if (last > 1) { rows += last - 1; sh.getRange(2, 1, last - 1, sh.getLastColumn()).clearContent(); }
+    }
+    g.forEach(k => RESET_GROUPS[k].forEach(t => { rows += Repo.clear(t); }));
+    console.log('RESET by ' + u.username + ': ' + g.join(',') + ' rows=' + rows + ' folders=' + folders + ' backup=' + backup.getId());
+    return { rows: rows, folders: folders, groups: g, backup: backup.getName() };
+  });
+}
 function deleteShift_(id) {
   return withLock_(() => {
     const s = Repo.get('Shifts', id);
@@ -737,6 +790,7 @@ function deleteShift_(id) {
   });
 }
 const CREW_FIELDS = ['crew'];
+const PAUSE_FIELDS = ['start','end','reason','sighting_id','monitoring','restart','remark','pre_start','pre_end'];
 const SV_FIELDS = ['pre_start','pre_end','work_start','full_start','work_end','lat','lon','pos_time','pos_source','weather','sea_state','remark'];
 const SV_TIME_FIELDS = { pre_start: 1, pre_end: 1, work_start: 1, full_start: 1, work_end: 1, pos_time: 1 };
 function saveShiftVessel_(u, p) {
@@ -766,7 +820,7 @@ function saveChild_(u, sheet, p, fields, required) {
     const patch = { updated_at: nowIso_() };
     fields.forEach(k => {
       if (p[k] === undefined) return;
-      patch[k] = /^(start|end|time|left_time)$/.test(k) ? dt_(p[k]) : ((k === 'in_alert_zone' || k === 'monitoring') ? (bool_(p[k]) ? 'TRUE' : 'FALSE') : str_(p[k]));
+      patch[k] = /^(start|end|time|left_time|pre_start|pre_end)$/.test(k) ? dt_(p[k]) : ((k === 'in_alert_zone' || k === 'monitoring') ? (bool_(p[k]) ? 'TRUE' : 'FALSE') : str_(p[k]));
     });
     required.forEach(k => { if (!p.id && !patch[k]) fail_('Missing field: ' + k); });
     if (p.id) return Repo.update(sheet, p.id, patch);
@@ -781,10 +835,10 @@ function saveSighting_(u, p) {
   if (p.in_alert_zone === undefined || p.in_alert_zone === '') p.in_alert_zone = str_(p.min_distance_m) !== '' && Number(p.min_distance_m) <= (Number(st.alert_zone_m) || 750);
   const rec = saveChild_(u, 'Sightings', p, ['time','species','count','detection','min_distance_m','in_alert_zone','action','left_time','lat','lon','behavior','remark',
     'bearing','direction','deck','vessel_dist_m','piling_status','mother_calf','image','call_type','freq_khz','hydrophone_m'], ['time']);
-  // 選擇「停工」且尚無對應停工紀錄 → 自動建立一筆停工（復工時間之後補）
+  // 選擇「暫停施工」且尚無對應暫停施工紀錄 → 自動建立一筆暫停施工（回復施工時間之後補）
   if (p.auto_pause && !p.id && rec.time) {
-    saveChild_(u, 'Pauses', { sv_id: rec.sv_id, start: rec.time, reason: lines_(st.pause_reasons)[0] || 'Cetacean in alert zone', sighting_id: rec.id, monitoring: true, restart: 'soft', remark: '' },
-      ['start','end','reason','sighting_id','monitoring','restart','remark'], ['start']);
+    saveChild_(u, 'Pauses', { sv_id: rec.sv_id, start: rec.time, reason: lines_(st.pause_reasons)[0] || 'Cetacean in alert zone', sighting_id: rec.id, monitoring: true, remark: '' },
+      PAUSE_FIELDS, ['start']);
   }
   return rec;
 }
@@ -1057,9 +1111,9 @@ function rebuildSummary_() {
   const slots = lines_(st.crew_slots);
   const shifts = Repo.all('Shifts').sort((a, b) => (b.date + b.shift_no).localeCompare(a.date + a.shift_no, undefined, { numeric: true }));
   const svs = Repo.all('ShiftVessels'), pauses = Repo.all('Pauses'), sightings = Repo.all('Sightings'), files = Repo.all('Files'), items = Repo.all('UploadItems');
-  const STATUS = { idle: '未開始', pre: '預觀測中', preDone: '預觀測完成', work: '施工中', paused: '停工中', done: '已完工' };
-  const head = ['日期', '班次', '工區', '工作範疇', '風機/基樁編號', '施工船', 'MMO 船'].concat(slots).concat(['預觀測開始', '預觀測結束', '預觀測(分)',
-    '施工開始', '全力道開始', '施工結束', '施工時長(分)', '停工次數', '停工總計(分)', '目擊次數', '物種', '警戒區內目擊', '緯度', '經度', '風速(kn)', '浪高(m)',
+  const STATUS = { idle: '未開始', pre: '預觀測中', preDone: '預觀測完成', work: '實際觀測中', paused: '暫停施工中', done: '已完成' };
+  const head = ['日期', '班次', '工區', '工作範疇', '施工位置/編號', '施工船', 'MMO 船'].concat(slots).concat(['預觀測開始', '預觀測結束', '預觀測(分)',
+    '實際觀測開始', '實際觀測結束', '實際觀測時長(分)', '暫停施工次數', '暫停施工總計(分)', '目擊次數', '物種', '警戒區內目擊', '緯度', '經度', '風速(kn)', '浪高(m)',
     '文件', '照片', '缺件', '規則提醒', '狀態', '班次結案', 'Drive 資料夾']);
   const rows = [];
   shifts.forEach(s => {
@@ -1075,7 +1129,7 @@ function rebuildSummary_() {
       const folder = sv.folder_id || s.folder_id;
       rows.push([s.date, s.shift_no, s.site, s.scope, s.turbine_no, s.construction_vessel, sv.vessel_name]
         .concat(slots.map(k => (crew[k] && crew[k].name) || ''))
-        .concat([t_(sv.pre_start), t_(sv.pre_end), n(mins_(sv.pre_start, sv.pre_end)), t_(sv.work_start), t_(sv.full_start), t_(sv.work_end), n(mins_(sv.work_start, sv.work_end)),
+        .concat([t_(sv.pre_start), t_(sv.pre_end), n(mins_(sv.pre_start, sv.pre_end)), t_(sv.work_start), t_(sv.work_end), n(mins_(sv.work_start, sv.work_end)),
           ps.length, pauseMin, ss.length, Array.from(new Set(ss.map(x => x.species).filter(Boolean))).join('、'),
           ss.filter(x => bool_(x.in_alert_zone) || (x.min_distance_m !== '' && Number(x.min_distance_m) <= alertM)).length,
           sv.lat, sv.lon, wx.wind !== undefined ? wx.wind : '', wx.wave !== undefined ? wx.wave : '',
@@ -1087,7 +1141,7 @@ function rebuildSummary_() {
   writeTable_('總表', head, rows, 0);
 
   const sHead = ['日期', '班次', '工區', '風機/基樁編號', '施工船', 'MMO 船', '目擊時間', '物種', '數量', '母子對', '偵測方式', '觀察方位(°)', '游行方向', '觀察位置', '與船距離(m)', '與樁距離(m)', '進入警戒區',
-    '打樁狀態', '處置', '最後目擊/離開警戒區', '聲音類型', '頻率(kHz)', '與水下麥克風距離(m)', '影像', '緯度', '經度', '行為', '備註', '登錄者'];
+    '施工狀態', '處置', '最後目擊/離開警戒區', '聲音類型', '頻率(kHz)', '與水下麥克風距離(m)', '影像', '緯度', '經度', '行為', '備註', '登錄者'];
   const sRows = [];
   sightings.slice().sort((a, b) => b.time.localeCompare(a.time)).forEach(x => {
     const s = shifts.find(z => z.id === x.shift_id) || {};

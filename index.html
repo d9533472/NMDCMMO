@@ -274,6 +274,23 @@ textarea{resize:vertical;min-height:64px}
 .vs-pin b{display:inline-block;width:16px;height:16px;line-height:16px;text-align:center;border-radius:50%;background:var(--navy);color:#fff;font-size:10px}
 .vs-pin.trk{border-color:#d32f2f}.vs-pin.trk b{background:#d32f2f}
 .vs-pin.old{opacity:.6}
+.dist-wrap{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:0}
+#distMap{height:320px;background:#dfeaf2}
+.dist-list{display:flex;flex-direction:column}
+.dist-row{padding:10px 14px;border-bottom:1px solid var(--border);display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px}
+.dist-row:last-child{border-bottom:0}
+.dist-row .n{font-weight:700;color:var(--navy);margin-right:auto}
+.dist-row .m{flex-basis:100%;font-size:12px;color:var(--muted)}
+.dist-val{font:700 15px 'JetBrains Mono',monospace;color:var(--navy)}
+.dist-val.old{color:var(--muted);font-weight:500}
+.dist-tip{background:#fff;border:1px solid var(--border-2);border-radius:6px;padding:1px 6px;font:700 11px 'JetBrains Mono',monospace;color:var(--navy);box-shadow:none}
+.dist-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-bottom:10px}
+.dist-stats div{background:var(--na-bg);border-radius:8px;padding:8px 10px;font-size:12px;color:var(--muted)}
+.dist-stats b{display:block;font:700 16px 'JetBrains Mono',monospace;color:var(--navy)}
+.dist-chart{position:relative}
+.dist-chart svg{display:block;width:100%;height:auto}
+.dist-tt{position:absolute;top:6px;pointer-events:none;background:#fff;border:1px solid var(--border-2);border-radius:6px;padding:3px 8px;font-size:12px;color:var(--navy);white-space:nowrap}
+@media(max-width:800px){.dist-wrap{grid-template-columns:1fr}.dist-stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
 .rec{display:inline-block;width:8px;height:8px;border-radius:50%;background:#d32f2f;margin-right:4px;animation:pulse 1.4s infinite}
 #trkMap{height:440px;border-radius:var(--radius-lg);border:1px solid var(--border);background:#cfe3ef}
 @media(max-width:700px){#trkMap{height:320px}}
@@ -473,12 +490,16 @@ const ERR_ZH = {
   'Position API rejected the key (HTTP 401) — check the API key in Back office': '船位 API 拒絕此金鑰（401），請檢查後台的 API 金鑰',
   'Position API rejected the key (HTTP 403) — check the API key in Back office': '船位 API 拒絕此金鑰（403），請檢查方案或金鑰',
   'Vessel not found by the position API (HTTP 404) — check the MMSI': '船位 API 找不到這艘船（404），請檢查 MMSI',
+  'Tick at least one item to clear': '請至少勾選一項要清空的資料', 'No reset request — send a new verification code': '沒有待確認的清空申請，請重新寄送驗證碼',
+  'This code was requested by another administrator': '此驗證碼是由其他管理員申請的', 'Verification code expired — send a new one': '驗證碼已過期，請重新寄送',
+  'Too many wrong codes — send a new one': '驗證碼錯誤次數過多，請重新寄送',
   'Could not find a position in the API response': 'API 回應中沒有船位資料', 'You cannot demote or disable your own account': '不能降級或停用自己的帳號'
 };
 function trErr(m) {
   if (LANG !== 'zh') return m;
   if (ERR_ZH[m]) return ERR_ZH[m];
   let r = m.match(/^Shift number (.+) already exists$/); if (r) return '班次編號 ' + r[1] + ' 已存在';
+  r = m.match(/^Wrong verification code \((\d+) tries left\)$/); if (r) return '驗證碼錯誤（還可再試 ' + r[1] + ' 次）';
   r = m.match(/^(.+) already has records in this shift and cannot be removed$/); if (r) return r[1] + ' 在此班次已有紀錄，不能移除';
   return m;
 }
@@ -539,14 +560,13 @@ function downloadCsv(name, rows) {
 // ==================== Status ====================
 const STATUS = {
   idle: ['Not started', '未開始', ''], pre: ['Pre-watch', '預觀測中', 'amber'], preDone: ['Pre-watch done', '預觀測完成', 'blue'],
-  work: ['Working', '施工中', 'green'], paused: ['Paused', '停工中', 'red'], done: ['Completed', '已完工', 'navy']
+  work: ['Observing', '實際觀測中', 'green'], paused: ['Paused', '暫停施工中', 'red'], done: ['Completed', '已完成', 'navy']
 };
 function stTag(st) { const s = STATUS[st] || STATUS.idle; return `<span class="tag ${s[2]}">${L(s[0], s[1])}</span>`; }
 function shiftOf(id) { return S.shifts.find(s => s.id === id); }
 function svsOf(shiftId) { return S.svs.filter(x => x.shift_id === shiftId).sort((a, b) => Number(a.sort) - Number(b.sort)); }
 function shiftClosed(s) { return s && s.status === 'closed'; }
 function canEdit(s) { return !isViewer() && (!shiftClosed(s) || isAdmin()); }
-function isPiling(s) { return /pil|打樁/i.test((s && s.scope) || ''); }
 function shiftLabel(s) { return `${s.date} · ${L('Shift', '班次')} ${s.shift_no}`; }
 function settingsNum(k, d) { const v = parseFloat(S.settings[k]); return isFinite(v) ? v : d; }
 function sites() {
@@ -679,6 +699,7 @@ function go(page, shiftId, svId) {
 function render() {
   if (!S || !S.shifts) return;
   saveCache();
+  distAlertCheck();
   $('sideProject').textContent = S.settings.project_name || '';
   const missingCount = S.svs.filter(x => x.checks.missing.length && (x.checks.status === 'done' || shiftClosed(shiftOf(x.shift_id)))).length;
   $('nav').innerHTML = PAGES.filter(p => !p.admin || isAdmin()).map(p =>
@@ -1140,6 +1161,10 @@ function wxVessels() {
       ${bool(v.tracking) ? '<br><span class="rec"></span>' + L('Recording track', '軌跡記錄中') : ''}`).addTo(WX.vlayer);
     pts.push([lat, lon]);
   });
+  S.shifts.filter(s => !shiftClosed(s)).forEach(s => {
+    const list = svsOf(s.id).filter(x => ['pre', 'preDone', 'work', 'paused'].indexOf(x.checks.status) >= 0);
+    if (list.length) distDrawOn(WX.vlayer, s, list, { sticky: true, className: 'dist-tip' });
+  });
   // 只把工區附近（預報點範圍外 0.15° 內）的船納入初始視野，遠方的船不讓地圖縮太小；需要時可自行縮放
   if (!WX.vfit) {
     WX.vfit = true;
@@ -1147,6 +1172,180 @@ function wxVessels() {
     if (WX.bounds) { if (near.length) WX.map.fitBounds(L_.latLngBounds(WX.bounds.getSouthWest(), WX.bounds.getNorthEast()).extend(L_.latLngBounds(near)), { maxZoom: 11 }); }
     else if (pts.length) WX.map.fitBounds(L_.latLngBounds(pts).pad(0.2), { maxZoom: 11 });
   }
+}
+
+// ==================== 船距（施工船 ↔ MMO 船） ====================
+const DIST = { map: null, view: null, id: '' };
+const DIST_STALE_MIN = 30;   // 任一船 AIS 定位超過此分鐘數就不做判定（兩船定位時間差太大，距離不可靠）
+function distM(a, b) {
+  const R = 6371000, rad = Math.PI / 180, dLat = (b.lat - a.lat) * rad, dLon = (b.lon - a.lon) * rad;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+function aisPos(id) {
+  const v = S.vessels.find(x => x.id === id);
+  if (!v) return null;
+  const lat = parseFloat(v.last_lat), lon = parseFloat(v.last_lon);
+  return isFinite(lat) && isFinite(lon) ? { id, name: v.name, lat, lon, fix: v.last_fix, age: mins(v.last_fix, nowLocal()) } : null;
+}
+function distBand() { const a = settingsNum('alert_zone_m', 750), t = settingsNum('mmo_dist_tol_m', 150); return { a, t, lo: Math.max(0, a - t), hi: a + t }; }
+function distState(d) { const b = distBand(); return d < b.lo ? 'near' : d > b.hi ? 'far' : 'ok'; }
+function shipDist(s, sv) {
+  const c = aisPos(s.construction_vessel_id), m = aisPos(sv.vessel_id);
+  if (!c || !m) return { state: 'none', c, m };
+  const d = Math.round(distM(c, m)), age = Math.max(c.age, m.age);
+  return { state: age <= DIST_STALE_MIN ? distState(d) : 'old', d, c, m, age };
+}
+function distLabel(r) {
+  if (r.state === 'none') return `<span class="muted">${L('No position', '無船位')}</span>`;
+  const b = distBand();
+  const tag = { ok: `<span class="tag green">✓ ${L('Near ', '')}${b.a} m${L('', ' 附近')}</span>`, near: `<span class="tag amber">▼ ${L('Too close', '偏近')}</span>`,
+    far: `<span class="tag amber">▲ ${L('Too far', '偏遠')}</span>`, old: `<span class="tag">⚠ ${L('Stale position', '船位過舊')}</span>` }[r.state];
+  return `<span class="dist-val ${r.state === 'old' ? 'old' : ''}">${r.state === 'old' ? '≈ ' : ''}${r.d.toLocaleString()} m</span> ${tag}`;
+}
+function distSection(s, ed) {
+  const vs = svsOf(s.id), band = distBand();
+  if (!vs.length) return '';
+  const head = `<h3>📏 ${L('Vessel distance', '船距')} <span class="small muted" style="font-weight:400">🏗 ${esc(s.construction_vessel || '—')} ↔ ⛴ MMO · ${L('target', '目標')} ${band.a} ± ${band.t} m</span></h3>`;
+  if (shiftClosed(s)) return `<div class="section"><div class="section-header">${head}<div class="toolbar">${vs.map(x => `<button class="btn btn-sm" onclick="distHistory('${x.id}')">📈 ${esc(x.vessel_name)}</button>`).join('')}</div></div></div>`;
+  const cv = S.vessels.find(x => x.id === s.construction_vessel_id);
+  if (!cv || !cv.mmsi) return `<div class="section"><div class="section-header">${head}</div><div class="empty">${L('Pick a construction vessel with an MMSI for this shift to see the distance.', '此班次的施工船須設定 MMSI 才能計算船距（後台管理 › 船舶）。')}</div></div>`;
+  const apiOn = !!S.settings.ais_api_url && !!S.settings.ais_api_key;
+  const ago = p => !p ? L('no position', '無船位') : isNaN(p.age) ? '—' : fmtDur(Math.max(0, p.age)) + L(' ago', '前');
+  const rows = vs.map(x => {
+    const r = shipDist(s, x);
+    return `<div class="dist-row"><span class="n">⛴ ${esc(x.vessel_name)}</span>${distLabel(r)}
+      <button class="btn btn-sm" onclick="distHistory('${x.id}')" title="${L('Distance history', '距離紀錄')}">📈</button>
+      <div class="m">AIS：🏗 ${esc(ago(r.c))} · ⛴ ${esc(ago(r.m))}</div></div>`;
+  }).join('');
+  return `<div class="section"><div class="section-header"><div>${head}</div>
+      <div class="toolbar">${ed && apiOn ? `<button class="btn btn-sm w" onclick="distRefresh('${s.id}', this)" title="${L('Uses API credits', '會消耗 API 點數')}">📡 ${L('Update', '更新')}</button>` : ''}</div></div>
+    <div class="dist-wrap"><div id="distMap"></div><div class="dist-list">${rows}</div></div></div>`;
+}
+/** 船距超出範圍警告：離開範圍時跳一次，仍在範圍外每 30 分鐘再跳；回到範圍內就重新計算。船位過舊不判定 */
+const DIST_ALERT_REPEAT_MIN = 30;
+function distAlertCheck() {
+  if (isViewer()) return;
+  let seen = {};
+  try { seen = JSON.parse(localStorage.getItem('mmo_dist_alert') || '{}') || {}; } catch (e) {}
+  const now = Date.now(), list = [], next = {};
+  S.svs.forEach(sv => {
+    const s = shiftOf(sv.shift_id);
+    if (!s || shiftClosed(s) || ['pre', 'preDone', 'work', 'paused'].indexOf(sv.checks.status) < 0) return;
+    const r = shipDist(s, sv);
+    if (r.state === 'ok') return;
+    if (r.state === 'near' || r.state === 'far') {
+      const due = now - (seen[sv.id] || 0) >= DIST_ALERT_REPEAT_MIN * 60000;
+      if (due) list.push({ s, sv, r });
+      next[sv.id] = due ? now : seen[sv.id];
+    } else if (seen[sv.id]) next[sv.id] = seen[sv.id];
+  });
+  try { localStorage.setItem('mmo_dist_alert', JSON.stringify(next)); } catch (e) {}
+  if (!list.length) return;
+  const old = $('distAlert'); if (old) old.closest('.modal-bg').remove();
+  const band = distBand();
+  const bg = openModal('⚠ ' + L('Vessel outside the distance range', '船距超出範圍'), `<div id="distAlert">
+    <div class="alert red" style="margin-bottom:12px">${L('Target distance from the construction vessel: ', '與施工船的目標距離：')}<b>${band.lo}–${band.hi} m</b>${L('. Please notify the crew.', '。請通知船員調整船位。')}</div>
+    ${list.map(x => `<div class="dist-row"><span class="n">⛴ ${esc(x.sv.vessel_name)}</span>${distLabel(x.r)}<div class="m">🏗 ${esc(x.s.construction_vessel || '—')} · AIS ${esc(fmtT((x.r.m.fix || '').slice(0, 16), true))}</div></div>`).join('')}
+    <div class="toolbar" style="justify-content:flex-end;margin-top:12px"><button class="btn" data-go>${L('View', '查看船距')}</button><button class="btn btn-primary" data-ack>${L('Got it', '知道了')}</button></div></div>`, { noFocus: true });
+  bg.querySelector('[data-ack]').onclick = () => bg.remove();
+  bg.querySelector('[data-go]').onclick = () => { bg.remove(); go('shift', list[0].s.id, list[0].sv.id); };
+}
+async function distRefresh(sid, btn) {
+  const s = shiftOf(sid), ids = [s.construction_vessel_id].concat(svsOf(sid).map(x => x.vessel_id)).filter((id, i, a) => id && a.indexOf(id) === i);
+  try { for (let i = 0; i < ids.length - 1; i++) await api('pos.refresh', { vessel_id: ids[i] }); } catch (e) {}
+  return refreshPos(ids[ids.length - 1], btn);
+}
+function distDrawOn(map, s, list, tooltip) {
+  const c = aisPos(s.construction_vessel_id), b = distBand();
+  if (!c) return;
+  L_.circle([c.lat, c.lon], { radius: b.a, color: '#002038', weight: 2, fill: false }).addTo(map);
+  if (b.t > 0) [b.lo, b.hi].forEach(radius => radius > 0 && L_.circle([c.lat, c.lon], { radius, color: '#002038', weight: 1, opacity: .45, dashArray: '4 5', fill: false, interactive: false }).addTo(map));
+  list.forEach(sv => {
+    const r = shipDist(s, sv);
+    if (r.m) L_.polyline([[c.lat, c.lon], [r.m.lat, r.m.lon]], { color: r.state === 'ok' ? '#0a8a43' : '#b26a00', weight: 2, dashArray: '6 5' }).bindTooltip(r.d.toLocaleString() + ' m', tooltip).addTo(map);
+  });
+}
+function drawDistMap(s) {
+  if (DIST.map) { DIST.view = { id: DIST.id, c: DIST.map.getCenter(), z: DIST.map.getZoom() }; DIST.map.remove(); DIST.map = null; }
+  const el = $('distMap');
+  if (!el || !L_) return;
+  const c0 = aisPos(s.construction_vessel_id);
+  if (!c0) { el.innerHTML = `<div class="empty">${L('No construction vessel position yet', '尚無施工船船位')}</div>`; return; }
+  const map = DIST.map = L_.map(el, { scrollWheelZoom: false, zoomControl: true, zoomSnap: .25 });
+  DIST.id = s.id;
+  map.zoomControl.setPosition('topright');
+  L_.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Ocean/World_Ocean_Base/MapServer/tile/{z}/{y}/{x}', { maxZoom: 16, maxNativeZoom: 10, attribution: 'Esri, GEBCO, NOAA' }).addTo(map);
+  const vs = svsOf(s.id), pin = (p, ico) => L_.marker([p.lat, p.lon], { zIndexOffset: 1000, icon: L_.divIcon({ className: '', iconSize: null, html: `<div class="vs-pin"><b>${ico}</b>${esc(p.name || '')}</div>` }) }).addTo(map);
+  distDrawOn(map, s, vs, { permanent: true, direction: 'center', className: 'dist-tip' });
+  pin({ lat: c0.lat, lon: c0.lon }, '🏗');
+  const R = distBand().hi, dy = R / 111320, dx = R / (111320 * Math.cos(c0.lat * Math.PI / 180));
+  const pts = [[c0.lat + dy, c0.lon + dx], [c0.lat - dy, c0.lon - dx]];
+  vs.forEach(sv => { const m = aisPos(sv.vessel_id); if (m) { pin(m, '⛴'); if (distM(c0, m) < 20000) pts.push([m.lat, m.lon]); } });   // 太遠的船不納入視野
+  if (DIST.view && DIST.view.id === s.id) map.setView(DIST.view.c, DIST.view.z); else map.fitBounds(L_.latLngBounds(pts).pad(0.04));
+}
+/** 依時間內插某船位置；前後兩筆相隔太久就放棄，不亂猜 */
+function posAt(list, t) {
+  const i = list.findIndex(p => p.ms >= t), b = i < 0 ? null : list[i], a = i < 0 ? list[list.length - 1] : list[i - 1];
+  if (b && b.ms === t) return b;
+  if (a && b && b.ms - a.ms <= DIST_STALE_MIN * 60000) { const f = (t - a.ms) / (b.ms - a.ms); return { lat: a.lat + (b.lat - a.lat) * f, lon: a.lon + (b.lon - a.lon) * f }; }
+  const n = [a, b].filter(Boolean).sort((x, y) => Math.abs(x.ms - t) - Math.abs(y.ms - t))[0];
+  return n && Math.abs(n.ms - t) <= 5 * 60000 ? n : null;
+}
+async function distHistory(svId) {
+  const sv = S.svs.find(x => x.id === svId), s = shiftOf(sv.shift_id);
+  const bg = openModal(L('Distance history', '距離紀錄') + ' — ' + esc(sv.vessel_name), `<div id="distHist" class="empty">${L('Loading…', '讀取中…')}</div>`, { wide: true });
+  const box = bg.querySelector('#distHist');
+  const from = (sv.pre_start || s.date + 'T00:00').slice(0, 16), to = (sv.work_end || nowLocal()).slice(0, 16);
+  let r;
+  try { r = await api('pos.list', { vessel_ids: [s.construction_vessel_id, sv.vessel_id], from, to }); }
+  catch (e) { box.textContent = e.message; return; }
+  const pick = id => r.positions.filter(p => p.vessel_id === id).map(p => ({ t: p.time, ms: tms(p.time), lat: parseFloat(p.lat), lon: parseFloat(p.lon) })).filter(p => isFinite(p.lat) && isFinite(p.lon) && !isNaN(p.ms));
+  const A = pick(s.construction_vessel_id), B = pick(sv.vessel_id);
+  const base = A.length >= B.length ? A : B, other = base === A ? B : A;
+  const pts = base.map(p => { const q = posAt(other, p.ms); return q ? { t: p.t, ms: p.ms, d: Math.round(distM(p, q)) } : null; }).filter(Boolean);
+  if (!pts.length) {
+    box.textContent = L('Not enough AIS positions for both vessels in this period. Record tracks on both vessels during the shift for 10-minute data.', '這段時間兩船的 AIS 船位不足。班次中對兩艘船都開啟「記錄軌跡」，就會有每 10 分鐘的資料。');
+    return;
+  }
+  distRenderChart(box, pts);
+}
+function distRenderChart(box, pts) {
+  const band = distBand(), ds = pts.map(p => p.d), inB = pts.filter(p => distState(p.d) === 'ok').length;
+  const W = 720, H = 260, ml = 54, mr = 14, mt = 12, mb = 28, t0 = pts[0].ms, t1 = pts[pts.length - 1].ms;
+  const step = n => { const r = n / 5, m = 10 ** Math.floor(Math.log10(r)), f = r / m; return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * m; };
+  const peak = Math.max(band.hi, ...ds), yStep = step(peak), top = Math.ceil(peak * 1.05 / yStep) * yStep;
+  const x = t => t1 === t0 ? (ml + W - mr) / 2 : ml + (t - t0) / (t1 - t0) * (W - ml - mr), y = v => mt + (1 - v / top) * (H - mt - mb);
+  const multi = pts[0].t.slice(0, 10) !== pts[pts.length - 1].t.slice(0, 10);
+  let g = `<rect x="${ml}" y="${y(band.hi)}" width="${W - ml - mr}" height="${y(band.lo) - y(band.hi)}" fill="#e6f4ec"/>`;
+  for (let v = 0; v <= top + 1e-9; v += yStep) g += `<line x1="${ml}" x2="${W - mr}" y1="${y(v)}" y2="${y(v)}" stroke="#e3e9ef"/><text x="${ml - 6}" y="${y(v) + 4}" text-anchor="end" font-size="11" fill="#5b6b7d">${v.toLocaleString()}</text>`;
+  g += `<line x1="${ml}" x2="${W - mr}" y1="${y(band.a)}" y2="${y(band.a)}" stroke="#0a6b35" stroke-dasharray="6 5"/>`;
+  (t1 === t0 ? [0] : [0, .25, .5, .75, 1]).forEach(f => {
+    const ms = t0 + (t1 - t0) * f, n = pts.reduce((m, q) => Math.abs(q.ms - ms) < Math.abs(m.ms - ms) ? q : m, pts[0]);
+    g += `<text x="${x(ms)}" y="${H - 8}" text-anchor="${t1 === t0 ? 'middle' : f === 0 ? 'start' : f === 1 ? 'end' : 'middle'}" font-size="11" fill="#5b6b7d">${multi ? n.t.slice(5, 10).replace('-', '/') + ' ' : ''}${n.t.slice(11, 16)}</text>`;
+  });
+  let path = '';
+  pts.forEach((p, i) => { path += (i && p.ms - pts[i - 1].ms <= 45 * 60000 ? 'L' : 'M') + x(p.ms).toFixed(1) + ' ' + y(p.d).toFixed(1); });   // 超過 45 分無資料就斷線，不假裝連續
+  g += `<path d="${path}" fill="none" stroke="#002038" stroke-width="2" stroke-linejoin="round"/>`;
+  if (pts.length <= 60) pts.forEach(p => { const ok = distState(p.d) === 'ok'; g += `<circle cx="${x(p.ms)}" cy="${y(p.d)}" r="4" fill="${ok ? '#002038' : '#fff'}" stroke="${ok ? '#fff' : '#b26a00'}" stroke-width="2"/>`; });
+  g += `<line id="distCross" y1="${mt}" y2="${H - mb}" stroke="#5b6b7d" visibility="hidden"/>`;
+  box.className = '';
+  box.innerHTML = `<div class="dist-stats">
+      <div><b>${Math.min(...ds).toLocaleString()} m</b>${L('Closest', '最近')}</div><div><b>${Math.max(...ds).toLocaleString()} m</b>${L('Farthest', '最遠')}</div>
+      <div><b>${Math.round(inB / pts.length * 100)}%</b>${L('Within ', '在 ')}${band.lo}–${band.hi} m${L('', ' 內')}</div><div><b>${pts.length}</b>${L('Points', '筆資料')}</div></div>
+    <div class="dist-chart"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${L('Distance between the vessels over time', '兩船距離隨時間變化')}">${g}</svg><div class="dist-tt" hidden></div></div>
+    <div class="small muted" style="margin:6px 0 10px">${L('Green band: ', '綠色帶：')}${band.lo}–${band.hi} m · ${L('dashed line: ', '虛線：')}${band.a} m · ${L('hollow dot: outside the band · gaps: no AIS data', '空心點：範圍外 · 斷線：該時段無 AIS 資料')}</div>
+    <details><summary class="small" style="cursor:pointer">${L('Show table', '顯示表格')}</summary><div class="table-wrap" style="max-height:220px;overflow:auto"><table class="tbl"><tr><th>${L('Time', '時間')}</th><th>${L('Distance', '距離')}</th></tr>
+      ${pts.map(p => `<tr><td class="mono">${esc(fmtT(p.t.slice(0, 16), true))}</td><td class="mono">${p.d.toLocaleString()} m${distState(p.d) === 'ok' ? '' : ' ⚠'}</td></tr>`).join('')}</table></div></details>`;
+  const wrap = box.querySelector('.dist-chart'), svg = wrap.querySelector('svg'), tip = wrap.querySelector('.dist-tt'), cross = svg.querySelector('#distCross');
+  svg.addEventListener('mousemove', e => {
+    const rc = svg.getBoundingClientRect(), mx = (e.clientX - rc.left) / rc.width * W;
+    const p = pts.reduce((m, q) => Math.abs(x(q.ms) - mx) < Math.abs(x(m.ms) - mx) ? q : m, pts[0]);
+    cross.setAttribute('x1', x(p.ms)); cross.setAttribute('x2', x(p.ms)); cross.setAttribute('visibility', 'visible');
+    tip.hidden = false; tip.textContent = fmtT(p.t.slice(0, 16), true) + ' · ' + p.d.toLocaleString() + ' m';
+    tip.style.left = Math.min(x(p.ms) / W * rc.width + 8, rc.width - tip.offsetWidth) + 'px';
+  });
+  svg.addEventListener('mouseleave', () => { tip.hidden = true; cross.setAttribute('visibility', 'hidden'); });
 }
 
 // ==================== Dashboard ====================
@@ -1174,7 +1373,8 @@ function renderDashboard() {
       <div class="tl">${seg(sv.pre_start)}${seg(sv.pre_end, pre < settingsNum('pre_watch_min', 30))}${seg(sv.work_start)}${seg(sv.work_end)}</div>
       <dl class="kv">
         <dt>${L('Pre-watch', '預觀測')}</dt><dd>${fmtT(sv.pre_start)} → ${fmtT(sv.pre_end)} ${isNaN(pre) ? '' : `<span class="muted">(${pre} min)</span>`}</dd>
-        <dt>${L('Work', '施工')}</dt><dd>${fmtT(sv.work_start)} → ${fmtT(sv.work_end)}</dd>
+        <dt>${L('Observation', '實際觀測')}</dt><dd>${fmtT(sv.work_start)} → ${fmtT(sv.work_end)}</dd>
+        ${(r => r.state === 'none' ? '' : `<dt>${L('Vessel distance', '船距')}</dt><dd>${distLabel(r)}</dd>`)(shipDist(s, sv))}
         <dt>${L('Crew', '人員')}</dt><dd>${esc(Object.keys(crew).map(k => crew[k] && crew[k].name).filter(Boolean).join('、') || '—')}</dd>
         <dt>${L('Position', '位置')}</dt><dd class="mono">${sv.lat ? esc(sv.lat + ', ' + sv.lon) : '—'}${sv.mmsi ? ` · <a href="${vfUrl(sv.mmsi)}" target="_blank" onclick="event.stopPropagation()">VesselFinder ↗</a>` : ''}</dd>
         ${wx ? `<dt>${L('Weather', '天氣')}</dt><dd>💨 ${wx.wind ?? '—'} kn · 🌊 ${wx.wave ?? '—'} m</dd>` : ''}
@@ -1188,8 +1388,8 @@ function renderDashboard() {
   $('content').innerHTML = `
     <div class="stat-grid">
       <div class="stat blue"><div class="v">${open.length}</div><div class="l">${L('Open shifts', '進行中班次')}</div></div>
-      <div class="stat green"><div class="v">${working}</div><div class="l">${L('Vessels working', '施工中船舶')}</div></div>
-      <div class="stat ${paused ? 'red' : ''}"><div class="v">${paused}</div><div class="l">${L('Vessels paused', '停工中船舶')}</div></div>
+      <div class="stat green"><div class="v">${working}</div><div class="l">${L('Vessels observing', '實際觀測中船舶')}</div></div>
+      <div class="stat ${paused ? 'red' : ''}"><div class="v">${paused}</div><div class="l">${L('Vessels paused', '暫停施工中船舶')}</div></div>
       <div class="stat amber"><div class="v">${monthSight.length}</div><div class="l">${L('Sightings this month', '本月目擊次數')}</div></div>
       <div class="stat ${missing.length ? 'red' : ''}"><div class="v">${missing.length}</div><div class="l">${L('Completed but missing uploads', '已完工但缺件')}</div></div>
     </div>
@@ -1319,7 +1519,7 @@ function shiftModal(id) {
     <div class="fg"><label>${L('Shift no. (blank = auto)', '班次編號（空白＝自動）')}</label><input id="shNo" value="${esc(s ? s.shift_no : '')}"></div>
     <div class="fg"><label>${L('Site', '工區')}</label><select id="shSite">${opts(siteList, s ? s.site : siteList[0] || '', '—')}</select></div>
     <div class="fg"><label>${L('Scope of work', '工作範疇 Scope')}</label><select id="shScope">${opts(scopes.map(x => ({ v: x, t: biName(x) })), s ? s.scope : '', '—')}</select></div>
-    <div class="fg"><label>${L('Turbine / pile no.', '風機／基樁編號')}</label><input id="shTurb" value="${esc(s ? s.turbine_no : '')}" placeholder="WTG-01"></div>
+    <div class="fg"><label>${L('Work location / no.', '施工位置／編號')}</label><input id="shTurb" value="${esc(s ? s.turbine_no : '')}" placeholder="KP 12.5"></div>
     <div class="fg"><label>${L('Construction vessel', '施工船')}</label><select id="shCv">${opts(cvs.map(v => ({ v: v.id, t: v.name })), s ? s.construction_vessel_id : '', '—')}</select>
       ${cvs.length ? '' : `<span class="small muted">${L('Add construction vessels in Back office › Vessels', '請先到 後台管理 › 船舶 新增施工船')}</span>`}</div>
     <div class="fg full"><label>${L('MMO vessels', 'MMO 觀察船')} *</label>
@@ -1375,20 +1575,64 @@ function renderShift() {
         ${isAdmin() ? `<button class="btn btn-sm btn-danger w" onclick="deleteShift('${s.id}')">🗑</button>` : ''}
       </div></div></div>
     <div class="sv-tabs">${vs.map(x => `<div class="sv-tab ${x.id === CUR.sv ? 'active' : ''}" onclick="CUR.sv='${x.id}';renderShift()">🚤 ${esc(x.vessel_name)} ${stTag(x.checks.status)}${x.checks.warnings.length ? ' ⚠' : ''}</div>`).join('')}</div>
+    ${distSection(s, ed)}
     ${sv ? svPanel(s, sv, ed) : `<div class="section"><div class="empty">${L('No MMO vessels in this shift', '此班次沒有 MMO 船')}</div></div>`}`;
+  drawDistMap(s);
   if (sv) { loadThumbs(s.id); tick(); }
+}
+
+// ---------- 重新預觀測規則：暫停施工超過門檻，或鯨豚進入警戒區（須等離開後）→ 重做一輪預觀測，紀錄在該筆暫停施工 ----------
+const ACT_LEFT = () => ({ k: 'left', cls: 'btn-amber', t: '🐬 ' + L('Cetaceans left ' + settingsNum('alert_zone_m', 750) + ' m', '鯨豚已離開 ' + settingsNum('alert_zone_m', 750) + ' m') });
+const ACT_PRE_END = () => L('✓ End pre-watch (no cetaceans)', '✓ 預觀測結束（未發現鯨豚）');
+function inZone(x) { return bool(x.in_alert_zone) || (x.min_distance_m !== '' && x.min_distance_m != null && Number(x.min_distance_m) <= settingsNum('alert_zone_m', 750)); }
+/** 尚未開始實際觀測時，預觀測開始後仍在警戒區內（或之後才離開）的目擊 → 預觀測須重新開始 */
+function preRedo(sv) {
+  const list = sv.pre_start && !sv.work_start ? S.sightings.filter(x => x.sv_id === sv.id && inZone(x) && (!x.left_time || tms(x.left_time) > tms(sv.pre_start))) : [];
+  return { list, away: list.filter(x => !x.left_time) };
+}
+function pauseState(p) {
+  const end = p.end ? tms(p.end) : Infinity;
+  const zs = S.sightings.filter(x => x.sv_id === p.sv_id && inZone(x) && (x.id === p.sighting_id || (tms(x.time) <= end && (x.left_time ? tms(x.left_time) > tms(p.start) : tms(x.time) >= tms(p.start)))));
+  const last = zs.reduce((m, x) => Math.max(m, tms(x.left_time || x.time)), 0);
+  const stale = !!p.pre_start && last > tms(p.pre_start);   // 重新預觀測開始後又有鯨豚進入 → 這輪作廢
+  const dur = mins(p.start, p.end || nowLocal()), limit = settingsNum('repre_pause_min', 60);
+  return { zs, away: zs.filter(x => !x.left_time), dur, limit, need: zs.length > 0 || dur > limit, running: !!p.pre_start && !p.pre_end && !stale, done: !!p.pre_start && !!p.pre_end && !stale };
+}
+function pauseStep(p) {
+  const st = pauseState(p);
+  if (st.away.length) return 'left';
+  if (!st.need || st.done) return 'resume';
+  return st.running ? 'rp_end' : 'rp_start';
 }
 
 function nextAction(sv, ck) {
   const open = S.pauses.find(p => p.sv_id === sv.id && !p.end);
   switch (ck.status) {
     case 'idle': return { k: 'pre_start', cls: 'btn-amber', t: L('▶ Start pre-watch', '▶ 開始預觀測') };
-    case 'pre': return { k: 'pre_end', cls: 'btn-primary', t: L('✓ End pre-watch (no cetaceans)', '✓ 預觀測結束（未發現鯨豚）') };
-    case 'preDone': return { k: 'work_start', cls: 'btn-green', t: L('▶ Start work', '▶ 開始施工') };
-    case 'work': return { k: 'pause', cls: 'btn-danger', t: L('⏸ Pause work', '⏸ 停工') };
-    case 'paused': return { k: 'resume', cls: 'btn-green', t: L('▶ Resume work', '▶ 復工'), pause: open };
+    case 'pre': case 'preDone': {
+      const r = preRedo(sv);
+      if (r.away.length) return ACT_LEFT();
+      if (r.list.length) return { k: 'pre_redo', cls: 'btn-amber', t: L('↻ Restart pre-watch', '↻ 重新開始預觀測') };
+      return ck.status === 'pre' ? { k: 'pre_end', cls: 'btn-primary', t: ACT_PRE_END() } : { k: 'work_start', cls: 'btn-green', t: L('▶ Start observation', '▶ 開始實際觀測') };
+    }
+    case 'work': return { k: 'pause', cls: 'btn-danger', t: L('⏸ Pause work', '⏸ 暫停施工') };
+    case 'paused': {
+      const step = open ? pauseStep(open) : 'resume';
+      if (step === 'left') return ACT_LEFT();
+      if (step === 'rp_start') return { k: 'rp_start', cls: 'btn-amber', t: L('▶ Start new pre-watch', '▶ 開始重新預觀測') };
+      if (step === 'rp_end') return { k: 'rp_end', cls: 'btn-primary', t: ACT_PRE_END() };
+      return { k: 'resume', cls: 'btn-green', t: L('▶ Resume work', '▶ 回復施工'), pause: open };
+    }
     default: return null;
   }
+}
+function pausePreTag(p) {
+  const st = pauseState(p);
+  if (!st.need && !p.pre_start) return '';
+  const time = `${fmtT(p.pre_start)} → ${fmtT(p.pre_end)}`;
+  if (st.done) return `<div class="small"><span class="tag ${mins(p.pre_start, p.pre_end) < settingsNum('pre_watch_min', 30) ? 'red' : 'green'}">${L('New pre-watch', '重新預觀測')} ${time} (${mins(p.pre_start, p.pre_end)} min)</span></div>`;
+  if (st.running) return `<div class="small"><span class="tag amber">${L('New pre-watch from ', '重新預觀測中，開始於 ')}${fmtT(p.pre_start)}</span></div>`;
+  return `<div class="small"><span class="tag red">${L('New pre-watch required', '須重新預觀測')}</span></div>`;
 }
 function svPanel(s, sv, ed) {
   const ck = sv.checks, crew = json(sv.crew, {}), slots = lines(S.settings.crew_slots);
@@ -1406,30 +1650,28 @@ function svPanel(s, sv, ed) {
   ${ck.warnings.length ? `<div class="alert red"><b>⚠ ${L('Guideline checks', '作業指引檢核')}</b><ul>${warnList(ck).map(w => `<li>${esc(w)}</li>`).join('')}</ul></div>` : ''}
   <div class="section">
     ${ed && na ? `<div class="next-box"><button class="btn btn-lg ${na.cls} w" onclick="doNext('${sv.id}','${na.k}')">${na.t}</button>
-      <div><div class="timer" id="timer"></div><div class="small muted" id="timerHint"></div></div>
+      <div><div class="timer" id="timer" data-k="${na.k}"></div><div class="small muted" id="timerHint"></div></div>
       ${ck.status === 'work' || ck.status === 'paused' || ck.status === 'preDone' || ck.status === 'pre' ? `<button class="btn w" style="margin-left:auto" onclick="sightingModal('${sv.id}')">🐬 ${L('Record sighting', '登錄目擊')}</button>` : ''}
-      ${ck.status === 'work' && isPiling(s) && !sv.full_start ? `<button class="btn w" onclick="doNext('${sv.id}','full_start')">⚡ ${L('Full power (soft-start done)', '緩啟動結束 → 全力道')}</button>` : ''}
-      ${ck.status === 'work' || ck.status === 'paused' ? `<button class="btn w" onclick="doNext('${sv.id}','work_end')">■ ${L('End work', '結束施工')}</button>` : ''}</div>` :
-      `<div class="next-box"><div><div class="timer" id="timer"></div><div class="small muted" id="timerHint"></div></div></div>`}
+      ${ck.status === 'work' || ck.status === 'paused' ? `<button class="btn w" onclick="doNext('${sv.id}','work_end')">■ ${L('End observation', '結束實際觀測')}</button>` : ''}</div>` :
+      `<div class="next-box"><div><div class="timer" id="timer" data-k="${na.k}"></div><div class="small muted" id="timerHint"></div></div></div>`}
     <div class="section-header"><h3>⏱ ${L('Operation times', '作業時間')}</h3>
-      <span class="small muted">${L('Pre-watch', '預觀測')} ${isNaN(pre) ? '—' : `<b style="color:${pre < preMin ? 'var(--danger)' : 'var(--green-dark)'}">${pre} min</b>`} / ${preMin} ${sv.full_start ? ` · ${L('Soft-start', '緩啟動')} <b style="color:${mins(sv.work_start, sv.full_start) < settingsNum('soft_start_min', 30) ? 'var(--danger)' : 'var(--green-dark)'}">${mins(sv.work_start, sv.full_start)} min</b>` : ''} · ${L('Work', '施工')} <b>${fmtDur(work)}</b></span></div>
+      <span class="small muted">${L('Pre-watch', '預觀測')} ${isNaN(pre) ? '—' : `<b style="color:${pre < preMin ? 'var(--danger)' : 'var(--green-dark)'}">${pre} min</b>`} / ${preMin} · ${L('Observation', '實際觀測')} <b>${fmtDur(work)}</b></span></div>
     <div class="section-body" style="padding-top:6px;padding-bottom:6px">
       ${tRow('pre_start', 'Pre-watch start', '預觀測開始')}
       ${tRow('pre_end', 'Pre-watch end', '預觀測結束')}
-      ${tRow('work_start', isPiling(s) ? 'Piling start (soft-start)' : 'Work start', isPiling(s) ? '開始打樁（緩啟動開始）' : '施工開始')}
-      ${isPiling(s) || sv.full_start ? tRow('full_start', 'Full power start (soft-start end)', '全力道打樁開始（緩啟動結束）') : ''}
-      ${tRow('work_end', isPiling(s) ? 'Piling end' : 'Work end', isPiling(s) ? '打樁結束' : '施工結束')}
+      ${tRow('work_start', 'Observation start', '實際觀測開始')}
+      ${tRow('work_end', 'Observation end', '實際觀測結束')}
     </div>
   </div>
 
   <div class="grid-2">
-    <div class="section"><div class="section-header"><h3>⏸ ${L('Pause / resume', '停工／復工')} <span class="muted">(${ps.length})</span></h3>
+    <div class="section"><div class="section-header"><h3>⏸ ${L('Pause / resume', '暫停施工／回復施工')} <span class="muted">(${ps.length})</span></h3>
       ${ed ? `<button class="btn btn-sm w" onclick="pauseModal('${sv.id}')">＋ ${L('Add', '新增')}</button>` : ''}</div>
-      ${ps.length ? `<div class="table-wrap"><table class="tbl"><tr><th>${L('Pause', '停工')}</th><th>${L('Resume', '復工')}</th><th>${L('Duration', '時長')}</th><th>${L('Reason', '原因')}</th><th></th></tr>
-        ${ps.map(p => `<tr><td class="mono">${fmtT(p.start, true)}</td><td class="mono">${p.end ? fmtT(p.end, true) : `<span class="tag red">${L('Paused', '停工中')}</span>`}</td>
-          <td>${p.end ? fmtDur(mins(p.start, p.end)) : '—'}</td><td>${esc(biName(p.reason))}${p.sighting_id ? ' 🐬' : ''}${p.restart ? `<div class="small"><span class="tag blue">${esc(RESTART[p.restart] ? L(RESTART[p.restart][0], RESTART[p.restart][1]) : p.restart)}</span>${bool(p.monitoring) ? ' <span class="tag green">' + L('Monitored', '持續監測') + '</span>' : ''}</div>` : ''}${p.remark ? `<div class="small muted">${esc(p.remark)}</div>` : ''}</td>
+      ${ps.length ? `<div class="table-wrap"><table class="tbl"><tr><th>${L('Pause', '暫停施工')}</th><th>${L('Resume', '回復施工')}</th><th>${L('Duration', '時長')}</th><th>${L('Reason', '原因')}</th><th></th></tr>
+        ${ps.map(p => `<tr><td class="mono">${fmtT(p.start, true)}</td><td class="mono">${p.end ? fmtT(p.end, true) : `<span class="tag red">${L('Paused', '暫停施工中')}</span>`}</td>
+          <td>${p.end ? fmtDur(mins(p.start, p.end)) : '—'}</td><td>${esc(biName(p.reason))}${p.sighting_id ? ' 🐬' : ''}${pausePreTag(p)}${p.remark ? `<div class="small muted">${esc(p.remark)}</div>` : ''}</td>
           <td>${ed ? `<button class="btn btn-sm w" onclick="pauseModal('${sv.id}','${p.id}')">✏️</button>` : ''}</td></tr>`).join('')}</table></div>`
-        : `<div class="empty">${L('No pauses', '無停工紀錄')}</div>`}</div>
+        : `<div class="empty">${L('No pauses', '無暫停施工紀錄')}</div>`}</div>
     <div class="section"><div class="section-header"><h3>🐬 ${L('Sightings', '目擊紀錄')} <span class="muted">(${ss.length})</span></h3>
       ${ed ? `<button class="btn btn-sm w" onclick="sightingModal('${sv.id}')">＋ ${L('Add', '新增')}</button>` : ''}</div>
       ${ss.length ? `<div class="table-wrap"><table class="tbl"><tr><th>${L('Time', '時間')}</th><th>${L('Species', '物種')}</th><th>${L('Count', '數量')}</th><th>${L('Distance', '距離')}</th><th>${L('Action', '處置')}</th><th></th></tr>
@@ -1478,7 +1720,7 @@ function wmo(c) {
   const r = T.find(x => c <= x[0]) || T[T.length - 1];
   return L(r[1], r[2]);
 }
-// 每秒更新計時器：預觀測倒數／施工經過時間／停工時間
+// 每秒更新計時器：預觀測倒數／施工經過時間／暫停施工時間
 function tick() {
   const el = $('timer'); if (!el) return;
   const s = shiftOf(CUR.shift); const sv = s && S.svs.find(x => x.id === CUR.sv); if (!sv) return;
@@ -1488,21 +1730,38 @@ function tick() {
   const hms = sec => { const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), x = sec % 60; return (h ? h + ':' : '') + String(m).padStart(2, '0') + ':' + String(x).padStart(2, '0'); };
   const st = sv.checks.status;
   const hint = $('timerHint');
-  if (st === 'pre') {
-    const left = preMin * 60 - since(sv.pre_start);
+  const nx = nextAction(sv, sv.checks);
+  if (el.dataset.k !== undefined && (nx ? nx.k : '') !== el.dataset.k) return renderShift();   // 暫停施工滿門檻等狀態跨過時換按鈕
+  const countdown = (start, label) => {
+    const left = preMin * 60 - since(start);
     el.textContent = left > 0 ? hms(left) : '+' + hms(-left);
     el.style.color = left > 0 ? 'var(--warn)' : 'var(--green-dark)';
-    hint.textContent = left > 0 ? L('Pre-watch remaining (' + preMin + ' min required)', '預觀測剩餘時間（需滿 ' + preMin + ' 分鐘）') : L('Pre-watch time met — you may end the pre-watch', '已滿預觀測時間，未發現鯨豚即可結束預觀測');
+    hint.textContent = left > 0 ? L(label[0] + ' remaining (' + preMin + ' min required)', label[1] + '剩餘時間（需滿 ' + preMin + ' 分鐘）') : L('Pre-watch time met — you may end the pre-watch', '已滿預觀測時間，未發現鯨豚即可結束預觀測');
+  };
+  if (nx && nx.k === 'left') {
+    const t = st === 'paused' && S.pauses.find(x => x.sv_id === sv.id && !x.end);
+    el.textContent = t ? hms(since(t.start)) : '🐬'; el.style.color = 'var(--danger)';
+    hint.textContent = L('Cetaceans in the alert zone — press the button when they leave, then start a new ' + preMin + '-min pre-watch', '鯨豚在警戒區內，離開後請按左側按鈕，並重新預觀測 ' + preMin + ' 分鐘');
+  } else if (nx && nx.k === 'pre_redo') {
+    el.textContent = '↻'; el.style.color = 'var(--warn)';
+    hint.textContent = L('Cetaceans left — the pre-watch must restart (' + preMin + ' min)', '鯨豚已離開，須重新開始預觀測（' + preMin + ' 分鐘）');
+  } else if (st === 'pre') {
+    countdown(sv.pre_start, ['Pre-watch', '預觀測']);
   } else if (st === 'work') {
     el.textContent = hms(since(sv.work_start)); el.style.color = 'var(--green-dark)';
-    hint.textContent = L('Working since ', '施工中，開始於 ') + fmtT(sv.work_start);
+    hint.textContent = L('Observing since ', '實際觀測中，開始於 ') + fmtT(sv.work_start);
   } else if (st === 'paused') {
     const p = S.pauses.find(x => x.sv_id === sv.id && !x.end);
-    el.textContent = p ? hms(since(p.start)) : '—'; el.style.color = 'var(--danger)';
-    const sg = p && p.sighting_id && S.sightings.find(x => x.id === p.sighting_id);
-    const clear = settingsNum('clear_min', 30);
-    hint.textContent = L('Paused since ', '停工中，開始於 ') + (p ? fmtT(p.start) : '') +
-      (sg && sg.left_time ? L(' · may resume after ', '・可復工時間 ') + fmtT(new Date(tms(sg.left_time) + clear * 60000 + 8 * 3600000).toISOString().slice(0, 16)) : L(' · record when the animals leave the alert zone', '・請於鯨豚離開警戒區時登錄離開時間'));
+    const pst = p ? pauseState(p) : null, step = p ? pauseStep(p) : 'resume';
+    if (step === 'rp_end') countdown(p.pre_start, ['New pre-watch', '重新預觀測']);
+    else {
+      el.textContent = p ? hms(since(p.start)) : '—'; el.style.color = 'var(--danger)';
+      const left = pst ? pst.limit - pst.dur : 0;
+      hint.textContent = L('Paused since ', '暫停施工中，開始於 ') + (p ? fmtT(p.start) : '') + (!pst ? '' :
+        step === 'rp_start' ? (pst.zs.length ? L(' · cetaceans left: a new ' + preMin + '-min pre-watch is required', '・鯨豚已離開，須重新預觀測 ' + preMin + ' 分鐘') : L(' · over ' + pst.limit + ' min: a new ' + preMin + '-min pre-watch is required', '・已超過 ' + pst.limit + ' 分鐘，須重新預觀測 ' + preMin + ' 分鐘')) :
+        pst.done ? L(' · new pre-watch done, you may resume', '・重新預觀測完成，可回復施工') :
+        L(' · resume within ' + left + ' min to skip a new pre-watch', '・' + left + ' 分鐘內回復施工可免重新預觀測'));
+    }
   } else if (st === 'preDone') {
     el.textContent = '✓'; el.style.color = 'var(--info)';
     hint.textContent = L('Pre-watch done at ', '預觀測完成於 ') + fmtT(sv.pre_end) + ' · ' + mins(sv.pre_start, sv.pre_end) + ' min';
@@ -1515,17 +1774,38 @@ function tick() {
 async function saveSv(id, patch) { try { await mut('sv.save', Object.assign({ id }, patch)); } catch (e) {} }
 async function doNext(svId, k) {
   const sv = S.svs.find(x => x.id === svId);
+  const openP = S.pauses.find(x => x.sv_id === svId && !x.end);
+  if (k === 'left') {
+    const list = openP ? pauseState(openP).away : preRedo(sv).away;
+    if (!(await confirmBox(L(`Record that the cetaceans left the alert zone at ${fmtT(nowLocal())}?`, `登錄鯨豚於 ${fmtT(nowLocal())} 離開警戒區？`), L('Confirm', '確定')))) return;
+    const t = nowLocal();
+    try {
+      for (let i = 0; i < list.length - 1; i++) await api('sighting.save', { id: list[i].id, left_time: t, in_alert_zone: true });
+      await mut('sighting.save', { id: list[list.length - 1].id, left_time: t, in_alert_zone: true }, L('Saved', '已儲存'));
+    } catch (e) {}
+    return;
+  }
+  if (k === 'pre_redo') {
+    const t = fmtT(sv.pre_start, true), note = L(`Pre-watch started ${t} restarted after a sighting`, `${t} 開始的預觀測因目擊鯨豚重新計時`);
+    return mut('sv.save', { id: svId, pre_start: nowLocal(), pre_end: '', remark: (sv.remark ? sv.remark + '；' : '') + note }, L('Pre-watch restarted', '預觀測已重新開始')).catch(() => {});
+  }
+  if (k === 'rp_start') return mut('pause.save', { id: openP.id, pre_start: nowLocal(), pre_end: '' }, L('Pre-watch started', '預觀測開始')).catch(() => {});
+  if (k === 'rp_end') {
+    const m = mins(openP.pre_start, nowLocal()), need = settingsNum('pre_watch_min', 30);
+    if (m < need && !(await confirmBox(L(`Pre-watch has only lasted ${m} min (guideline: ${need} min). End it anyway?`, `預觀測僅 ${m} 分鐘（須滿 ${need} 分鐘），確定要結束？`), L('End pre-watch', '結束預觀測'), true))) return;
+    return mut('pause.save', { id: openP.id, pre_end: nowLocal() }, L('Pre-watch ended', '預觀測結束')).catch(() => {});
+  }
   if (k === 'pause') return pauseModal(svId);
   if (k === 'resume') { const p = S.pauses.find(x => x.sv_id === svId && !x.end); return pauseModal(svId, p && p.id, true); }
   if (k === 'pre_end') {
     const m = mins(sv.pre_start, nowLocal()), need = settingsNum('pre_watch_min', 30);
     if (m < need && !(await confirmBox(L(`Pre-watch has only lasted ${m} min (guideline: ${need} min). End it anyway?`, `預觀測僅 ${m} 分鐘（作業指引需 ${need} 分鐘），確定要結束？`), L('End pre-watch', '結束預觀測'), true))) return;
   }
-  if (k === 'work_end' && !(await confirmBox(L('End work for this vessel now?', '確定此船現在結束施工？'), L('End work', '結束施工')))) return;
+  if (k === 'work_end' && !(await confirmBox(L('End the observation for this vessel now?', '確定此船現在結束實際觀測？'), L('End observation', '結束實際觀測')))) return;
   const patch = { id: svId }; patch[k] = nowLocal();
   if (k === 'work_end') { const p = S.pauses.find(x => x.sv_id === svId && !x.end); if (p) await api('pause.save', { id: p.id, end: patch.work_end }); }
   try {
-    await mut('sv.save', patch, { full_start: L('Full power started', '全力道打樁開始'), pre_start: L('Pre-watch started', '預觀測開始'), pre_end: L('Pre-watch ended', '預觀測結束'), work_start: L('Work started', '開始施工'), work_end: L('Work ended', '施工結束') }[k]);
+    await mut('sv.save', patch, { pre_start: L('Pre-watch started', '預觀測開始'), pre_end: L('Pre-watch ended', '預觀測結束'), work_start: L('Observation started', '開始實際觀測'), work_end: L('Observation ended', '實際觀測結束') }[k]);
     if (k === 'pre_start' && !sv.weather) fetchWeather(svId, true);
   } catch (e) {}
 }
@@ -1565,26 +1845,25 @@ function crewModal(svId) {
   } });
 }
 
-const RESTART = { soft: ['Soft-start', '緩啟動重啟'], original: ['Original power', '原功率重啟'], prewatch: ['New pre-watch + soft-start', '重新打樁前監測＋緩啟動'] };
 function pauseModal(svId, id, resume) {
   const p = id ? S.pauses.find(x => x.id === id) : null;
   const reasons = lines(S.settings.pause_reasons);
   if (p && p.reason && reasons.indexOf(p.reason) < 0) reasons.push(p.reason);
   const ss = S.sightings.filter(x => x.sv_id === svId);
   const body = `<div class="form-grid">
-    <div class="fg"><label>${L('Pause time', '停工時間')} *</label><input id="pStart" type="datetime-local" value="${esc(p ? p.start : nowLocal())}"></div>
-    <div class="fg"><label>${L('Resume time', '復工時間')}</label><input id="pEnd" type="datetime-local" value="${esc(p ? (p.end || (resume ? nowLocal() : '')) : '')}"></div>
+    <div class="fg"><label>${L('Pause time', '暫停施工時間')} *</label><input id="pStart" type="datetime-local" value="${esc(p ? p.start : nowLocal())}"></div>
+    <div class="fg"><label>${L('Resume time', '回復施工時間')}</label><input id="pEnd" type="datetime-local" value="${esc(p ? (p.end || (resume ? nowLocal() : '')) : '')}"></div>
     <div class="fg full"><label>${L('Reason', '原因')}</label><select id="pReason">${opts(reasons.map(r => ({ v: r, t: biName(r) })), p ? p.reason : reasons[0])}</select></div>
     <div class="fg full"><label>${L('Related sighting', '相關目擊紀錄')}</label><select id="pSight">${opts(ss.map(x => ({ v: x.id, t: fmtT(x.time, true) + ' ' + biName(x.species) + (x.min_distance_m ? ' · ' + x.min_distance_m + ' m' : '') })), p ? p.sighting_id : '', '—')}</select></div>
-    <div class="fg"><label>${L('Restart method', '重啟方式')}</label><select id="pRestart">${opts(Object.keys(RESTART).map(k => ({ v: k, t: L(RESTART[k][0], RESTART[k][1]) })), p ? p.restart : '', '—')}</select></div>
-    <div class="fg"><label>&nbsp;</label><label class="chk"><input type="checkbox" id="pMon" ${!p || bool(p.monitoring) ? 'checked' : ''}> ${L('Monitoring continued during the pause', '停工期間持續監測')}</label></div>
+    <div class="fg"><label>${L('New pre-watch start', '重新預觀測開始')}</label><input id="pPreS" type="datetime-local" value="${esc(p ? p.pre_start : '')}"></div>
+    <div class="fg"><label>${L('New pre-watch end', '重新預觀測結束')}</label><input id="pPreE" type="datetime-local" value="${esc(p ? p.pre_end : '')}"></div>
     <div class="fg full"><label>${L('Remark', '備註')}</label><input id="pRemark" value="${esc(p ? p.remark : '')}"></div></div>
-    <div class="alert blue" style="margin-top:12px;font-size:12px">${L('Manual (4th ed.): a pause caused by a sighting restarts only ' + settingsNum('clear_min', 30) + ' min after the last sighting, with soft-start. A pause of ≥ ' + settingsNum('restart_min', 30) + ' min for other reasons without continuous monitoring needs a new pre-piling search; with continuous monitoring restart with soft-start; under ' + settingsNum('restart_min', 30) + ' min you may restart at the planned power.',
-      '作業手冊第四版：因目擊鯨豚而停工，須最後目擊／離開警戒區後 ' + settingsNum('clear_min', 30) + ' 分鐘，並以緩啟動重啟。非目擊因素停工達 ' + settingsNum('restart_min', 30) + ' 分鐘且未持續監測，須重新打樁前監測；有持續監測可直接緩啟動；未達 ' + settingsNum('restart_min', 30) + ' 分鐘可依原功率重啟。')}</div>`;
-  openModal(resume ? L('Resume work', '復工') : (p ? L('Edit pause', '編輯停工') : L('Pause work', '停工')), body, {
+    <div class="alert blue" style="margin-top:12px;font-size:12px">${L('A pause longer than ' + settingsNum('repre_pause_min', 60) + ' min, or cetaceans entering the ' + settingsNum('alert_zone_m', 750) + ' m alert zone (after they leave), requires a new ' + settingsNum('pre_watch_min', 30) + '-min pre-watch before work resumes.',
+      '暫停施工超過 ' + settingsNum('repre_pause_min', 60) + ' 分鐘，或鯨豚進入 ' + settingsNum('alert_zone_m', 750) + ' m 警戒區（離開後），須重新預觀測 ' + settingsNum('pre_watch_min', 30) + ' 分鐘才可回復施工。')}</div>`;
+  openModal(resume ? L('Resume work', '回復施工') : (p ? L('Edit pause', '編輯暫停施工') : L('Pause work', '暫停施工')), body, {
     foot: p ? `<button class="btn btn-danger w" style="margin-right:auto" onclick="delRec('pause.delete','${p.id}',this)">🗑 ${L('Delete', '刪除')}</button>` : '',
     onSave: async (bg, btn) => {
-      await mut('pause.save', { id: p ? p.id : '', sv_id: svId, start: val(bg, 'pStart'), end: val(bg, 'pEnd'), reason: val(bg, 'pReason'), sighting_id: val(bg, 'pSight'), restart: val(bg, 'pRestart'), monitoring: val(bg, 'pMon'), remark: val(bg, 'pRemark') }, L('Saved', '已儲存'), btn);
+      await mut('pause.save', { id: p ? p.id : '', sv_id: svId, start: val(bg, 'pStart'), end: val(bg, 'pEnd'), reason: val(bg, 'pReason'), sighting_id: val(bg, 'pSight'), pre_start: val(bg, 'pPreS'), pre_end: val(bg, 'pPreE'), remark: val(bg, 'pRemark') }, L('Saved', '已儲存'), btn);
     } });
 }
 async function delRec(action, id, btn) {
@@ -1597,7 +1876,7 @@ async function delRec(action, id, btn) {
 const DIRS = ['T 靠近 | T Toward', 'A 遠離 | A Away', 'S 與船艏同向平行 | S Parallel, same direction', 'O 與船艏反向平行 | O Parallel, opposite direction', 'C 從船艏穿越 | C Crossing ahead',
   'V 多變 | V Variable', 'M 盤旋 | M Milling', 'I 停留 | I Stationary', 'X 其他 | X Other', 'U 不明 | U Unknown'];
 const DECKS = ['F 前方 | F Forward', 'R 右舷 | R Starboard', 'L 左舷 | L Port', 'B 後方 | B Behind', 'C 上甲板 | C Upper deck'];
-const PILE = ['O 未啟動 | O Off', 'S 緩啟動 | S Soft-start', 'F 全力道打樁 | F Full power', 'B 暫停打樁 | B Break of piling'];
+const PILE = ['O 未施工 | O Not working', 'W 施工中 | W Working', 'B 暫停施工 | B Work paused'];
 const IMGS = ['拍照 | Photo', '錄影 | Video', '拍照＋錄影 | Photo + video', '無 | None'];
 function sightingModal(svId, id) {
   const x = id ? S.sightings.find(z => z.id === id) : null;
@@ -1605,8 +1884,10 @@ function sightingModal(svId, id) {
   const species = lines(S.settings.species);
   if (x && x.species && species.indexOf(x.species) < 0) species.push(x.species);
   const det = ['目視 | Visual', 'PAM 被動聲學 | PAM', '目視＋PAM | Visual + PAM', '熱顯像 | Thermal'];
-  const acts = ['P 暫停打樁 | P Pause piling', 'D 延遲打樁 | D Delay piling', 'R 降低打樁功率或速度 | R Reduce piling power/frequency', 'I 提高減噪措施強度 | I Increase noise mitigation',
+  const acts = ['P 暫停施工 | P Pause work', 'D 延遲施工 | D Delay work', 'R 降低施工速度 | R Reduce work speed', 'I 提高減噪措施強度 | I Increase noise mitigation',
     'N 通報 | N Notify', 'T 追蹤 | T Tracking'];
+  if (x && x.action && acts.indexOf(x.action) < 0) acts.push(x.action);   // 舊紀錄的選項保留，避免編輯時被清空
+  const workSt = x && x.piling_status && PILE.indexOf(x.piling_status) < 0 ? PILE.concat(x.piling_status) : PILE;
   const alertM = settingsNum('alert_zone_m', 750);
   const working = sv.checks.status === 'work';
   const body = `<div class="form-grid">
@@ -1614,14 +1895,14 @@ function sightingModal(svId, id) {
     <div class="fg"><label>${L('Detection', '偵測方式')}</label><select id="sDet">${opts(det.map(d => ({ v: d, t: biName(d) })), x ? x.detection : det[0])}</select></div>
     <div class="fg"><label>${L('Species', '物種')}</label><select id="sSp">${opts(species.map(d => ({ v: d, t: biName(d) })), x ? x.species : '')}</select></div>
     <div class="fg"><label>${L('Count', '數量')}</label><input id="sCnt" inputmode="numeric" value="${esc(x ? x.count : '')}"></div>
-    <div class="fg"><label>${L('Distance from pile / work point (m)', '鯨豚與樁（施工點）距離（m）')}</label><input id="sDist" inputmode="numeric" value="${esc(x ? x.min_distance_m : '')}"></div>
+    <div class="fg"><label>${L('Distance from work point (m)', '鯨豚與施工點距離（m）')}</label><input id="sDist" inputmode="numeric" value="${esc(x ? x.min_distance_m : '')}"></div>
     <div class="fg"><label>&nbsp;</label><label class="chk"><input type="checkbox" id="sZone" ${x && bool(x.in_alert_zone) ? 'checked' : ''}> ${L('Entered alert zone', '進入警戒區')} (${alertM} m)</label></div>
     <div class="fg"><label>${L('Action taken', '處置')}</label><select id="sAct">${opts(acts.map(d => ({ v: d, t: biName(d) })), x ? x.action : (working ? acts[0] : acts[2]))}</select></div>
     <div class="fg"><label>${L('Last sighting / detection, or left alert zone', '最後目擊／最後偵測／離開警戒區時間')}</label><input id="sLeft" type="datetime-local" value="${esc(x ? x.left_time : '')}"></div>
     <div class="fg"><label>${L('Latitude', '緯度')}</label><input id="sLat" inputmode="decimal" value="${esc(x ? x.lat : sv.lat || '')}"></div>
     <div class="fg"><label>${L('Longitude', '經度')}</label><input id="sLon" inputmode="decimal" value="${esc(x ? x.lon : sv.lon || '')}"></div>
     <div class="fg"><label>${L('Mother-calf pairs', '母子對')}</label><input id="sMc" inputmode="numeric" value="${esc(x ? x.mother_calf : '')}"></div>
-    <div class="fg"><label>${L('Piling status at sighting', '目擊時打樁狀態')}</label><select id="sPile">${opts(PILE.map(d => ({ v: d, t: biName(d) })), x ? x.piling_status : '', '—')}</select></div>
+    <div class="fg"><label>${L('Work status at sighting', '目擊時施工狀態')}</label><select id="sPile">${opts(workSt.map(d => ({ v: d, t: biName(d) })), x ? x.piling_status : '', '—')}</select></div>
     <div class="fg"><label>${L('Bearing (0–360°)', '觀察方位（0–360°）')}</label><input id="sBear" inputmode="numeric" value="${esc(x ? x.bearing : '')}"></div>
     <div class="fg"><label>${L('Distance from vessel (m)', '觀察距離（與船，m）')}</label><input id="sVd" inputmode="numeric" value="${esc(x ? x.vessel_dist_m : '')}"></div>
     <div class="fg"><label>${L('Direction of travel (relative to ship)', '鯨豚游行方向（相對船舶）')}</label><select id="sDir">${opts(DIRS.map(d => ({ v: d, t: biName(d) })), x ? x.direction : '', '—')}</select></div>
@@ -1634,7 +1915,7 @@ function sightingModal(svId, id) {
     <div class="fg pam-only"><label>${L('Distance to hydrophone (m, N/A if unknown)', '與水下麥克風距離（m，無法估算填 N/A）')}</label><input id="sHyd" value="${esc(x ? x.hydrophone_m : '')}"></div>
     <div class="fg full"><label>${L('Behaviour', '行為')}</label><input id="sBeh" value="${esc(x ? x.behavior : '')}" placeholder="${L('e.g. travelling north, feeding', '例：往北移動、覓食')}"></div>
     <div class="fg full"><label>${L('Remark', '備註')}</label><textarea id="sRem">${esc(x ? x.remark : '')}</textarea></div>
-    ${!x && working ? `<label class="chk full"><input type="checkbox" id="sAuto" checked> ${L('Also record a work pause starting at the sighting time', '同時建立停工紀錄（停工時間＝目擊時間）')}</label>` : ''}
+    ${!x && working ? `<label class="chk full"><input type="checkbox" id="sAuto" checked> ${L('Also record a work pause starting at the sighting time', '同時建立暫停施工紀錄（暫停施工時間＝目擊時間）')}</label>` : ''}
   </div><div class="small muted" style="margin-top:10px">${L('Fill in the paper sighting form as usual and upload it under “Sighting record”.', '紙本目擊紀錄表照常填寫，並於「上傳」區的目擊紀錄表上傳掃描檔。')}</div>`;
   const bg = openModal(x ? L('Edit sighting', '編輯目擊紀錄') : L('Record sighting', '登錄目擊') + ' — ' + esc(sv.vessel_name), body, { wide: true,
     foot: x ? `<button class="btn btn-danger w" style="margin-right:auto" onclick="delRec('sighting.delete','${x.id}',this)">🗑 ${L('Delete', '刪除')}</button>` : '',
@@ -1727,7 +2008,7 @@ function uploadGrid(sv, ed) {
     return `<h4 style="font-size:13px;color:var(--muted);margin:4px 0 10px">${ico} ${title}</h4><div class="items" style="margin-bottom:16px">${items.map(i => {
       const fs = S.files.filter(f => f.sv_id === sv.id && f.item_id === i.id);
       const needed = bool(i.required) && (i.cond !== 'sighting' || hasS) && (i.cond !== 'pause' || hasP);
-      const cond = i.cond === 'sighting' ? L('if sighting', '有目擊時') : i.cond === 'pause' ? L('if paused', '有停工時') : '';
+      const cond = i.cond === 'sighting' ? L('if sighting', '有目擊時') : i.cond === 'pause' ? L('if paused', '有暫停施工時') : '';
       const nm = LANG === 'zh' ? i.name_zh : (i.name_en || i.name_zh);
       return `<div class="item ${fs.length ? 'ok' : (needed ? 'miss' : '')}">
         <div class="item-h"><div><b>${esc(nm)}</b><div class="small muted">${needed ? L('Required', '必傳') : (bool(i.required) ? L('Not needed', '免傳') : L('Optional', '選填'))}${cond ? ' · ' + cond : ''}</div></div>
@@ -1851,7 +2132,7 @@ function renderSightings() {
 }
 function exportSightings() {
   const rows = [['日期', '班次', '工區', '風機/基樁編號', '施工船', 'MMO 船', '目擊時間', '物種', '數量', '母子對', '偵測方式', '觀察方位(°)', '游行方向', '觀察位置', '與船距離(m)', '與樁距離(m)', '進入警戒區',
-    '打樁狀態', '處置', '最後目擊/離開警戒區', '聲音類型', '頻率(kHz)', '與水下麥克風距離(m)', '影像', '緯度', '經度', '行為', '備註']];
+    '施工狀態', '處置', '最後目擊/離開警戒區', '聲音類型', '頻率(kHz)', '與水下麥克風距離(m)', '影像', '緯度', '經度', '行為', '備註']];
   S.sightings.slice().sort((a, b) => a.time.localeCompare(b.time)).forEach(x => {
     const s = shiftOf(x.shift_id) || {}, sv = S.svs.find(v => v.id === x.sv_id) || {};
     rows.push([s.date, s.shift_no, s.site, s.turbine_no, s.construction_vessel, sv.vessel_name, x.time.replace('T', ' '), x.species, x.count, x.mother_calf, x.detection, x.bearing, x.direction, x.deck,
@@ -2136,12 +2417,12 @@ ${g.pts.map(p => '<gx:coord>' + p.lon + ' ' + p.lat + ' 0</gx:coord>').join('\n'
 // ==================== Summary page ====================
 function summaryRows() {
   const slots = lines(S.settings.crew_slots);
-  const head = ['日期', '班次', '工區', '工作範疇', '風機/基樁編號', '施工船', 'MMO 船'].concat(slots).concat(['預觀測開始', '預觀測結束', '預觀測(分)', '施工開始', '全力道開始', '施工結束', '施工時長(分)', '停工次數', '目擊次數', '文件', '照片', '缺件', '規則提醒', '狀態']);
+  const head = ['日期', '班次', '工區', '工作範疇', '施工位置/編號', '施工船', 'MMO 船'].concat(slots).concat(['預觀測開始', '預觀測結束', '預觀測(分)', '實際觀測開始', '實際觀測結束', '實際觀測時長(分)', '暫停施工次數', '目擊次數', '文件', '照片', '缺件', '規則提醒', '狀態']);
   const rows = [];
   S.shifts.slice().sort((a, b) => (b.date + String(b.shift_no).padStart(6, '0')).localeCompare(a.date + String(a.shift_no).padStart(6, '0'))).forEach(s => svsOf(s.id).forEach(sv => {
     const crew = json(sv.crew, {}), ck = sv.checks, n = v => isNaN(v) ? '' : v;
     rows.push({ s, sv, cells: [s.date, s.shift_no, s.site, s.scope, s.turbine_no, s.construction_vessel, sv.vessel_name].concat(slots.map(k => (crew[k] && crew[k].name) || ''))
-      .concat([(sv.pre_start || '').replace('T', ' '), (sv.pre_end || '').replace('T', ' '), n(mins(sv.pre_start, sv.pre_end)), (sv.work_start || '').replace('T', ' '), (sv.full_start || '').replace('T', ' '), (sv.work_end || '').replace('T', ' '),
+      .concat([(sv.pre_start || '').replace('T', ' '), (sv.pre_end || '').replace('T', ' '), n(mins(sv.pre_start, sv.pre_end)), (sv.work_start || '').replace('T', ' '), (sv.work_end || '').replace('T', ' '),
         n(mins(sv.work_start, sv.work_end)), S.pauses.filter(p => p.sv_id === sv.id).length, S.sightings.filter(x => x.sv_id === sv.id).length,
         ck.docs[0] + '/' + ck.docs[1], ck.photos[0] + '/' + ck.photos[1], ck.missing.map(m => m.zh).join('、'), ck.warnings.map(w => w.zh).join('；'), STATUS[ck.status][1] + (shiftClosed(s) ? '（結案）' : '')]) });
   }));
@@ -2167,11 +2448,11 @@ async function rebuildSheet(btn) {
 }
 
 // ==================== Admin ====================
-const ADMIN_TABS = [['vessels', 'Vessels', '船舶'], ['observers', 'Observers', '觀察員'], ['items', 'Upload items', '上傳項目'], ['settings', 'Rules & lists', '規則與清單'], ['users', 'Accounts', '帳號'], ['audit', 'Activity log', '操作紀錄']];
+const ADMIN_TABS = [['vessels', 'Vessels', '船舶'], ['observers', 'Observers', '觀察員'], ['items', 'Upload items', '上傳項目'], ['settings', 'Rules & lists', '規則與清單'], ['users', 'Accounts', '帳號'], ['audit', 'Activity log', '操作紀錄'], ['reset', 'Reset data', '清空資料']];
 function renderAdmin() {
   setTitle(L('Back office', '後台管理'));
   const tabs = `<div class="admin-tabs">${ADMIN_TABS.map(t => `<div class="${ADMIN_TAB === t[0] ? 'active' : ''}" onclick="ADMIN_TAB='${t[0]}';renderAdmin()">${L(t[1], t[2])}</div>`).join('')}</div>`;
-  const T = { vessels: adminVessels, observers: adminObservers, items: adminItems, settings: adminSettings, users: adminUsers, audit: adminAudit };
+  const T = { vessels: adminVessels, observers: adminObservers, items: adminItems, settings: adminSettings, users: adminUsers, audit: adminAudit, reset: adminReset };
   $('content').innerHTML = tabs + '<div id="adminBody"></div>';
   T[ADMIN_TAB]();
 }
@@ -2247,7 +2528,7 @@ function bulkObservers() {
 }
 function adminItems() {
   const list = S.items.slice().sort((a, b) => (a.kind + String(a.sort).padStart(4, '0')).localeCompare(b.kind + String(b.sort).padStart(4, '0')));
-  const cond = { always: L('Always', '每班次'), sighting: L('Only if a sighting', '有目擊時'), pause: L('Only if paused', '有停工時') };
+  const cond = { always: L('Always', '每班次'), sighting: L('Only if a sighting', '有目擊時'), pause: L('Only if paused', '有暫停施工時') };
   $('adminBody').innerHTML = `<div class="alert blue">${L('Every MMO vessel in every shift must upload each active required item. Changes apply to all shifts (past shifts are re-checked).', '每個班次的每艘 MMO 船都要上傳啟用中的必傳項目。修改後所有班次都會重新檢核缺件。')}</div>
     <div class="section"><div class="section-header"><h3>${L('Upload items', '上傳項目')}</h3><button class="btn btn-green btn-sm" onclick="itemModal()">＋ ${L('Add item', '新增項目')}</button></div>
     <div class="table-wrap"><table class="tbl"><tr><th>${L('Kind', '類型')}</th><th>${L('Name', '名稱')}</th><th>${L('Required', '必傳')}</th><th>${L('When', '條件')}</th><th>${L('Sort', '排序')}</th><th>${L('Status', '狀態')}</th></tr>
@@ -2260,7 +2541,7 @@ function itemModal(id) {
     <div class="fg"><label>${L('Name (Chinese)', '名稱（中文）')} *</label><input id="iZh" value="${esc(i.name_zh)}"></div>
     <div class="fg"><label>${L('Name (English)', '名稱（英文）')}</label><input id="iEn" value="${esc(i.name_en)}"></div>
     <div class="fg"><label>${L('Kind', '類型')}</label><select id="iKind">${opts([{ v: 'doc', t: L('Document', '文件') }, { v: 'photo', t: L('Photo', '照片') }], i.kind)}</select></div>
-    <div class="fg"><label>${L('When required', '何時需要')}</label><select id="iCond">${opts([{ v: 'always', t: L('Every shift', '每班次') }, { v: 'sighting', t: L('Only if a sighting', '有目擊時') }, { v: 'pause', t: L('Only if paused', '有停工時') }], i.cond || 'always')}</select></div>
+    <div class="fg"><label>${L('When required', '何時需要')}</label><select id="iCond">${opts([{ v: 'always', t: L('Every shift', '每班次') }, { v: 'sighting', t: L('Only if a sighting', '有目擊時') }, { v: 'pause', t: L('Only if paused', '有暫停施工時') }], i.cond || 'always')}</select></div>
     <div class="fg"><label>${L('Sort order', '排序')}</label><input id="iSort" inputmode="numeric" value="${esc(i.sort)}"></div>
     <div class="fg"><label>&nbsp;</label><div class="toolbar"><label class="chk"><input type="checkbox" id="iReq" ${bool(i.required) ? 'checked' : ''}> ${L('Required', '必傳')}</label>
       <label class="chk"><input type="checkbox" id="iAct" ${bool(i.active) ? 'checked' : ''}> ${L('Active', '啟用')}</label></div></div></div>`, {
@@ -2276,10 +2557,9 @@ function adminSettings() {
       <div class="fg"><label>${L('Pre-watch duration (min)', '預觀測時間（分鐘）')}</label><input id="st_pre_watch_min" inputmode="numeric" value="${esc(st.pre_watch_min)}"></div>
       <div class="fg"><label>${L('Alert zone radius (m)', '警戒區半徑（m）')}</label><input id="st_alert_zone_m" inputmode="numeric" value="${esc(st.alert_zone_m)}"></div>
       <div class="fg"><label>${L('Observation zone radius (m)', '觀察區半徑（m）')}</label><input id="st_watch_zone_m" inputmode="numeric" value="${esc(st.watch_zone_m)}"></div>
-      <div class="fg"><label>${L('Clear time before resuming (min)', '鯨豚離開警戒區後需再觀察（分鐘）')}</label><input id="st_clear_min" inputmode="numeric" value="${esc(st.clear_min)}"></div>
       <div class="fg"><label>${L('Response time after an alert-zone sighting (min)', '警戒區目擊後須啟動應變（分鐘內）')}</label><input id="st_response_min" inputmode="numeric" value="${esc(st.response_min)}"></div>
-      <div class="fg"><label>${L('Pause length that requires a new pre-watch (min)', '非目擊停工達幾分鐘須重新預觀測')}</label><input id="st_restart_min" inputmode="numeric" value="${esc(st.restart_min)}"></div>
-      <div class="fg"><label>${L('Minimum soft-start duration (min)', '緩啟動最短時間（分鐘）')}</label><input id="st_soft_start_min" inputmode="numeric" value="${esc(st.soft_start_min)}"></div>
+      <div class="fg"><label>${L('Pause longer than this requires a new pre-watch (min)', '暫停施工超過幾分鐘須重新預觀測')}</label><input id="st_repre_pause_min" inputmode="numeric" value="${esc(st.repre_pause_min)}"></div>
+      <div class="fg"><label>${L('Vessel distance tolerance around the alert zone (± m)', '船距容許範圍（警戒區半徑 ± m）')}</label><input id="st_mmo_dist_tol_m" inputmode="numeric" value="${esc(st.mmo_dist_tol_m)}"></div>
       <div class="fg full"><span class="small muted">${L('Per the TCO Operation Manual (4th ed.); adjust to your EIA commitments and TCO Monitoring Plan.', '依台灣鯨豚觀察員制度作業手冊第四版；請依環評承諾及鯨豚觀察員監測計畫調整。')}</span></div>
     </div></div></div>
     <div class="section"><div class="section-header"><h3>${L('Lists', '清單')}</h3></div><div class="section-body"><div class="form-grid">
@@ -2287,7 +2567,7 @@ function adminSettings() {
       ${ta('crew_slots', 'Crew positions on each MMO vessel (one per line)', '每艘 MMO 船的人員職位（每行一個）', '', 5)}
       ${ta('scopes', 'Scopes of work', '工作範疇 Scope', L('“中文 English” per line — the UI shows the part for the current language.', '每行「中文 English」，介面依語言顯示。'), 5)}
       ${ta('species', 'Species', '物種', '', 8)}
-      ${ta('pause_reasons', 'Pause reasons', '停工原因', '', 5)}
+      ${ta('pause_reasons', 'Pause reasons', '暫停施工原因', '', 5)}
     </div></div></div>
     <div class="section"><div class="section-header"><h3>🌊 ${L('Dashboard sea-state map (Open-Meteo)', '儀表板海象地圖（Open-Meteo）')}</h3></div><div class="section-body"><div class="form-grid">
       <div class="fg full"><label>${L('Map title', '地圖標題')}</label><input id="st_weather_name" value="${esc(st.weather_name)}" placeholder="${L('Sea state at the work site', '工區海象')}"></div>
@@ -2330,7 +2610,7 @@ async function testAis(btn) {
 }
 function saveSettings(btn) {
   const p = {};
-  ['project_name', 'pre_watch_min', 'alert_zone_m', 'watch_zone_m', 'clear_min', 'response_min', 'restart_min', 'soft_start_min', 'sites', 'crew_slots', 'scopes', 'species', 'pause_reasons', 'ais_api_url', 'ais_api_key', 'weather_name', 'weather_points', 'weather_wave_limit', 'weather_wind_limit', 'pos_interval_min', 'track_interval_min'].forEach(k => { p[k] = $('st_' + k).value.trim(); });
+  ['project_name', 'pre_watch_min', 'alert_zone_m', 'watch_zone_m', 'response_min', 'repre_pause_min', 'mmo_dist_tol_m', 'sites', 'crew_slots', 'scopes', 'species', 'pause_reasons', 'ais_api_url', 'ais_api_key', 'weather_name', 'weather_points', 'weather_wave_limit', 'weather_wind_limit', 'pos_interval_min', 'track_interval_min'].forEach(k => { p[k] = $('st_' + k).value.trim(); });
   mut('settings.save', p, L('Settings saved', '設定已儲存'), btn).catch(() => {});
 }
 function adminUsers() {
@@ -2352,6 +2632,37 @@ function userModal(id) {
     foot: id && id !== S.user.id ? `<button class="btn btn-danger" style="margin-right:auto" onclick="delMaster('user.delete','${id}',this)">🗑</button>` : '',
     onSave: async (bg, btn) => mut('user.save', { id: id || '', username: val(bg, 'uUser'), name: val(bg, 'uName'), email: val(bg, 'uEmail'), role: val(bg, 'uRole'),
       password: val(bg, 'uPass'), active: val(bg, 'uAct') }, L('Saved', '已儲存'), btn) });
+}
+const RESET_GROUPS = [
+  ['shifts', 'Shifts (incl. pauses, sightings and uploaded files)', '施工班次（含暫停施工、目擊紀錄與上傳檔案）', () => S.shifts.length, true],
+  ['tracks', 'Vessel tracks and position history', '船舶軌跡與船位紀錄', () => S.tracks.length, true],
+  ['vessels', 'Vessel list (also clears tracks)', '船舶清單（一併清除軌跡）', () => S.vessels.length, false],
+  ['observers', 'Observer list', '觀察員清單', () => S.observers.length, false]
+];
+function adminReset() {
+  $('adminBody').innerHTML = `<div class="section" style="border-color:#efc4c4"><div class="section-header"><h3>⚠️ ${L('Reset data', '清空資料')}</h3></div><div style="padding:14px 16px">
+    <div class="alert red">${L('Permanently deletes the data you tick below. Accounts, rules & lists, upload items and the activity log are always kept. A copy of the spreadsheet is saved to the Drive folder first; uploaded files go to the Drive trash (kept about 30 days).',
+      '永久刪除下方勾選的資料。帳號、規則與清單、上傳項目、操作紀錄一律保留。刪除前會自動把試算表複製一份備份到 Drive 資料夾；上傳檔案會移到 Drive 垃圾桶（約保留 30 天）。')}</div>
+    <div style="display:flex;flex-direction:column;gap:8px;margin:12px 0">${RESET_GROUPS.map(x => `<label class="chk"><input type="checkbox" class="rs_grp" value="${x[0]}" ${x[4] ? 'checked' : ''}> ${L(x[1], x[2])} <span class="muted">(${x[3]()})</span></label>`).join('')}</div>
+    <p class="small muted" style="margin-bottom:10px">${L('A 6-digit verification code will be emailed to', '系統會寄 6 位數驗證碼到')} <b>paul.tong@nmdc-group.com</b>${L('. The code is valid for 10 minutes.', '，驗證碼 10 分鐘內有效。')}</p>
+    <button class="btn btn-danger w" onclick="resetRequest(this)">🗑 ${L('Send verification code', '寄送驗證碼')}</button></div></div>`;
+}
+async function resetRequest(btn) {
+  const groups = [...document.querySelectorAll('.rs_grp')].filter(c => c.checked).map(c => c.value);
+  if (!groups.length) return toast(L('Tick at least one item to clear', '請至少勾選一項要清空的資料'), 'error');
+  if (groups.indexOf('vessels') >= 0 && groups.indexOf('tracks') < 0) groups.push('tracks');
+  const names = RESET_GROUPS.filter(x => groups.indexOf(x[0]) >= 0).map(x => L(x[1], x[2]));
+  if (!(await confirmBox(L('Send a verification code to permanently delete:', '確定要寄送驗證碼，永久刪除以下資料？') + '<br><b>' + names.map(esc).join('<br>') + '</b>', L('Send code', '寄送驗證碼'), true))) return;
+  btn.disabled = true; showLoading(L('Sending…', '寄送中…'));
+  let r;
+  try { r = await api('reset.request', { groups }); } catch (e) { toast(e.message, 'error'); return; }
+  finally { hideLoading(); btn.disabled = false; }
+  openModal(L('Reset data', '清空資料'), `<div class="alert red" style="margin-bottom:12px">${L('This cannot be undone.', '此動作無法復原。')}<br><b>${names.map(esc).join('<br>')}</b></div>
+    <div class="fg"><label>${L('Enter the 6-digit code sent to ', '請輸入寄到以下信箱的 6 位數驗證碼：')}${esc(r.to)}</label><input id="rsCode" class="mono" inputmode="numeric" maxlength="6" autocomplete="one-time-code"></div>`, {
+    saveText: L('Delete permanently', '確認刪除'),
+    onSave: async (bg, b) => {
+      await mut('reset.confirm', { code: val(bg, 'rsCode') }, '', b).then(d => toast(L(`Data cleared (${d.rows} records, ${d.folders} folders). Backup: ${d.backup}`, `已清空資料（${d.rows} 筆資料、${d.folders} 個資料夾）。備份：${d.backup}`)));
+    } });
 }
 async function adminAudit() {
   $('adminBody').innerHTML = `<div class="section"><div class="empty"><div class="spinner" style="margin:0 auto"></div></div></div>`;
