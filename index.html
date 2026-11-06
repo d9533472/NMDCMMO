@@ -1186,7 +1186,6 @@ function renderDashboard() {
   };
   const recent = S.sightings.slice().sort((a, b) => b.time.localeCompare(a.time)).slice(0, 8);
   $('content').innerHTML = `
-    <div class="dash-top"><div class="dash-left">${vesselPosSection()}</div><div class="dash-right"><div id="dashWeather"></div></div></div>
     <div class="stat-grid">
       <div class="stat blue"><div class="v">${open.length}</div><div class="l">${L('Open shifts', '進行中班次')}</div></div>
       <div class="stat green"><div class="v">${working}</div><div class="l">${L('Vessels working', '施工中船舶')}</div></div>
@@ -1197,6 +1196,7 @@ function renderDashboard() {
     <div class="section-header" style="padding:0 0 10px;border:0"><h3>${L('Active MMO vessels', '作業中 MMO 船')}</h3>
       <button class="btn btn-green w" onclick="shiftModal()">＋ ${L('New shift', '新增班次')}</button></div>
     ${active.length ? `<div class="vgrid">${active.map(card).join('')}</div>` : `<div class="section"><div class="empty">${L('No active shifts. Create a shift to start recording.', '目前沒有作業中的班次，請先新增班次。')}</div></div>`}
+    <div class="dash-top"><div class="dash-left">${vesselPosSection()}</div><div class="dash-right"><div id="dashWeather"></div></div></div>
     <div class="grid-2">
       <div class="section"><div class="section-header"><h3>🐬 ${L('Latest sightings', '最新目擊紀錄')}</h3><button class="btn btn-sm" onclick="go('sightings')">${L('All', '全部')} →</button></div>
         ${recent.length ? `<div class="table-wrap"><table class="tbl"><tr><th>${L('Time', '時間')}</th><th>${L('Vessel', '船')}</th><th>${L('Species', '物種')}</th><th>${L('Count', '數量')}</th><th>${L('Distance', '距離')}</th></tr>
