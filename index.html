@@ -322,6 +322,7 @@ textarea{resize:vertical;min-height:64px}
 @media(max-width:700px){#trkMap{height:320px}}
 .trk-card{pointer-events:none;max-width:270px;padding:7px 10px;background:rgba(255,255,255,.93);border:1px solid var(--border);border-radius:var(--radius);box-shadow:0 2px 8px rgba(0,32,56,.18);font:12px/1.6 'Inter','Noto Sans TC',sans-serif;color:var(--text)}
 .trk-card b{color:var(--navy)}
+.trk-lbl{font-size:11px;line-height:1.35;padding:3px 6px}
 .trk-card .ro{display:flex;flex-wrap:wrap;align-items:center;gap:2px 6px}
 .trk-card i{flex:none;display:inline-block}
 .trk-card .s{width:12px;height:12px;border:4px solid #00B050;border-radius:50%;background:#fff}
@@ -450,10 +451,10 @@ let TOKEN = '';
 try { TOKEN = localStorage.getItem(TOKEN_KEY) || ''; } catch (e) {}
 let S = null;                    // 伺服器資料
 let PAGE = 'dashboard';
-let CUR = { shift: '', sv: '' };  // 目前開啟的班次／MMO 船
+let CUR = { shift: '', sv: '' };  // 目前開啟的批次／MMO 船
 let ADMIN_TAB = 'vessels';
 let FILTER = { month: '', status: 'all', q: '' };
-const THUMBS = {};               // file id → thumb data URL（逐班次載入）
+const THUMBS = {};               // file id → thumb data URL（逐批次載入）
 const THUMB_LOADED = {};
 
 function L(en, zh) { return LANG === 'zh' ? zh : en; }
@@ -533,9 +534,9 @@ const ERR_ZH = {
   'Account disabled': '帳號已停用', 'Permission denied': '權限不足', 'Guest account is read-only': '訪客帳號僅供檢視',
   'Password must be at least 6 characters': '密碼至少 6 個字元', 'Current password is wrong': '目前密碼錯誤',
   'Date is required': '請填日期', 'Select at least one MMO vessel': '請至少選一艘 MMO 船', 'Username already exists': '帳號已存在',
-  'This shift is closed — ask an Admin to reopen it': '此班次已結案，請管理員重新開啟後再修改',
+  'This batch is closed — ask an Admin to reopen it': '此批次已結案，請管理員重新開啟後再修改',
   'Vessel position API is not configured yet': '尚未設定船位 API（後台 › 規則與清單）', 'This vessel has no MMSI': '這艘船沒有 MMSI',
-  'File is larger than 20 MB': '檔案超過 20 MB', 'This vessel is used in shifts — set it inactive instead': '這艘船已用於班次，請改為停用',
+  'File is larger than 20 MB': '檔案超過 20 MB', 'This vessel is used in batches — set it inactive instead': '這艘船已用於批次，請改為停用',
   'Files were uploaded under this item — set it inactive instead': '此項目已有上傳檔案，請改為停用',
   'You cannot delete your own account': '不能刪除自己的帳號', 'Enter the API key first': '請先輸入並儲存 API 金鑰',
   'Position API rejected the key (HTTP 401) — check the API key in Back office': '船位 API 拒絕此金鑰（401），請檢查後台的 API 金鑰',
@@ -549,9 +550,9 @@ const ERR_ZH = {
 function trErr(m) {
   if (LANG !== 'zh') return m;
   if (ERR_ZH[m]) return ERR_ZH[m];
-  let r = m.match(/^Shift number (.+) already exists$/); if (r) return '班次編號 ' + r[1] + ' 已存在';
+  let r = m.match(/^Batch number (.+) already exists$/); if (r) return '批次編號 ' + r[1] + ' 已存在';
   r = m.match(/^Wrong verification code \((\d+) tries left\)$/); if (r) return '驗證碼錯誤（還可再試 ' + r[1] + ' 次）';
-  r = m.match(/^(.+) already has records in this shift and cannot be removed$/); if (r) return r[1] + ' 在此班次已有紀錄，不能移除';
+  r = m.match(/^(.+) already has records in this batch and cannot be removed$/); if (r) return r[1] + ' 在此批次已有紀錄，不能移除';
   return m;
 }
 function setToken(t) { TOKEN = t || ''; try { if (t) localStorage.setItem(TOKEN_KEY, t); else { localStorage.removeItem(TOKEN_KEY); localStorage.removeItem(CACHE_KEY); } } catch (e) {} }
@@ -618,7 +619,7 @@ function shiftOf(id) { return S.shifts.find(s => s.id === id); }
 function svsOf(shiftId) { return S.svs.filter(x => x.shift_id === shiftId).sort((a, b) => Number(a.sort) - Number(b.sort)); }
 function shiftClosed(s) { return s && s.status === 'closed'; }
 function canEdit(s) { return !isViewer() && (!shiftClosed(s) || isAdmin()); }
-function shiftLabel(s) { return `${s.date} · ${L('Shift', '班次')} ${s.shift_no}`; }
+function shiftLabel(s) { return `${s.date} · ${L('Batch', '批次')} ${s.shift_no}`; }
 function settingsNum(k, d) { const v = parseFloat(S.settings[k]); return isFinite(v) ? v : d; }
 function sites() {
   return lines(S.settings.sites).map(l => { const a = l.split(',').map(x => x.trim()); return { name: a[0], lat: parseFloat(a[1]), lon: parseFloat(a[2]) }; });
@@ -724,7 +725,7 @@ function changePasswordModal() {
 // ==================== Shell ====================
 const PAGES = [
   { id: 'dashboard', ico: '📊', en: 'Dashboard', zh: '儀表板' },
-  { id: 'shifts', ico: '📋', en: 'Shifts', zh: '施工班次' },
+  { id: 'shifts', ico: '📋', en: 'Batches', zh: '施工批次' },
   { id: 'sightings', ico: '🐬', en: 'Sightings', zh: '目擊紀錄' },
   { id: 'summary', ico: '📑', en: 'Summary sheet', zh: '總表' },
   { id: 'tracks', ico: '🗺', en: 'Vessel tracks', zh: '船舶軌跡' },
@@ -1260,7 +1261,7 @@ function distSection(s, ed) {
   const head = `<h3>📏 ${L('Vessel distance', '船距')} <span class="small muted" style="font-weight:400">🏗 ${esc(s.construction_vessel || '—')} ↔ ⛴ MMO · ${L('target', '目標')} ${band.a} ± ${band.t} m</span></h3>`;
   if (shiftClosed(s)) return `<div class="section"><div class="section-header">${head}<div class="toolbar">${vs.map(x => `<button class="btn btn-sm" onclick="distHistory('${x.id}')">📈 ${esc(x.vessel_name)}</button>`).join('')}</div></div></div>`;
   const cv = S.vessels.find(x => x.id === s.construction_vessel_id);
-  if (!cv || !cv.mmsi) return `<div class="section"><div class="section-header">${head}</div><div class="empty">${L('Pick a construction vessel with an MMSI for this shift to see the distance.', '此班次的施工船須設定 MMSI 才能計算船距（後台管理 › 船舶）。')}</div></div>`;
+  if (!cv || !cv.mmsi) return `<div class="section"><div class="section-header">${head}</div><div class="empty">${L('Pick a construction vessel with an MMSI for this batch to see the distance.', '此批次的施工船須設定 MMSI 才能計算船距（後台管理 › 船舶）。')}</div></div>`;
   const apiOn = !!S.settings.ais_api_url && !!S.settings.ais_api_key;
   const ago = p => !p ? L('no position', '無船位') : isNaN(p.age) ? '—' : fmtDur(Math.max(0, p.age)) + L(' ago', '前');
   const rows = vs.map(x => {
@@ -1356,7 +1357,7 @@ async function distHistory(svId) {
   const base = A.length >= B.length ? A : B, other = base === A ? B : A;
   const pts = base.map(p => { const q = posAt(other, p.ms); return q ? { t: p.t, ms: p.ms, d: Math.round(distM(p, q)) } : null; }).filter(Boolean);
   if (!pts.length) {
-    box.textContent = L('Not enough AIS positions for both vessels in this period. Record tracks on both vessels during the shift for 10-minute data.', '這段時間兩船的 AIS 船位不足。班次中對兩艘船都開啟「記錄軌跡」，就會有每 10 分鐘的資料。');
+    box.textContent = L('Not enough AIS positions for both vessels in this period. Record tracks on both vessels during the batch for 10-minute data.', '這段時間兩船的 AIS 船位不足。批次中對兩艘船都開啟「記錄軌跡」，就會有每 10 分鐘的資料。');
     return;
   }
   distRenderChart(box, pts);
@@ -1438,15 +1439,15 @@ function renderDashboard() {
   const recent = S.sightings.slice().sort((a, b) => b.time.localeCompare(a.time)).slice(0, 8);
   $('content').innerHTML = `
     <div class="stat-grid">
-      <div class="stat blue"><div class="v">${open.length}</div><div class="l">${L('Open shifts', '進行中班次')}</div></div>
+      <div class="stat blue"><div class="v">${open.length}</div><div class="l">${L('Open batches', '進行中批次')}</div></div>
       <div class="stat green"><div class="v">${working}</div><div class="l">${L('Vessels observing', '實際觀測中船舶')}</div></div>
       <div class="stat ${paused ? 'red' : ''}"><div class="v">${paused}</div><div class="l">${L('Vessels paused', '暫停施工中船舶')}</div></div>
       <div class="stat amber"><div class="v">${monthSight.length}</div><div class="l">${L('Sightings this month', '本月目擊次數')}</div></div>
       <div class="stat ${missing.length ? 'red' : ''}"><div class="v">${missing.length}</div><div class="l">${L('Completed but missing uploads', '已完工但缺件')}</div></div>
     </div>
     <div class="section-header" style="padding:0 0 10px;border:0"><h3>${L('Active MMO vessels', '作業中 MMO 船')}</h3>
-      <button class="btn btn-green w" onclick="shiftModal()">＋ ${L('New shift', '新增班次')}</button></div>
-    ${active.length ? `<div class="vgrid">${active.map(card).join('')}</div>` : `<div class="section"><div class="empty">${L('No active shifts. Create a shift to start recording.', '目前沒有作業中的班次，請先新增班次。')}</div></div>`}
+      <button class="btn btn-green w" onclick="shiftModal()">＋ ${L('New batch', '新增批次')}</button></div>
+    ${active.length ? `<div class="vgrid">${active.map(card).join('')}</div>` : `<div class="section"><div class="empty">${L('No active batches. Create a batch to start recording.', '目前沒有作業中的批次，請先新增批次。')}</div></div>`}
     <div class="dash-top"><div class="dash-left">${vesselPosSection()}</div><div class="dash-right"><div id="dashWeather"></div></div></div>
     <div class="grid-2">
       <div class="section"><div class="section-header"><h3>🐬 ${L('Latest sightings', '最新目擊紀錄')}</h3><button class="btn btn-sm" onclick="go('sightings')">${L('All', '全部')} →</button></div>
@@ -1518,7 +1519,7 @@ function vfUrl(mmsi) { return 'https://www.vesselfinder.com/?mmsi=' + encodeURIC
 
 // ==================== Shifts list ====================
 function renderShifts() {
-  setTitle(L('Construction shifts', '施工班次'));
+  setTitle(L('Construction batches', '施工批次'));
   const months = Array.from(new Set(S.shifts.map(s => s.date.slice(0, 7)))).sort().reverse();
   let list = S.shifts.slice().sort((a, b) => (b.date + String(b.shift_no).padStart(6, '0')).localeCompare(a.date + String(a.shift_no).padStart(6, '0')));
   if (FILTER.month) list = list.filter(s => s.date.slice(0, 7) === FILTER.month);
@@ -1530,8 +1531,8 @@ function renderShifts() {
         <select style="width:auto" onchange="FILTER.status=this.value;renderShifts()">${opts([{ v: 'all', t: L('All', '全部') }, { v: 'open', t: L('Open', '進行中') }, { v: 'closed', t: L('Closed', '已結案') }], FILTER.status)}</select>
         <input style="width:180px" placeholder="${L('Search…', '搜尋…')}" value="${esc(FILTER.q)}" oninput="FILTER.q=this.value;clearTimeout(this.__t);this.__t=setTimeout(renderShifts,300)">
       </div>
-      <button class="btn btn-green w" onclick="shiftModal()">＋ ${L('New shift', '新增班次')}</button></div>
-    ${list.length ? `<div class="table-wrap"><table class="tbl"><tr><th>${L('Date', '日期')}</th><th>${L('Shift', '班次')}</th><th>${L('Site / scope', '工區／範疇')}</th><th>${L('Construction vessel', '施工船')}</th><th>${L('MMO vessels', 'MMO 船')}</th><th>${L('Sightings', '目擊')}</th><th>${L('Uploads', '上傳')}</th><th>${L('Status', '狀態')}</th></tr>
+      <button class="btn btn-green w" onclick="shiftModal()">＋ ${L('New batch', '新增批次')}</button></div>
+    ${list.length ? `<div class="table-wrap"><table class="tbl"><tr><th>${L('Date', '日期')}</th><th>${L('Batch', '批次')}</th><th>${L('Site / scope', '工區／範疇')}</th><th>${L('Construction vessel', '施工船')}</th><th>${L('MMO vessels', 'MMO 船')}</th><th>${L('Sightings', '目擊')}</th><th>${L('Uploads', '上傳')}</th><th>${L('Status', '狀態')}</th></tr>
       ${list.map(s => {
         const vs = svsOf(s.id);
         const sn = S.sightings.filter(x => x.shift_id === s.id).length;
@@ -1543,10 +1544,10 @@ function renderShifts() {
           <td>${sn ? `<span class="tag red">🐬 ${sn}</span>` : '<span class="muted">—</span>'}</td>
           <td><span class="tag ${d[0] >= d[1] ? 'green' : 'amber'}">${d[0]}/${d[1]}</span> ${warn ? '<span class="tag red" title="rule">⚠</span>' : ''}</td>
           <td>${shiftClosed(s) ? `<span class="tag navy">${L('Closed', '已結案')}</span>` : `<span class="tag green">${L('Open', '進行中')}</span>`}</td></tr>`;
-      }).join('')}</table></div>` : `<div class="empty">${L('No shifts', '沒有班次')}</div>`}</div>`;
+      }).join('')}</table></div>` : `<div class="empty">${L('No batches', '沒有批次')}</div>`}</div>`;
 }
 
-// 新增／編輯班次
+// 新增／編輯批次
 function shiftModal(id) {
   const s = id ? shiftOf(id) : null;
   const mmo = S.vessels.filter(v => v.kind === 'mmo' && (bool(v.active) || (s && svsOf(s.id).some(x => x.vessel_id === v.id))));
@@ -1567,7 +1568,7 @@ function shiftModal(id) {
   };
   const body = `<div class="form-grid">
     <div class="fg"><label>${L('Date', '日期')} *</label><input id="shDate" type="date" value="${esc(s ? s.date : today())}"></div>
-    <div class="fg"><label>${L('Shift no. (blank = auto)', '班次編號（空白＝自動）')}</label><input id="shNo" value="${esc(s ? s.shift_no : '')}"></div>
+    <div class="fg"><label>${L('Batch no. (blank = auto)', '批次編號（空白＝自動）')}</label><input id="shNo" value="${esc(s ? s.shift_no : '')}"></div>
     <div class="fg"><label>${L('Site', '工區')}</label><select id="shSite">${opts(siteList, s ? s.site : siteList[0] || '', '—')}</select></div>
     <div class="fg"><label>${L('Scope of work', '工作範疇 Scope')}</label><select id="shScope">${opts(scopes.map(x => ({ v: x, t: biName(x) })), s ? s.scope : '', '—')}</select></div>
     <div class="fg"><label>${L('Construction vessel', '施工船')}</label><select id="shCv">${opts(cvs.map(v => ({ v: v.id, t: v.name })), s ? s.construction_vessel_id : '', '—')}</select>
@@ -1576,7 +1577,7 @@ function shiftModal(id) {
       <div class="chk-list">${mmo.map(v => `<label class="chk"><input type="checkbox" class="shV" value="${v.id}" ${chosen.indexOf(v.id) >= 0 ? 'checked' : ''}>${esc(v.name)}</label>`).join('') || `<span class="small muted">${L('Add MMO vessels in Back office › Vessels', '請先到 後台管理 › 船舶 新增 MMO 船')}</span>`}</div></div>
     ${s ? '' : `<div class="full" id="crewArea"></div>`}
     <div class="fg full"><label>${L('Remark', '備註')}</label><textarea id="shRemark">${esc(s ? s.remark : '')}</textarea></div></div>`;
-  const bg = openModal(s ? L('Edit shift', '編輯班次') : L('New shift', '新增班次'), body, { wide: true, onSave: async (bg, btn) => {
+  const bg = openModal(s ? L('Edit batch', '編輯批次') : L('New batch', '新增批次'), body, { wide: true, onSave: async (bg, btn) => {
     const ids = Array.from(bg.querySelectorAll('.shV:checked')).map(x => x.value);
     const crew = {};
     bg.querySelectorAll('.crew-block').forEach(b => {
@@ -1585,7 +1586,7 @@ function shiftModal(id) {
       crew[b.dataset.vid] = c;
     });
     const r = await mut('shift.save', { id: s ? s.id : '', date: val(bg, 'shDate'), shift_no: val(bg, 'shNo'), site: val(bg, 'shSite'), scope: val(bg, 'shScope'),
-      construction_vessel_id: val(bg, 'shCv'), vessel_ids: ids, crew, remark: val(bg, 'shRemark') }, L('Shift saved', '班次已儲存'), btn);
+      construction_vessel_id: val(bg, 'shCv'), vessel_ids: ids, crew, remark: val(bg, 'shRemark') }, L('Batch saved', '批次已儲存'), btn);
     if (!s) go('shift', r.id);
   } });
   if (!s) {
@@ -1610,9 +1611,9 @@ function renderShift() {
   const sv = vs.find(x => x.id === CUR.sv);
   setTitle(shiftLabel(s));
   const ed = canEdit(s);
-  const closedBar = shiftClosed(s) ? `<div class="alert blue">🔒 ${L('This shift is closed', '此班次已結案')} (${esc(s.closed_by)} · ${fmtT(s.closed_at, true)})${isAdmin() ? '' : L(' — read only.', '，僅供檢視。')}</div>` : '';
+  const closedBar = shiftClosed(s) ? `<div class="alert blue">🔒 ${L('This batch is closed', '此批次已結案')} (${esc(s.closed_by)} · ${fmtT(s.closed_at, true)})${isAdmin() ? '' : L(' — read only.', '，僅供檢視。')}</div>` : '';
   $('content').innerHTML = `
-    <div class="toolbar" style="margin-bottom:12px"><button class="btn btn-sm" onclick="go('shifts')">← ${L('Shifts', '班次列表')}</button></div>
+    <div class="toolbar" style="margin-bottom:12px"><button class="btn btn-sm" onclick="go('shifts')">← ${L('Batches', '批次列表')}</button></div>
     ${closedBar}
     <div class="section"><div class="section-header">
       <div><h3 style="font-size:16px">${esc(shiftLabel(s))} ${shiftClosed(s) ? `<span class="tag navy">${L('Closed', '已結案')}</span>` : `<span class="tag green">${L('Open', '進行中')}</span>`}</h3>
@@ -1620,13 +1621,13 @@ function renderShift() {
       <div class="toolbar">
         ${s.folder_id ? `<a class="btn btn-sm" target="_blank" href="https://drive.google.com/drive/folders/${esc(s.folder_id)}">📁 Drive</a>` : ''}
         ${ed ? `<button class="btn btn-sm w" onclick="shiftModal('${s.id}')">✏️ ${L('Edit', '編輯')}</button>` : ''}
-        ${!shiftClosed(s) ? `<button class="btn btn-sm btn-primary w" onclick="closeShift('${s.id}')">🔒 ${L('Close shift', '結案')}</button>` : ''}
+        ${!shiftClosed(s) ? `<button class="btn btn-sm btn-primary w" onclick="closeShift('${s.id}')">🔒 ${L('Close batch', '結案')}</button>` : ''}
         ${shiftClosed(s) && isAdmin() ? `<button class="btn btn-sm w" onclick="mut('shift.reopen',{id:'${s.id}'},L('Reopened','已重新開啟'))">🔓 ${L('Reopen', '重新開啟')}</button>` : ''}
         ${isAdmin() ? `<button class="btn btn-sm btn-danger w" onclick="deleteShift('${s.id}')">🗑</button>` : ''}
       </div></div></div>
     <div class="sv-tabs">${vs.map(x => `<div class="sv-tab ${x.id === CUR.sv ? 'active' : ''}" onclick="CUR.sv='${x.id}';renderShift()">🚤 ${esc(x.vessel_name)} ${stTag(x.checks.status)}${x.checks.warnings.length ? ' ⚠' : ''}</div>`).join('')}</div>
     ${distSection(s, ed)}
-    ${sv ? svPanel(s, sv, ed) : `<div class="section"><div class="empty">${L('No MMO vessels in this shift', '此班次沒有 MMO 船')}</div></div>`}`;
+    ${sv ? svPanel(s, sv, ed) : `<div class="section"><div class="empty">${L('No MMO vessels in this batch', '此批次沒有 MMO 船')}</div></div>`}`;
   drawDistMap(s);
   if (sv) { loadThumbs(s.id); tick(); }
 }
@@ -1786,7 +1787,7 @@ function svPanel(s, sv, ed) {
     <div class="section-body">${uploadGrid(sv, ed)}</div></div>
 
   <div class="section"><div class="section-header"><h3>📝 ${L('Remark', '備註')}</h3></div>
-    <div class="section-body"><textarea ${ed ? '' : 'disabled'} onchange="saveSv('${sv.id}',{remark:this.value})" placeholder="${L('Notes for this vessel in this shift', '此班次此船的備註')}">${esc(sv.remark)}</textarea>
+    <div class="section-body"><textarea ${ed ? '' : 'disabled'} onchange="saveSv('${sv.id}',{remark:this.value})" placeholder="${L('Notes for this vessel in this batch', '此批次此船的備註')}">${esc(sv.remark)}</textarea>
     <div class="small muted" style="margin-top:6px">${L('Last updated', '最後更新')}: ${esc(sv.updated_by || '')} ${fmtT(sv.updated_at, true)}</div></div></div>`;
 }
 function dirTxt(d) { const a = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']; return a[Math.round(((Number(d) % 360) / 45)) % 8]; }
@@ -1848,7 +1849,9 @@ function tick() {
   } else { el.textContent = ''; hint.textContent = L('Waiting to start the pre-watch', '等待開始預觀測'); }
   void now;
 }
-async function saveSv(id, patch) { try { await mut('sv.save', Object.assign({ id }, patch)); } catch (e) {} }
+async function saveSv(id, patch) {
+  try { await mut('sv.save', Object.assign({ id }, patch)); if (patch.work_end) trackImage(id, true); } catch (e) {}
+}
 async function savePause(id, field, value) { try { await mut('pause.save', { id, [field]: value }); } catch (e) {} }
 async function doNext(svId, k) {
   const sv = S.svs.find(x => x.id === svId);
@@ -1885,16 +1888,17 @@ async function doNext(svId, k) {
   try {
     await mut('sv.save', patch, { pre_start: L('Pre-watch started', '預觀測開始'), pre_end: L('Pre-watch ended', '預觀測結束'), work_start: L('Observation started', '開始實際觀測'), work_end: L('Observation ended', '實際觀測結束') }[k]);
     if (k === 'pre_start' && !sv.weather) fetchWeather(svId, true);
+    if (k === 'work_end') trackImage(svId, true);
   } catch (e) {}
 }
 async function closeShift(id) {
   const vs = svsOf(id);
   const notDone = vs.filter(x => x.checks.status !== 'done' && x.checks.status !== 'idle');
   const miss = vs.reduce((n, x) => n + x.checks.missing.length, 0);
-  let msg = L('Close this shift? MMO users can no longer edit it.', '確定結案？結案後 MMO 帳號就不能再修改。');
+  let msg = L('Close this batch? MMO users can no longer edit it.', '確定結案？結案後 MMO 帳號就不能再修改。');
   if (notDone.length) msg += `<div class="alert amber" style="margin-top:10px">${L('Not completed: ', '尚未完工：')}${esc(notDone.map(x => x.vessel_name).join('、'))}</div>`;
   if (miss) msg += `<div class="alert amber" style="margin-top:10px">${L(miss + ' required uploads are missing', '尚缺 ' + miss + ' 項必傳文件／照片')}</div>`;
-  if (await confirmBox(msg, L('Close shift', '結案'))) mut('shift.close', { id }, L('Shift closed', '班次已結案')).catch(() => {});
+  if (await confirmBox(msg, L('Close batch', '結案'))) mut('shift.close', { id }, L('Batch closed', '批次已結案')).catch(() => {});
 }
 async function deleteShift(id) {
   const s = shiftOf(id);
@@ -2085,29 +2089,46 @@ function round1(v) { return v === undefined || v === null || isNaN(v) ? undefine
 
 // ==================== Uploads ====================
 function itemsActive() { return S.items.filter(i => bool(i.active)).sort((a, b) => Number(a.sort) - Number(b.sort)); }
+// 照片每 12 小時時段（00–12、12–24）各一組：預觀測開始到實際觀測結束，進行中算到現在；後端 slotsOf_ 同規則
+function svSlots(sv) {
+  if (!sv.pre_start) return [];
+  const abs = t => Date.UTC(+t.slice(0, 4), +t.slice(5, 7) - 1, +t.slice(8, 10), +t.slice(11, 13), +t.slice(14, 16));
+  const H12 = 12 * 36e5, a = abs(sv.pre_start), b = Math.max(abs(sv.work_end || nowLocal()) - 6e4, a), out = [];
+  for (let t = Math.floor(a / H12) * H12; t <= b; t += H12) out.push(new Date(t).toISOString().slice(0, 13).replace('T', '_'));
+  return out;
+}
+function slotLabel(k) { return k.slice(5, 10) + ' ' + k.slice(11, 13) + '–' + (k.slice(11, 13) === '00' ? '12' : '24'); }
 function uploadGrid(sv, ed) {
   const hasS = S.sightings.some(x => x.sv_id === sv.id), hasP = S.pauses.some(x => x.sv_id === sv.id);
   const list = itemsActive().concat(S.items.filter(i => !bool(i.active) && S.files.some(f => f.sv_id === sv.id && f.item_id === i.id)));
-  const groups = [['doc', L('Documents', '文件'), '📄'], ['photo', L('Photos', '照片'), '📷']];
-  return groups.map(([kind, title, ico]) => {
-    const items = list.filter(i => (i.kind === 'photo' ? 'photo' : 'doc') === kind);
-    if (!items.length) return '';
-    return `<h4 style="font-size:13px;color:var(--muted);margin:4px 0 10px">${ico} ${title}</h4><div class="items" style="margin-bottom:16px">${items.map(i => {
-      const fs = S.files.filter(f => f.sv_id === sv.id && f.item_id === i.id);
-      const needed = bool(i.required) && (i.cond !== 'sighting' || hasS) && (i.cond !== 'pause' || hasP);
-      const cond = i.cond === 'sighting' ? L('if sighting', '有目擊時') : i.cond === 'pause' ? L('if paused', '有暫停施工時') : '';
-      const nm = LANG === 'zh' ? i.name_zh : (i.name_en || i.name_zh);
-      return `<div class="item ${fs.length ? 'ok' : (needed ? 'miss' : '')}">
+  const card = (i, slot) => {
+    const kind = i.kind === 'photo' ? 'photo' : 'doc';
+    const fs = S.files.filter(f => f.sv_id === sv.id && f.item_id === i.id && (!slot || f.slot === slot));
+    const needed = bool(i.required) && (i.cond !== 'sighting' || hasS) && (i.cond !== 'pause' || hasP);
+    const cond = i.cond === 'sighting' ? L('if sighting', '有目擊時') : i.cond === 'pause' ? L('if paused', '有暫停施工時') : '';
+    const nm = LANG === 'zh' ? i.name_zh : (i.name_en || i.name_zh);
+    return `<div class="item ${fs.length ? 'ok' : (needed ? 'miss' : '')}">
         <div class="item-h"><div><b>${esc(nm)}</b><div class="small muted">${needed ? L('Required', '必傳') : (bool(i.required) ? L('Not needed', '免傳') : L('Optional', '選填'))}${cond ? ' · ' + cond : ''}</div></div>
           ${fs.length ? `<span class="tag green">✓ ${fs.length}</span>` : (needed ? `<span class="tag amber">${L('Missing', '缺')}</span>` : '')}</div>
         ${kind === 'photo' ? `<div class="thumbs">${fs.map(f => `<div class="thumb" onclick="viewFile('${f.id}')" title="${esc(f.name)}">${THUMBS[f.id] ? `<img src="${THUMBS[f.id]}">` : '📷'}
             ${ed ? `<button class="x w" onclick="event.stopPropagation();delFile('${f.id}')">×</button>` : ''}</div>`).join('')}</div>`
           : `<div class="files">${fs.map(f => `<div class="file">${f.mime.indexOf('pdf') >= 0 ? '📕' : f.mime.indexOf('image') === 0 ? '🖼' : '📄'}<a onclick="viewFile('${f.id}')" title="${esc(f.name)}">${esc(f.name)}</a>
             <span class="muted">${fmtSize(f.size)}</span>${ed ? `<button class="btn btn-sm w" style="padding:1px 6px" onclick="delFile('${f.id}')">×</button>` : ''}</div>`).join('')}</div>`}
-        ${ed ? `<label class="btn btn-sm w" style="justify-content:center">⬆ ${L('Upload', '上傳')}<input type="file" multiple hidden ${kind === 'photo' ? 'accept="image/*"' : 'accept=".pdf,image/*,.doc,.docx,.xls,.xlsx"'} onchange="uploadFiles('${sv.id}','${i.id}',this)"></label>` : ''}
+        ${ed ? `<label class="btn btn-sm w" style="justify-content:center">⬆ ${L('Upload', '上傳')}<input type="file" multiple hidden ${kind === 'photo' ? 'accept="image/*"' : 'accept=".pdf,image/*,.doc,.docx,.xls,.xlsx"'} onchange="uploadFiles('${sv.id}','${i.id}',this,'${slot || ''}')"></label>` : ''}
       </div>`;
-    }).join('')}</div>`;
-  }).join('');
+  };
+  const head = (ico, title) => `<h4 style="font-size:13px;color:var(--muted);margin:4px 0 10px">${ico} ${title}</h4>`;
+  const grid = html => `<div class="items" style="margin-bottom:16px">${html}</div>`;
+  const docs = list.filter(i => i.kind !== 'photo'), photos = list.filter(i => i.kind === 'photo'), slots = svSlots(sv);
+  const trk = S.files.filter(f => f.sv_id === sv.id && f.kind === 'track');
+  return (docs.length ? head('📄', L('Paper records (one set per vessel)', '紙本紀錄（每艘 MMO 船一份）')) + grid(docs.map(i => card(i)).join('')) : '') +
+    (photos.length ? head('📷', L('Photos (one set per 12-hour period)', '照片（每 12 小時時段一組）')) +
+      (slots.length ? slots.map(k => `<div class="small" style="margin:0 0 8px"><b>${slotLabel(k)}</b></div>` + grid(photos.map(i => card(i, k)).join('')) ).join('')
+        : `<div class="small muted" style="margin-bottom:16px">${L('Periods appear once the pre-watch starts.', '預觀測開始後才會出現時段。')}</div>`) : '') +
+    head('🗺', L('Track image', '軌跡圖')) +
+    `<div class="files" style="margin-bottom:8px">${trk.map(f => `<div class="file">🖼<a onclick="viewFile('${f.id}')" title="${esc(f.name)}">${esc(f.name)}</a><span class="muted">${fmtSize(f.size)}</span></div>`).join('')}</div>
+    ${!trk.length && !sv.work_end ? `<div class="small muted">${L('Created automatically when the observation ends.', '結束實際觀測時自動產生。')}</div>` : ''}
+    ${ed && sv.work_end ? `<button class="btn btn-sm w" onclick="trackImage('${sv.id}')">🗺 ${trk.length ? L('Recreate track image', '重新產生軌跡圖') : L('Create track image', '產生軌跡圖')}</button>` : ''}`;
 }
 function fmtSize(n) { n = Number(n) || 0; return n > 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB'; }
 async function loadThumbs(shiftId, force) {
@@ -2130,7 +2151,7 @@ function scaleTo(img, max, q) {
   c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
   return c.toDataURL('image/jpeg', q);
 }
-async function uploadFiles(svId, itemId, input) {
+async function uploadFiles(svId, itemId, input, slot) {
   const files = Array.from(input.files || []);
   input.value = '';
   if (!files.length) return;
@@ -2150,7 +2171,7 @@ async function uploadFiles(svId, itemId, input) {
       }
       const data = dataUrl.slice(dataUrl.indexOf(',') + 1);
       if (data.length * 0.75 > MAX_UPLOAD) throw new Error(f.name + L(' is larger than 20 MB', ' 超過 20 MB'));
-      const rec = await api('file.upload', { sv_id: svId, item_id: itemId, file: { name, mime, data }, thumb });
+      const rec = await api('file.upload', { sv_id: svId, item_id: itemId, slot, file: { name, mime, data }, thumb });
       THUMBS[rec.id] = thumb;
       ok++;
     } catch (e) { toast(e.message, 'error'); }
@@ -2212,13 +2233,13 @@ function renderSightings() {
       <select style="width:auto" onchange="SFILTER.month=this.value;renderSightings()">${opts(months, SFILTER.month, L('All months', '全部月份'))}</select>
       <label class="chk"><input type="checkbox" ${SFILTER.zone ? 'checked' : ''} onchange="SFILTER.zone=this.checked;renderSightings()"> ${L('Alert zone only', '只看警戒區內')}</label></div>
       <button class="btn btn-sm" onclick="exportSightings()">⬇ CSV</button></div>
-    ${list.length ? `<div class="table-wrap"><table class="tbl"><tr><th>${L('Time', '時間')}</th><th>${L('Shift', '班次')}</th><th>${L('MMO vessel', 'MMO 船')}</th><th>${L('Species', '物種')}</th><th>${L('Count', '數量')}</th><th>${L('Detection', '偵測')}</th><th>${L('Distance', '距離')}</th><th>${L('Action', '處置')}</th><th>${L('Position', '位置')}</th></tr>
+    ${list.length ? `<div class="table-wrap"><table class="tbl"><tr><th>${L('Time', '時間')}</th><th>${L('Batch', '批次')}</th><th>${L('MMO vessel', 'MMO 船')}</th><th>${L('Species', '物種')}</th><th>${L('Count', '數量')}</th><th>${L('Detection', '偵測')}</th><th>${L('Distance', '距離')}</th><th>${L('Action', '處置')}</th><th>${L('Position', '位置')}</th></tr>
       ${list.map(x => { const r = row(x); return `<tr class="click" onclick="go('shift','${x.shift_id}','${x.sv_id}')"><td class="mono">${fmtT(x.time, true)}</td><td>${esc(r.s.date || '')} #${esc(r.s.shift_no || '')}</td><td>${esc(r.sv.vessel_name || '')}</td>
         <td>${esc(biName(x.species))}</td><td>${esc(x.count)}</td><td>${esc(biName(x.detection))}</td><td>${x.min_distance_m ? esc(x.min_distance_m) + ' m' : '—'} ${bool(x.in_alert_zone) ? `<span class="tag red">${L('Alert', '警戒區')}</span>` : ''}</td>
         <td>${esc(biName(x.action))}</td><td class="mono">${x.lat ? esc(x.lat + ', ' + x.lon) : '—'}</td></tr>`; }).join('')}</table></div>` : `<div class="empty">${L('No sightings', '沒有目擊紀錄')}</div>`}</div>`;
 }
 function exportSightings() {
-  const rows = [['日期', '班次', '工區', '施工船', 'MMO 船', '目擊時間', '物種', '數量', '母子對', '偵測方式', '觀察方位(°)', '游行方向', '觀察位置', '與船距離(m)', '與施工點距離(m)', '進入警戒區',
+  const rows = [['日期', '批次', '工區', '施工船', 'MMO 船', '目擊時間', '物種', '數量', '母子對', '偵測方式', '觀察方位(°)', '游行方向', '觀察位置', '與船距離(m)', '與施工點距離(m)', '進入警戒區',
     '施工狀態', '處置', '最後目擊/離開警戒區', '聲音類型', '頻率(kHz)', '與水下麥克風距離(m)', '影像', '緯度', '經度', '行為', '備註']];
   S.sightings.slice().sort((a, b) => a.time.localeCompare(b.time)).forEach(x => {
     const s = shiftOf(x.shift_id) || {}, sv = S.svs.find(v => v.id === x.sv_id) || {};
@@ -2237,6 +2258,10 @@ function nm(a, b) {
   return 2 * R * Math.asin(Math.sqrt(h));
 }
 const TQ_START = '#00B050', TQ_END = '#e5262b';
+const TRK_TILES = ['Ocean/World_Ocean_Base', 'Ocean/World_Ocean_Reference'].map(n => 'https://server.arcgisonline.com/ArcGIS/rest/services/' + n + '/MapServer/tile/{z}/{y}/{x}');
+const tqPos = p => Math.abs(+p.lat).toFixed(4) + '°' + (+p.lat >= 0 ? 'N' : 'S') + ' ' + Math.abs(+p.lon).toFixed(4) + '°' + (+p.lon >= 0 ? 'E' : 'W');
+// 起終點標籤：船名、日期時間（UTC+8）、經緯度
+const tqLabel = (g, p, tag) => [tag + ' · ' + g.v.name, p.time.slice(0, 16).replace('T', ' '), tqPos(p)];
 // 同一艘船的顏色由淺到深：t＝0 最舊、t＝1 最新
 function tqShade(hex, t) {
   const w = .6 * (1 - t), k = .25 * t;
@@ -2314,9 +2339,9 @@ async function tqLoad(btn) {
   catch (e) { toast(e.message, 'error'); }
   finally { hideLoading(); if (btn) btn.disabled = false; }
 }
-function tqGroups() {
+function tqGroups(data) {
   const g = {};
-  (TQ.data || []).forEach(p => { (g[p.vessel_id] = g[p.vessel_id] || []).push(p); });
+  (data || TQ.data || []).forEach(p => { (g[p.vessel_id] = g[p.vessel_id] || []).push(p); });
   return Object.keys(g).map(id => {
     const pts = g[id], v = S.vessels.find(x => x.id === id) || { name: pts[0].vessel_name, mmsi: pts[0].mmsi };
     let d = 0; for (let i = 1; i < pts.length; i++) d += nm([+pts[i - 1].lat, +pts[i - 1].lon], [+pts[i].lat, +pts[i].lon]);
@@ -2336,14 +2361,14 @@ function tqRender() {
     <div class="section-body"><div id="trkMap"></div>
       <div class="table-wrap" style="margin-top:12px"><table class="tbl"><tr><th>${L('Vessel', '船舶')}</th><th>${L('Points', '點數')}</th><th>${L('First fix', '第一筆')}</th><th>${L('Last fix', '最後一筆')}</th><th>${L('Distance', '航行距離')}</th></tr>
       ${gs.map(g => `<tr><td><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${vColor(g.id)}"></span> <b>${esc(g.v.name)}</b> <span class="mono small muted">${esc(g.v.mmsi)}</span></td>
-        <td>${g.pts.length}</td><td class="mono">${fmtT(g.pts[0].time, true)}</td><td class="mono">${fmtT(g.pts[g.pts.length - 1].time, true)}</td><td>${g.dist.toFixed(1)} nm</td></tr>`).join('')}</table></div>
+        <td>${g.pts.length}</td><td class="mono">${fmtT(g.pts[0].time, true)}<div class="small muted">${tqPos(g.pts[0])}</div></td><td class="mono">${fmtT(g.pts[g.pts.length - 1].time, true)}<div class="small muted">${tqPos(g.pts[g.pts.length - 1])}</div></td><td>${g.dist.toFixed(1)} nm</td></tr>`).join('')}</table></div>
       <div class="small muted" style="margin-top:6px">${L('Times are Taiwan local time (UTC+8); GPX/KML timestamps are exported in UTC as the formats require.', '時間為台灣時間（UTC+8）；GPX／KML 依格式規定以 UTC 輸出時間戳記。')}</div></div></div>`;
   if (TQ.map) { TQ.map.remove(); TQ.map = null; }
   if (!L_) return;
   TQ.map = L_.map('trkMap', { scrollWheelZoom: false, zoomControl: false });
   L_.control.zoom({ position: 'topright' }).addTo(TQ.map);
-  L_.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Ocean/World_Ocean_Base/MapServer/tile/{z}/{y}/{x}', { maxZoom: 16, maxNativeZoom: 10, attribution: 'Esri, GEBCO, NOAA' }).addTo(TQ.map);
-  L_.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Ocean/World_Ocean_Reference/MapServer/tile/{z}/{y}/{x}', { maxZoom: 16, maxNativeZoom: 10 }).addTo(TQ.map);
+  L_.tileLayer(TRK_TILES[0], { maxZoom: 16, maxNativeZoom: 10, attribution: 'Esri, GEBCO, NOAA' }).addTo(TQ.map);
+  L_.tileLayer(TRK_TILES[1], { maxZoom: 16, maxNativeZoom: 10 }).addTo(TQ.map);
   const all = [];
   const ll = p => [+p.lat, +p.lon], tip = (g, p, tag) => `${tag ? tag + ' · ' : ''}${esc(g.v.name)} ${esc(fmtT(p.time, true))}${p.speed !== '' ? ' · ' + esc(p.speed) + ' kn' : ''}`;
   let hasGap = false;
@@ -2365,8 +2390,8 @@ function tqRender() {
   gs.forEach(g => {
     const a = g.pts[0], b = g.pts[g.pts.length - 1];
     L_.circleMarker(ll(a), { radius: 10, stroke: false, fillColor: '#fff', fillOpacity: 1, interactive: false }).addTo(TQ.map);
-    L_.circleMarker(ll(a), { radius: 7, color: TQ_START, weight: 5, fillColor: '#fff', fillOpacity: 1 }).bindTooltip(tip(g, a, L('Start', '起點'))).addTo(TQ.map);
-    L_.circleMarker(ll(b), { radius: 5, color: '#fff', weight: 2, fillColor: TQ_END, fillOpacity: 1 }).bindTooltip(tip(g, b, L('End', '終點'))).addTo(TQ.map);
+    L_.circleMarker(ll(a), { radius: 7, color: TQ_START, weight: 5, fillColor: '#fff', fillOpacity: 1 }).bindTooltip(tqLabel(g, a, L('Start', '起點')).map(esc).join('<br>'), { permanent: true, direction: 'left', offset: [-8, 0], className: 'trk-lbl' }).addTo(TQ.map);
+    L_.circleMarker(ll(b), { radius: 5, color: '#fff', weight: 2, fillColor: TQ_END, fillOpacity: 1 }).bindTooltip(tqLabel(g, b, L('End', '終點')).map(esc).join('<br>'), { permanent: true, direction: 'right', offset: [8, 0], className: 'trk-lbl' }).addTo(TQ.map);
   });
   const card = L_.control({ position: 'topleft' });
   card.onAdd = () => {
@@ -2397,74 +2422,122 @@ async function tqPng(btn) {
   if (!TQ.map) return;
   btn.disabled = true;
   try {
-    const map = TQ.map, el = map.getContainer(), box = el.getBoundingClientRect();
-    const scale = 2, W = box.width, H = box.height, top = 88;
-    const c = document.createElement('canvas');
-    c.width = W * scale; c.height = (H + top) * scale;
-    const g = c.getContext('2d');
-    g.scale(scale, scale);
-    g.fillStyle = '#ffffff'; g.fillRect(0, 0, W, H + top);
-    g.fillStyle = '#cfe3ef'; g.fillRect(0, top, W, H);
-    const tiles = Array.from(el.querySelectorAll('.leaflet-tile-pane img.leaflet-tile'));
-    await Promise.all(tiles.map(t => new Promise(res => {
-      const rc = t.getBoundingClientRect();
-      if (rc.right < box.left || rc.left > box.right || rc.bottom < box.top || rc.top > box.bottom) return res();
-      const im = new Image(); im.crossOrigin = 'anonymous';
-      im.onload = () => { try { g.drawImage(im, rc.left - box.left, rc.top - box.top + top, rc.width, rc.height); } catch (e) {} res(); };
-      im.onerror = () => res();
-      im.src = t.src;
-    })));
-    const gs = tqGroups(), per = tqPeriod(gs);
-    const pt = p => { const q = map.latLngToContainerPoint([+p.lat, +p.lon]); return [q.x, q.y + top]; };
-    const ring = (x, y) => {
-      g.setLineDash([]); g.beginPath(); g.arc(x, y, 10, 0, 7); g.fillStyle = '#fff'; g.fill();
-      g.beginPath(); g.arc(x, y, 7, 0, 7); g.fill(); g.strokeStyle = TQ_START; g.lineWidth = 5; g.stroke();
-    };
-    const dot = (x, y) => { g.setLineDash([]); g.beginPath(); g.arc(x, y, 5, 0, 7); g.fillStyle = TQ_END; g.fill(); g.strokeStyle = '#fff'; g.lineWidth = 2; g.stroke(); };
-    let hasGap = false;
-    g.lineJoin = 'round';
-    gs.forEach(gr => {
-      const col = vColor(gr.id), segs = tqSegs(gr);
-      const seg = s => { const [x1, y1] = pt(s.a), [x2, y2] = pt(s.b); g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2, y2); g.stroke(); };
-      g.setLineDash([]); g.lineCap = 'round'; g.lineWidth = 5; g.strokeStyle = 'rgba(255,255,255,.75)'; segs.filter(s => !s.gap).forEach(seg);
-      segs.forEach(s => {
-        g.strokeStyle = tqShade(col, s.t);
-        if (s.gap) { hasGap = true; g.setLineDash([6, 7]); g.lineCap = 'butt'; g.lineWidth = 2.5; }
-        else { g.setLineDash([]); g.lineCap = 'round'; g.lineWidth = 3; }
-        seg(s);
-      });
-      g.setLineDash([]); g.strokeStyle = '#fff'; g.lineWidth = 1;
-      gr.pts.forEach(p => { const [x, y] = pt(p); g.beginPath(); g.arc(x, y, 3, 0, 7); g.fillStyle = tqShade(col, tqT(gr, p)); g.fill(); g.stroke(); });
-    });
-    gs.forEach(gr => { ring(...pt(gr.pts[0])); dot(...pt(gr.pts[gr.pts.length - 1])); });
-    const font = '12px Inter,"Noto Sans TC",sans-serif';
-    g.fillStyle = '#ffffff'; g.fillRect(0, 0, W, top);   // 圖磚會超出地圖範圍，標題區要蓋回白底
-    g.textAlign = 'left'; g.fillStyle = '#002038'; g.font = 'bold 15px Inter,"Noto Sans TC",sans-serif';
-    g.fillText((S.settings.project_name || '') + ' — ' + L('Vessel track', '船舶軌跡'), 10, 20);
-    g.font = font; g.fillStyle = '#334';
-    g.fillText(L('Data period ', '資料期間 ') + per.text + ' (UTC+8) · ' + per.n + L(' points', ' 點') + ' · AIS (Datalastic)', 10, 38);
-    // 第三列：起訖與斷訊圖例；第四列：各船色帶
-    let lx = 19; const label = (t, gap) => { g.font = font; g.fillStyle = '#334'; g.fillText(t, lx, 60); lx += g.measureText(t).width + gap; };
-    ring(lx, 56); lx += 14; label(L('Start', '起點'), 16);
-    dot(lx, 56); lx += 10; label(L('End', '終點'), 16);
-    label(L('Light → dark = older → newer', '顏色淺 → 深＝舊 → 新'), 16);
-    if (hasGap) {
-      g.setLineDash([6, 7]); g.lineCap = 'butt'; g.lineWidth = 2.5; g.strokeStyle = '#556'; g.beginPath(); g.moveTo(lx, 56); g.lineTo(lx + 26, 56); g.stroke(); g.setLineDash([]);
-      lx += 32; label(L('AIS gap (no data)', '斷訊（這段沒有資料）'), 0);
-    }
-    lx = 10;
-    gs.forEach(gr => {
-      const grad = g.createLinearGradient(lx, 0, lx + 28, 0), col = vColor(gr.id);
-      grad.addColorStop(0, tqShade(col, 0)); grad.addColorStop(1, tqShade(col, 1));
-      g.fillStyle = grad; g.fillRect(lx, 73, 28, 5); lx += 34;
-      g.fillStyle = '#334'; const t = gr.v.name + ' ' + gr.dist.toFixed(1) + ' nm'; g.fillText(t, lx, 80); lx += g.measureText(t).width + 16;
-    });
-    g.textAlign = 'right'; g.font = '10px Inter,sans-serif'; g.fillStyle = '#556'; g.fillText('Map: Esri, GEBCO, NOAA', W - 6, H + top - 6);
-    let url;
-    try { url = c.toDataURL('image/png'); } catch (e) { throw new Error(L('The map tiles block image export — use PDF instead.', '底圖不允許匯出圖片，請改用 PDF。')); }
-    const a = document.createElement('a'); a.href = url; a.download = tqFile() + '.png'; a.click();
+    const a = document.createElement('a'); a.href = await tqCanvasUrl(TQ.map, tqGroups()); a.download = tqFile() + '.png'; a.click();
   } catch (e) { toast(e.message, 'error'); }
   btn.disabled = false;
+}
+async function tqCanvasUrl(map, gs) {
+  const el = map.getContainer(), box = el.getBoundingClientRect();
+  const scale = 2, W = box.width, H = box.height, top = 88;
+  const c = document.createElement('canvas');
+  c.width = W * scale; c.height = (H + top) * scale;
+  const g = c.getContext('2d');
+  g.scale(scale, scale);
+  g.fillStyle = '#ffffff'; g.fillRect(0, 0, W, H + top);
+  g.fillStyle = '#cfe3ef'; g.fillRect(0, top, W, H);
+  const tiles = Array.from(el.querySelectorAll('.leaflet-tile-pane img.leaflet-tile'));
+  await Promise.all(tiles.map(t => new Promise(res => {
+    const rc = t.getBoundingClientRect();
+    if (rc.right < box.left || rc.left > box.right || rc.bottom < box.top || rc.top > box.bottom) return res();
+    const im = new Image(); im.crossOrigin = 'anonymous';
+    im.onload = () => { try { g.drawImage(im, rc.left - box.left, rc.top - box.top + top, rc.width, rc.height); } catch (e) {} res(); };
+    im.onerror = () => res();
+    im.src = t.src;
+  })));
+  const per = tqPeriod(gs);
+  const pt = p => { const q = map.latLngToContainerPoint([+p.lat, +p.lon]); return [q.x, q.y + top]; };
+  const ring = (x, y) => {
+    g.setLineDash([]); g.beginPath(); g.arc(x, y, 10, 0, 7); g.fillStyle = '#fff'; g.fill();
+    g.beginPath(); g.arc(x, y, 7, 0, 7); g.fill(); g.strokeStyle = TQ_START; g.lineWidth = 5; g.stroke();
+  };
+  const dot = (x, y) => { g.setLineDash([]); g.beginPath(); g.arc(x, y, 5, 0, 7); g.fillStyle = TQ_END; g.fill(); g.strokeStyle = '#fff'; g.lineWidth = 2; g.stroke(); };
+  let hasGap = false;
+  g.lineJoin = 'round';
+  gs.forEach(gr => {
+    const col = vColor(gr.id), segs = tqSegs(gr);
+    const seg = s => { const [x1, y1] = pt(s.a), [x2, y2] = pt(s.b); g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2, y2); g.stroke(); };
+    g.setLineDash([]); g.lineCap = 'round'; g.lineWidth = 5; g.strokeStyle = 'rgba(255,255,255,.75)'; segs.filter(s => !s.gap).forEach(seg);
+    segs.forEach(s => {
+      g.strokeStyle = tqShade(col, s.t);
+      if (s.gap) { hasGap = true; g.setLineDash([6, 7]); g.lineCap = 'butt'; g.lineWidth = 2.5; }
+      else { g.setLineDash([]); g.lineCap = 'round'; g.lineWidth = 3; }
+      seg(s);
+    });
+    g.setLineDash([]); g.strokeStyle = '#fff'; g.lineWidth = 1;
+    gr.pts.forEach(p => { const [x, y] = pt(p); g.beginPath(); g.arc(x, y, 3, 0, 7); g.fillStyle = tqShade(col, tqT(gr, p)); g.fill(); g.stroke(); });
+  });
+  gs.forEach(gr => { ring(...pt(gr.pts[0])); dot(...pt(gr.pts[gr.pts.length - 1])); });
+  // 起終點標籤：起點放左、終點放右，碰到邊界或別的標籤就換位置
+  const placed = [];
+  const tag = (p, lines, color, side) => {
+    g.setLineDash([]); g.font = '11px Inter,"Noto Sans TC",sans-serif'; g.textAlign = 'left';
+    const w = Math.max(...lines.map(t => g.measureText(t).width)) + 12, h = lines.length * 14 + 6, [px, py] = pt(p);
+    let x = side < 0 ? px - 14 - w : px + 14;
+    if (x < 4) x = px + 14;
+    if (x + w > W - 4) x = Math.max(4, px - 14 - w);
+    const minY = top + 4, maxY = top + H - h - 18;
+    let y = Math.min(maxY, Math.max(minY, py - h / 2));
+    const hit = () => placed.some(r => x < r.x + r.w && x + w > r.x && y < r.y + r.h + 4 && y + h + 4 > r.y);
+    for (let n = 0; n < 12 && hit(); n++) y = y + h + 6 > maxY ? minY + n * 8 : y + h + 6;
+    placed.push({ x, y, w, h });
+    g.fillStyle = 'rgba(255,255,255,.94)'; g.fillRect(x, y, w, h);
+    g.strokeStyle = color; g.lineWidth = 1.5; g.strokeRect(x, y, w, h);
+    lines.forEach((t, i) => { g.font = (i ? '' : 'bold ') + '11px Inter,"Noto Sans TC",sans-serif'; g.fillStyle = i ? '#223344' : color; g.fillText(t, x + 6, y + 14 + i * 14); });
+  };
+  gs.forEach(gr => {
+    tag(gr.pts[0], tqLabel(gr, gr.pts[0], L('Start', '起點')), TQ_START, -1);
+    tag(gr.pts[gr.pts.length - 1], tqLabel(gr, gr.pts[gr.pts.length - 1], L('End', '終點')), TQ_END, 1);
+  });
+  const font = '12px Inter,"Noto Sans TC",sans-serif';
+  g.fillStyle = '#ffffff'; g.fillRect(0, 0, W, top);   // 圖磚會超出地圖範圍，標題區要蓋回白底
+  g.textAlign = 'left'; g.fillStyle = '#002038'; g.font = 'bold 15px Inter,"Noto Sans TC",sans-serif';
+  g.fillText((S.settings.project_name || '') + ' — ' + L('Vessel track', '船舶軌跡'), 10, 20);
+  g.font = font; g.fillStyle = '#334';
+  g.fillText(L('Data period ', '資料期間 ') + per.text + ' (UTC+8) · ' + per.n + L(' points', ' 點') + ' · AIS (Datalastic)', 10, 38);
+  // 第三列：起訖與斷訊圖例；第四列：各船色帶
+  let lx = 19; const label = (t, gap) => { g.font = font; g.fillStyle = '#334'; g.fillText(t, lx, 60); lx += g.measureText(t).width + gap; };
+  ring(lx, 56); lx += 14; label(L('Start', '起點'), 16);
+  dot(lx, 56); lx += 10; label(L('End', '終點'), 16);
+  label(L('Light → dark = older → newer', '顏色淺 → 深＝舊 → 新'), 16);
+  if (hasGap) {
+    g.setLineDash([6, 7]); g.lineCap = 'butt'; g.lineWidth = 2.5; g.strokeStyle = '#556'; g.beginPath(); g.moveTo(lx, 56); g.lineTo(lx + 26, 56); g.stroke(); g.setLineDash([]);
+    lx += 32; label(L('AIS gap (no data)', '斷訊（這段沒有資料）'), 0);
+  }
+  lx = 10;
+  gs.forEach(gr => {
+    const grad = g.createLinearGradient(lx, 0, lx + 28, 0), col = vColor(gr.id);
+    grad.addColorStop(0, tqShade(col, 0)); grad.addColorStop(1, tqShade(col, 1));
+    g.fillStyle = grad; g.fillRect(lx, 73, 28, 5); lx += 34;
+    g.fillStyle = '#334'; const t = gr.v.name + ' ' + gr.dist.toFixed(1) + ' nm'; g.fillText(t, lx, 80); lx += g.measureText(t).width + 16;
+  });
+  g.textAlign = 'right'; g.font = '10px Inter,sans-serif'; g.fillStyle = '#556'; g.fillText('Map: Esri, GEBCO, NOAA', W - 6, H + top - 6);
+  try { return c.toDataURL('image/png'); } catch (e) { throw new Error(L('The map tiles block image export — use PDF instead.', '底圖不允許匯出圖片，請改用 PDF。')); }
+}
+// 軌跡圖存進批次資料夾的「軌跡」：這艘 MMO 船＋施工船，預觀測開始到實際觀測結束
+async function trackImage(svId, auto) {
+  const sv = S.svs.find(x => x.id === svId), s = sv && shiftOf(sv.shift_id);
+  if (!sv || !sv.pre_start || !sv.work_end || !L_) { if (!auto) toast(L('End the observation first', '請先結束實際觀測'), 'error'); return; }
+  let el, map;
+  showLoading(L('Creating track image…', '產生軌跡圖中…'));
+  try {
+    const r = await api('pos.list', { vessel_ids: [sv.vessel_id, s.construction_vessel_id].filter(Boolean), from: sv.pre_start, to: sv.work_end });
+    const gs = tqGroups(r.positions);
+    if (!gs.length) throw new Error(L('No AIS positions for this period — no track image created.', '這段時間沒有 AIS 船位，無法產生軌跡圖。'));
+    el = document.createElement('div');
+    el.style.cssText = 'position:fixed;left:-3000px;top:0;width:1000px;height:640px';
+    document.body.appendChild(el);
+    map = L_.map(el, { zoomControl: false, attributionControl: false, fadeAnimation: false, zoomAnimation: false });
+    map.fitBounds(L_.latLngBounds(gs.flatMap(g => g.pts.map(p => [+p.lat, +p.lon]))).pad(0.25), { maxZoom: 13 });
+    const layers = TRK_TILES.map(u => L_.tileLayer(u, { maxZoom: 16, maxNativeZoom: 10 }));
+    const loaded = Promise.all(layers.map(l => new Promise(res => l.once('load', res))));
+    layers.forEach(l => l.addTo(map));
+    await Promise.race([loaded, new Promise(res => setTimeout(res, 8000))]);
+    const url = await tqCanvasUrl(map, gs);
+    await api('file.upload', { sv_id: svId, track: true, file: { name: sv.vessel_name + '_軌跡.png', mime: 'image/png', data: url.slice(url.indexOf(',') + 1) } }, { reload: true });
+    toast(L('Track image saved to the batch folder', '軌跡圖已存入批次資料夾'));
+    render();
+  } catch (e) { toast(e.message, 'error'); }
+  finally { if (map) map.remove(); if (el) el.remove(); hideLoading(); }
 }
 function tqExport(fmt) {
   const gs = tqGroups();
@@ -2504,7 +2577,7 @@ ${g.pts.map(p => '<gx:coord>' + p.lon + ' ' + p.lat + ' 0</gx:coord>').join('\n'
 // ==================== Summary page ====================
 function summaryRows() {
   const slots = lines(S.settings.crew_slots);
-  const head = ['日期', '班次', '工區', '工作範疇', '施工船', 'MMO 船'].concat(slots).concat(['預觀測開始', '預觀測結束', '預觀測(分)', '實際觀測開始', '實際觀測結束', '實際觀測時長(分)', '暫停施工次數', '目擊次數', '文件', '照片', '缺件', '規則提醒', '狀態']);
+  const head = ['日期', '批次', '工區', '工作範疇', '施工船', 'MMO 船'].concat(slots).concat(['預觀測開始', '預觀測結束', '預觀測(分)', '實際觀測開始', '實際觀測結束', '實際觀測時長(分)', '暫停施工次數', '目擊次數', '文件', '照片', '缺件', '規則提醒', '狀態']);
   const rows = [];
   S.shifts.slice().sort((a, b) => (b.date + String(b.shift_no).padStart(6, '0')).localeCompare(a.date + String(a.shift_no).padStart(6, '0'))).forEach(s => svsOf(s.id).forEach(sv => {
     const crew = json(sv.crew, {}), ck = sv.checks, n = v => isNaN(v) ? '' : v;
@@ -2519,7 +2592,7 @@ function renderSummary() {
   setTitle(L('Summary sheet', '總表'));
   const { head, rows } = summaryRows();
   $('content').innerHTML = `<div class="alert blue">${L('The Google Sheet “MMO 鯨豚觀察總表” in the Drive folder is rebuilt automatically after every change (tabs “總表” and “目擊總表”).', 'Drive 資料夾裡的 Google 試算表「MMO 鯨豚觀察總表」會在每次異動後自動重建（分頁「總表」與「目擊總表」）。')}</div>
-    <div class="section"><div class="section-header"><h3>${L('One row per shift × MMO vessel', '每列＝一個班次的一艘 MMO 船')} <span class="muted">(${rows.length})</span></h3>
+    <div class="section"><div class="section-header"><h3>${L('One row per batch × MMO vessel', '每列＝一個批次的一艘 MMO 船')} <span class="muted">(${rows.length})</span></h3>
       <div class="toolbar"><a class="btn btn-sm" target="_blank" href="${esc(S.sheetUrl)}">📗 ${L('Open Google Sheet', '開啟 Google 試算表')}</a>
         <a class="btn btn-sm" target="_blank" href="${esc(S.rootUrl)}">📁 ${L('Drive folder', 'Drive 資料夾')}</a>
         <button class="btn btn-sm" onclick="downloadCsv('MMO_summary_'+today()+'.csv',[summaryRows().head].concat(summaryRows().rows.map(r=>r.cells)))">⬇ CSV</button>
@@ -2615,8 +2688,8 @@ function bulkObservers() {
 }
 function adminItems() {
   const list = S.items.slice().sort((a, b) => (a.kind + String(a.sort).padStart(4, '0')).localeCompare(b.kind + String(b.sort).padStart(4, '0')));
-  const cond = { always: L('Always', '每班次'), sighting: L('Only if a sighting', '有目擊時'), pause: L('Only if paused', '有暫停施工時') };
-  $('adminBody').innerHTML = `<div class="alert blue">${L('Every MMO vessel in every shift must upload each active required item. Changes apply to all shifts (past shifts are re-checked).', '每個班次的每艘 MMO 船都要上傳啟用中的必傳項目。修改後所有班次都會重新檢核缺件。')}</div>
+  const cond = { always: L('Always', '每批次'), sighting: L('Only if a sighting', '有目擊時'), pause: L('Only if paused', '有暫停施工時') };
+  $('adminBody').innerHTML = `<div class="alert blue">${L('Every MMO vessel in every batch must upload each active required item. Changes apply to all batches (past batches are re-checked).', '每個批次的每艘 MMO 船都要上傳啟用中的必傳項目：文件每船一份，照片每 12 小時時段（00–12、12–24）各一組。修改後所有批次都會重新檢核缺件。')}</div>
     <div class="section"><div class="section-header"><h3>${L('Upload items', '上傳項目')}</h3><button class="btn btn-green btn-sm" onclick="itemModal()">＋ ${L('Add item', '新增項目')}</button></div>
     <div class="table-wrap"><table class="tbl"><tr><th>${L('Kind', '類型')}</th><th>${L('Name', '名稱')}</th><th>${L('Required', '必傳')}</th><th>${L('When', '條件')}</th><th>${L('Sort', '排序')}</th><th>${L('Status', '狀態')}</th></tr>
       ${list.map(i => `<tr class="click" onclick="itemModal('${i.id}')"><td>${i.kind === 'photo' ? '📷 ' + L('Photo', '照片') : '📄 ' + L('Document', '文件')}</td><td><b>${esc(i.name_zh)}</b><div class="small muted">${esc(i.name_en)}</div></td>
@@ -2628,7 +2701,7 @@ function itemModal(id) {
     <div class="fg"><label>${L('Name (Chinese)', '名稱（中文）')} *</label><input id="iZh" value="${esc(i.name_zh)}"></div>
     <div class="fg"><label>${L('Name (English)', '名稱（英文）')}</label><input id="iEn" value="${esc(i.name_en)}"></div>
     <div class="fg"><label>${L('Kind', '類型')}</label><select id="iKind">${opts([{ v: 'doc', t: L('Document', '文件') }, { v: 'photo', t: L('Photo', '照片') }], i.kind)}</select></div>
-    <div class="fg"><label>${L('When required', '何時需要')}</label><select id="iCond">${opts([{ v: 'always', t: L('Every shift', '每班次') }, { v: 'sighting', t: L('Only if a sighting', '有目擊時') }, { v: 'pause', t: L('Only if paused', '有暫停施工時') }], i.cond || 'always')}</select></div>
+    <div class="fg"><label>${L('When required', '何時需要')}</label><select id="iCond">${opts([{ v: 'always', t: L('Every batch', '每批次') }, { v: 'sighting', t: L('Only if a sighting', '有目擊時') }, { v: 'pause', t: L('Only if paused', '有暫停施工時') }], i.cond || 'always')}</select></div>
     <div class="fg"><label>${L('Sort order', '排序')}</label><input id="iSort" inputmode="numeric" value="${esc(i.sort)}"></div>
     <div class="fg"><label>&nbsp;</label><div class="toolbar"><label class="chk"><input type="checkbox" id="iReq" ${bool(i.required) ? 'checked' : ''}> ${L('Required', '必傳')}</label>
       <label class="chk"><input type="checkbox" id="iAct" ${bool(i.active) ? 'checked' : ''}> ${L('Active', '啟用')}</label></div></div></div>`, {
@@ -2721,7 +2794,7 @@ function userModal(id) {
       password: val(bg, 'uPass'), active: val(bg, 'uAct') }, L('Saved', '已儲存'), btn) });
 }
 const RESET_GROUPS = [
-  ['shifts', 'Shifts (incl. pauses, sightings and uploaded files)', '施工班次（含暫停施工、目擊紀錄與上傳檔案）', () => S.shifts.length, true],
+  ['shifts', 'Batches (incl. pauses, sightings and uploaded files)', '施工批次（含暫停施工、目擊紀錄與上傳檔案）', () => S.shifts.length, true],
   ['tracks', 'Vessel tracks and position history', '船舶軌跡與船位紀錄', () => S.tracks.length, true],
   ['vessels', 'Vessel list (also clears tracks)', '船舶清單（一併清除軌跡）', () => S.vessels.length, false],
   ['observers', 'Observer list', '觀察員清單', () => S.observers.length, false]

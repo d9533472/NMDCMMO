@@ -6,11 +6,11 @@
 // 協定：POST text/plain JSON {action, token, payload} → {ok:true, data, state?} / {ok:false, error, code}
 //       GET ?action=ping 僅供健康檢查（GET 不做任何寫入）
 // 資料：Drive 資料夾 ROOT_FOLDER_ID 內的試算表「MMO 鯨豚觀察總表」（setup() 建立，id 存 Script Properties ss_id）
-//       上傳檔案：ROOT/<日期>_<班次>_<施工船>/<MMO 船>/<上傳項目>/檔案
-// 角色：admin（全部＋後台）、mmo（建立／填報班次、上傳）、viewer（唯讀）
+//       上傳檔案：ROOT/<日期>_<批次>_<施工船>/軌跡/、<MMO 船>/紙本紀錄/、<MMO 船>/照片/<MM-DD_00-12>/
+// 角色：admin（全部＋後台）、mmo（建立／填報批次、上傳）、viewer（唯讀）
 // ============================================================
 
-const VERSION = '1.3.2';
+const VERSION = '1.4';
 const ROOT_FOLDER_ID = '1uVkbv4tndRVERhrHmHUzaTvPlHaFV4em';
 const SS_NAME = 'MMO 鯨豚觀察總表';
 const TZ = 'Asia/Taipei';
@@ -32,7 +32,7 @@ const SCHEMAS = {
   Sightings: ['id','shift_id','sv_id','time','species','count','detection','min_distance_m','in_alert_zone','action','left_time',
     'lat','lon','behavior','remark','bearing','direction','deck','vessel_dist_m','piling_status','mother_calf','image',
     'call_type','freq_khz','hydrophone_m','created_by','created_at','updated_at'],
-  Files: ['id','shift_id','sv_id','item_id','item_name','kind','drive_id','name','mime','size','thumb','uploaded_by','uploaded_at'],
+  Files: ['id','shift_id','sv_id','item_id','item_name','kind','drive_id','name','mime','size','thumb','uploaded_by','uploaded_at','slot'],
   AuditLog: ['time','user','role','action','target','detail','ok','error']
 };
 
@@ -69,7 +69,8 @@ const ITEM_SEED = [
   ['doc', '作業紀錄表', 'Operation log', 'always'],
   ['doc', '施工紀錄表', 'Construction log', 'always'],
   ['photo', '鯨豚觀察員監測照片', 'MMO monitoring photos', 'always'],
-  ['photo', '被動聲學監測照片', 'PAM monitoring photos', 'always']
+  ['photo', '被動聲學監測照片', 'PAM monitoring photos', 'always'],
+  ['photo', 'AIS 照片', 'AIS photos', 'always']
 ];
 
 const ROLES = ['admin', 'mmo', 'viewer'];
@@ -96,7 +97,7 @@ const PUBLIC = { 'ping': 1, 'auth.status': 1, 'auth.setup': 1, 'auth.login': 1, 
 const NO_REV = { 'ping': 1, 'auth.status': 1, 'auth.login': 1, 'auth.logout': 1, 'auth.changePassword': 1, 'data.load': 1, 'data.rev': 1,
   'audit.list': 1, 'file.get': 1, 'shift.files': 1, 'pos.fetch': 1, 'pos.test': 1, 'pos.list': 1, 'reset.request': 1 };
 const AUDIT_SKIP = { 'ping': 1, 'auth.status': 1, 'data.load': 1, 'data.rev': 1, 'audit.list': 1, 'file.get': 1, 'shift.files': 1, 'pos.list': 1 };
-// 這些寫入會改到班次資料 → 重建試算表「總表」
+// 這些寫入會改到批次資料 → 重建試算表「總表」
 const SUMMARY_ACTIONS = /^((shift|sv|pause|sighting|file)\.(save|delete|close|reopen|upload)|reset\.confirm)$/;
 
 function handle_(req) {
@@ -305,7 +306,18 @@ function ensureSchema_() {
     }
     const st = Repo.all('Settings');
     Object.keys(DEFAULT_SETTINGS).forEach(k => { if (!st.find(s => s.key === k)) Repo.insert('Settings', { key: k, value: DEFAULT_SETTINGS[k] }); });
-    // 只換一次工項清單：之後後台自己改的內容不會被蓋掉；舊班次的工項值保留不動
+    // v1.4：批次改稱批次（舊資料夾跟著改名）、照片多一項 AIS 照片
+    if (!props.getProperty('v14_batch')) {
+      Repo.all('Shifts').forEach(s => { if (s.folder_id) { try { DriveApp.getFolderById(s.folder_id).setName(shiftFolderName_(s)); } catch (e) {} } });
+      const list = Repo.all('UploadItems');
+      if (!list.find(i => i.name_zh === 'AIS 照片')) {
+        const c = ITEM_SEED[ITEM_SEED.length - 1];
+        Repo.insert('UploadItems', { id: genId_(), kind: c[0], name_zh: c[1], name_en: c[2], required: 'TRUE', cond: c[3], active: 'TRUE', sort: String(list.length + 1), note: '' });
+      }
+      props.setProperty('v14_batch', '1');
+      bumpRev_();
+    }
+    // 只換一次工項清單：之後後台自己改的內容不會被蓋掉；舊批次的工項值保留不動
     if (!props.getProperty('scopes_pipeline')) {
       Repo.update('Settings', 'scopes', { value: DEFAULT_SETTINGS.scopes });
       props.setProperty('scopes_pipeline', '1');
@@ -590,6 +602,16 @@ function posFor_(sv, shift, st) {
 }
 
 // ============ 規則檢核（依作業指引） ============
+/** 12 小時時段（00–12、12–24）：預觀測開始到實際觀測結束，進行中算到現在；結束剛好在 12:00 不算下一段。前端 svSlots 同規則 */
+function slotsOf_(from, to) {
+  if (!from) return [];
+  const abs = t => Date.UTC(Number(t.slice(0, 4)), Number(t.slice(5, 7)) - 1, Number(t.slice(8, 10)), Number(t.slice(11, 13)), Number(t.slice(14, 16)));
+  const H12 = 12 * 3600000, a = abs(from), b = Math.max(abs(to || nowIso_()) - 60000, a), out = [];
+  for (let t = Math.floor(a / H12) * H12; t <= b; t += H12) out.push(new Date(t).toISOString().slice(0, 13).replace('T', '_'));
+  return out;
+}
+function slotLabel_(k) { return k.slice(5, 10) + ' ' + k.slice(11, 13) + '–' + (k.slice(11, 13) === '00' ? '12' : '24'); }
+function slotFolder_(k) { return k.slice(5, 10) + '_' + k.slice(11, 13) + '-' + (k.slice(11, 13) === '00' ? '12' : '24'); }
 /** 回傳 { status, warnings:[{code,en,zh}], missing:[{item_id,en,zh}], docs:[have,need], photos:[have,need] } */
 function checks_(sv, pauses, sightings, files, items, st, pos) {
   const W = [];
@@ -661,11 +683,19 @@ function checks_(sv, pauses, sightings, files, items, st, pos) {
 
   const hasSighting = ss.length > 0, hasPause = ps.length > 0;
   const missing = [];
-  const cnt = { doc: [0, 0], photo: [0, 0] };
+  const cnt = { doc: [0, 0], photo: [0, 0] }, slots = slotsOf_(sv.pre_start, sv.work_end);
   items.filter(i => bool_(i.active) && bool_(i.required)).forEach(i => {
     if (i.cond === 'sighting' && !hasSighting) return;
     if (i.cond === 'pause' && !hasPause) return;
     const k = i.kind === 'photo' ? 'photo' : 'doc';
+    if (k === 'photo') {   // 照片每 12 小時時段各一組
+      slots.forEach(t => {
+        cnt.photo[1]++;
+        if (files.some(f => f.sv_id === sv.id && f.item_id === i.id && f.slot === t)) cnt.photo[0]++;
+        else missing.push({ item_id: i.id, en: (i.name_en || i.name_zh) + ' ' + slotLabel_(t), zh: i.name_zh + ' ' + slotLabel_(t) });
+      });
+      return;
+    }
     cnt[k][1]++;
     if (files.some(f => f.sv_id === sv.id && f.item_id === i.id)) cnt[k][0]++;
     else missing.push({ item_id: i.id, en: i.name_en || i.name_zh, zh: i.name_zh });
@@ -676,8 +706,8 @@ function checks_(sv, pauses, sightings, files, items, st, pos) {
 // ============ Shifts ============
 function shiftEditable_(u, shiftId) {
   const s = Repo.get('Shifts', shiftId);
-  if (!s) fail_('Shift not found', 'NOT_FOUND');
-  if (s.status === 'closed' && u.role !== 'admin') fail_('This shift is closed — ask an Admin to reopen it', 'FORBIDDEN');
+  if (!s) fail_('Batch not found', 'NOT_FOUND');
+  if (s.status === 'closed' && u.role !== 'admin') fail_('This batch is closed — ask an Admin to reopen it', 'FORBIDDEN');
   return s;
 }
 function saveShift_(u, p) {
@@ -689,7 +719,7 @@ function saveShift_(u, p) {
     const vessels = Repo.all('Vessels');
     const cv = vessels.find(v => v.id === str_(p.construction_vessel_id));
     const shiftNo = str_(p.shift_no) || String(Repo.all('Shifts').reduce((m, x) => Math.max(m, parseInt(x.shift_no, 10) || 0), 0) + 1);
-    if (Repo.all('Shifts').find(x => x.shift_no === shiftNo && x.id !== p.id)) fail_('Shift number ' + shiftNo + ' already exists');
+    if (Repo.all('Shifts').find(x => x.shift_no === shiftNo && x.id !== p.id)) fail_('Batch number ' + shiftNo + ' already exists');
     const patch = { shift_no: shiftNo, date: date, site: str_(p.site), scope: str_(p.scope),
       construction_vessel_id: cv ? cv.id : '', construction_vessel: cv ? cv.name : str_(p.construction_vessel),
       remark: str_(p.remark), updated_by: u.username, updated_at: nowIso_() };
@@ -709,7 +739,7 @@ function saveShift_(u, p) {
     existing.filter(x => vesselIds.indexOf(x.vessel_id) < 0).forEach(x => {
       const used = x.pre_start || x.work_start || Repo.all('Files').some(f => f.sv_id === x.id) ||
         Repo.all('Sightings').some(f => f.sv_id === x.id) || Repo.all('Pauses').some(f => f.sv_id === x.id);
-      if (used) fail_(x.vessel_name + ' already has records in this shift and cannot be removed');
+      if (used) fail_(x.vessel_name + ' already has records in this batch and cannot be removed');
       Repo.remove('ShiftVessels', x.id);
     });
     const crewDefault = p.crew && typeof p.crew === 'object' ? p.crew : {};
@@ -792,7 +822,7 @@ function resetConfirm_(u, p) {
 function deleteShift_(id) {
   return withLock_(() => {
     const s = Repo.get('Shifts', id);
-    if (!s) fail_('Shift not found', 'NOT_FOUND');
+    if (!s) fail_('Batch not found', 'NOT_FOUND');
     if (s.folder_id) { try { DriveApp.getFolderById(s.folder_id).setTrashed(true); } catch (e) {} }
     ['ShiftVessels', 'Pauses', 'Sightings', 'Files'].forEach(t => Repo.removeWhere(t, x => x.shift_id === id));
     Repo.remove('Shifts', id);
@@ -804,7 +834,7 @@ const PAUSE_FIELDS = ['start','end','reason','sighting_id','monitoring','restart
 const SV_FIELDS = ['pre_start','pre_end','work_start','full_start','work_end','lat','lon','pos_time','pos_source','weather','sea_state','remark'];
 const SV_TIME_FIELDS = { pre_start: 1, pre_end: 1, work_start: 1, full_start: 1, work_end: 1, pos_time: 1 };
 // 一個批次＝預觀測開始到施工船宣布停工（實際觀測結束）：這段期間 MMO 船與施工船自動記錄軌跡，暫停施工不中斷
-const AUTO_TRACK = '班次自動記錄';
+const AUTO_TRACK = '批次自動記錄';
 function activeSv_(sv) { return !!sv.pre_start && !sv.work_end; }
 /** 依目前進行中的批次，開始或停止指定船舶的軌跡；手動開始的軌跡不會被自動停止。失敗不影響原本的儲存 */
 function syncAutoTrack_(u, ids) {
@@ -908,7 +938,7 @@ function deleteChild_(u, sheet, id) {
 
 // ============ Drive ============
 function safeName_(s) { return str_(s).replace(/[\\/:*?"<>|#%]+/g, '_').slice(0, 80) || '_'; }
-function shiftFolderName_(s) { return safeName_(s.date + '_班次' + s.shift_no + (s.construction_vessel ? '_' + s.construction_vessel : '')); }
+function shiftFolderName_(s) { return safeName_(s.date + '_批次' + s.shift_no + (s.construction_vessel ? '_' + s.construction_vessel : '')); }
 function childFolder_(parent, name) {
   const it = parent.getFoldersByName(name);
   return it.hasNext() ? it.next() : parent.createFolder(name);
@@ -933,19 +963,40 @@ function uploadFile_(u, p) {
   const sv = Repo.get('ShiftVessels', p.sv_id);
   if (!sv) fail_('Vessel record not found', 'NOT_FOUND');
   const shift = shiftEditable_(u, sv.shift_id);
+  if (p.track) return saveTrackImage_(u, shift, sv, bytes, file);
   const item = Repo.get('UploadItems', p.item_id);
   if (!item) fail_('Upload item not found', 'NOT_FOUND');
-  const folder = withLock_(() => childFolder_(svFolder_(shift, sv), safeName_(item.name_zh)));
+  const slot = item.kind === 'photo' ? str_(p.slot) : '';
+  if (item.kind === 'photo' && !/^\d{4}-\d{2}-\d{2}_(00|12)$/.test(slot)) fail_('Select a 12-hour period for this photo');
+  const folder = withLock_(() => {
+    const base = svFolder_(shift, sv);
+    return slot ? childFolder_(childFolder_(base, '照片'), slotFolder_(slot)) : childFolder_(base, '紙本紀錄');
+  });
   const orig = safeName_(file.name || 'file');
   const name = safeName_(shift.date + '_' + sv.vessel_name + '_' + item.name_zh) + '_' + orig;
   const f = folder.createFile(Utilities.newBlob(bytes, str_(file.mime) || 'application/octet-stream', name));
   const thumb = str_(p.thumb);
   const rec = { id: genId_(), shift_id: shift.id, sv_id: sv.id, item_id: item.id, item_name: item.name_zh, kind: item.kind, drive_id: f.getId(),
     name: orig, mime: str_(file.mime), size: String(bytes.length), thumb: thumb.length <= MAX_THUMB_CHARS ? thumb : '',
-    uploaded_by: u.username, uploaded_at: nowIso_() };
+    uploaded_by: u.username, uploaded_at: nowIso_(), slot: slot };
   withLock_(() => Repo.insert('Files', rec));
   const out = Object.assign({}, rec); delete out.thumb;
   return out;
+}
+/** 軌跡圖存在批次層的「軌跡」資料夾；同一艘 MMO 船重新產生時蓋掉舊圖 */
+function saveTrackImage_(u, shift, sv, bytes, file) {
+  const name = safeName_(file.name || sv.vessel_name + '_軌跡.png');
+  return withLock_(() => {
+    Repo.all('Files').filter(f => f.sv_id === sv.id && f.kind === 'track').forEach(f => {
+      try { DriveApp.getFileById(f.drive_id).setTrashed(true); } catch (e) {}
+      Repo.remove('Files', f.id);
+    });
+    const f = childFolder_(shiftFolder_(shift), '軌跡').createFile(Utilities.newBlob(bytes, 'image/png', name));
+    const rec = { id: genId_(), shift_id: shift.id, sv_id: sv.id, item_id: '', item_name: '軌跡圖', kind: 'track', drive_id: f.getId(),
+      name: name, mime: 'image/png', size: String(bytes.length), thumb: '', uploaded_by: u.username, uploaded_at: nowIso_(), slot: '' };
+    Repo.insert('Files', rec);
+    return rec;
+  });
 }
 function deleteFile_(u, id) {
   return withLock_(() => {
@@ -1140,7 +1191,7 @@ function saveMaster_(sheet, p, fields, required) {
 function deleteMaster_(sheet, id) {
   return withLock_(() => {
     if (sheet === 'Vessels' && (Repo.all('ShiftVessels').some(x => x.vessel_id === id) || Repo.all('Shifts').some(x => x.construction_vessel_id === id)))
-      fail_('This vessel is used in shifts — set it inactive instead');
+      fail_('This vessel is used in batches — set it inactive instead');
     const r = Repo.get(sheet, id);
     Repo.remove(sheet, id);
     return { id: id, name: r && r.name };
@@ -1165,7 +1216,7 @@ function saveSettings_(p) {
   });
 }
 
-// ============ 總表（每次班次資料異動後重建） ============
+// ============ 總表（每次批次資料異動後重建） ============
 function rebuildSummary_() {
   Repo.flush();
   const st = settings_();
@@ -1173,9 +1224,9 @@ function rebuildSummary_() {
   const shifts = Repo.all('Shifts').sort((a, b) => (b.date + b.shift_no).localeCompare(a.date + a.shift_no, undefined, { numeric: true }));
   const svs = Repo.all('ShiftVessels'), pauses = Repo.all('Pauses'), sightings = Repo.all('Sightings'), files = Repo.all('Files'), items = Repo.all('UploadItems');
   const STATUS = { idle: '未開始', pre: '預觀測中', preDone: '預觀測完成', work: '實際觀測中', paused: '暫停施工中', done: '已完成' };
-  const head = ['日期', '班次', '工區', '工作範疇', '施工船', 'MMO 船'].concat(slots).concat(['預觀測開始', '預觀測結束', '預觀測(分)',
+  const head = ['日期', '批次', '工區', '工作範疇', '施工船', 'MMO 船'].concat(slots).concat(['預觀測開始', '預觀測結束', '預觀測(分)',
     '實際觀測開始', '實際觀測結束', '實際觀測時長(分)', '暫停施工次數', '暫停施工總計(分)', '目擊次數', '物種', '警戒區內目擊', '緯度', '經度', '風速(kn)', '浪高(m)',
-    '文件', '照片', '缺件', '規則提醒', '狀態', '班次結案', 'Drive 資料夾']);
+    '文件', '照片', '缺件', '規則提醒', '狀態', '批次結案', 'Drive 資料夾']);
   const rows = [];
   shifts.forEach(s => {
     svs.filter(x => x.shift_id === s.id).sort((a, b) => Number(a.sort) - Number(b.sort)).forEach(sv => {
@@ -1201,7 +1252,7 @@ function rebuildSummary_() {
   });
   writeTable_('總表', head, rows, 0);
 
-  const sHead = ['日期', '班次', '工區', '施工船', 'MMO 船', '目擊時間', '物種', '數量', '母子對', '偵測方式', '觀察方位(°)', '游行方向', '觀察位置', '與船距離(m)', '與施工點距離(m)', '進入警戒區',
+  const sHead = ['日期', '批次', '工區', '施工船', 'MMO 船', '目擊時間', '物種', '數量', '母子對', '偵測方式', '觀察方位(°)', '游行方向', '觀察位置', '與船距離(m)', '與施工點距離(m)', '進入警戒區',
     '施工狀態', '處置', '最後目擊/離開警戒區', '聲音類型', '頻率(kHz)', '與水下麥克風距離(m)', '影像', '緯度', '經度', '行為', '備註', '登錄者'];
   const sRows = [];
   sightings.slice().sort((a, b) => b.time.localeCompare(a.time)).forEach(x => {
