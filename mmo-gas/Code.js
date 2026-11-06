@@ -10,7 +10,7 @@
 // 角色：admin（全部＋後台）、mmo（建立／填報班次、上傳）、viewer（唯讀）
 // ============================================================
 
-const VERSION = '1.3';
+const VERSION = '1.3.1';
 const ROOT_FOLDER_ID = '1uVkbv4tndRVERhrHmHUzaTvPlHaFV4em';
 const SS_NAME = 'MMO 鯨豚觀察總表';
 const TZ = 'Asia/Taipei';
@@ -138,7 +138,7 @@ const ROUTES = {
   'shift.save': (u, p) => saveShift_(u, p),
   'shift.close': (u, p) => setShiftStatus_(u, p.id, 'closed'),
   'shift.reopen': (u, p) => { requireRole_(u, ['admin']); return setShiftStatus_(u, p.id, 'open'); },
-  'shift.delete': (u, p) => { requireRole_(u, ['admin']); return deleteShift_(p.id); },
+  'shift.delete': (u, p) => { requireRole_(u, ['admin']); const ids = shiftVesselIds_(p.id), r = deleteShift_(p.id); syncAutoTrack_(u, ids); return r; },
   'shift.files': (u, p) => ({ files: Repo.all('Files').filter(f => f.shift_id === p.id) }),
   'sv.save': (u, p) => saveShiftVessel_(u, p),
   'pause.save': (u, p) => saveChild_(u, 'Pauses', p, PAUSE_FIELDS, ['start']),
@@ -310,6 +310,7 @@ function ensureSchema_() {
 
 /** 在 GAS 編輯器手動執行一次：授權 Drive／試算表、建立總表 */
 function setup() {
+  MailApp.getRemainingDailyQuota();   // 清空資料要寄驗證碼：實際呼叫 MailApp，授權畫面才會要求寄信權限
   PropertiesService.getScriptProperties().deleteProperty('schema_version');
   ensureSchema_();
   rebuildSummary_();
@@ -585,7 +586,7 @@ function posFor_(sv, shift, st) {
 /** 回傳 { status, warnings:[{code,en,zh}], missing:[{item_id,en,zh}], docs:[have,need], photos:[have,need] } */
 function checks_(sv, pauses, sightings, files, items, st, pos) {
   const W = [];
-  const add = (code, en, zh) => W.push({ code: code, en: en, zh: zh });
+  const add = (code, en, zh, pauseId) => W.push({ code: code, en: en, zh: zh, pause_id: pauseId || '' });
   const preMin = Number(st.pre_watch_min) || 30, alertM = Number(st.alert_zone_m) || 750;
   const ps = pauses.filter(p => p.sv_id === sv.id);
   const ss = sightings.filter(s => s.sv_id === sv.id);
@@ -628,11 +629,11 @@ function checks_(sv, pauses, sightings, files, items, st, pos) {
     const zs = ss.filter(s => inZone(s) && (s.id === p.sighting_id || (tms_(s.time) <= end && (s.left_time ? tms_(s.left_time) > tms_(p.start) : tms_(s.time) >= tms_(p.start)))));
     if (!zs.length && mins_(p.start, p.end) <= repreMin) return;
     const last = zs.reduce((m, s) => Math.max(m, tms_(s.left_time || s.time)), 0);
-    if (!p.pre_start || !p.pre_end) add('repre_missing', 'Resumed after the pause at ' + hh + ' without a new pre-watch', hh + ' 暫停施工後未重新預觀測即回復施工');
-    else if (tms_(p.pre_start) < last) add('repre_early', 'New pre-watch after the pause at ' + hh + ' started before the cetaceans left', hh + ' 暫停施工的重新預觀測，開始時間早於鯨豚離開時間');
+    if (!p.pre_start || !p.pre_end) add('repre_missing', 'Resumed after the pause at ' + hh + ' without a new pre-watch', hh + ' 暫停施工後未重新預觀測即回復施工', p.id);
+    else if (tms_(p.pre_start) < last) add('repre_early', 'New pre-watch after the pause at ' + hh + ' started before the cetaceans left', hh + ' 暫停施工的重新預觀測，開始時間早於鯨豚離開時間', p.id);
     else if (mins_(p.pre_start, p.pre_end) < preMin) add('repre_short', 'New pre-watch after the pause at ' + hh + ' only ' + mins_(p.pre_start, p.pre_end) + ' min (< ' + preMin + ')',
-      hh + ' 暫停施工的重新預觀測僅 ' + mins_(p.pre_start, p.pre_end) + ' 分鐘（未滿 ' + preMin + ' 分）');
-    else if (tms_(p.pre_end) > end) add('repre_order', 'Work resumed before the new pre-watch ended (pause at ' + hh + ')', hh + ' 暫停施工在重新預觀測結束前就回復施工');
+      hh + ' 暫停施工的重新預觀測僅 ' + mins_(p.pre_start, p.pre_end) + ' 分鐘（未滿 ' + preMin + ' 分）', p.id);
+    else if (tms_(p.pre_end) > end) add('repre_order', 'Work resumed before the new pre-watch ended (pause at ' + hh + ')', hh + ' 暫停施工在重新預觀測結束前就回復施工', p.id);
   });
   ss.forEach(s => {
     if (!inZone(s)) return;
@@ -719,12 +720,14 @@ function saveShift_(u, p) {
   return s;
 }
 function setShiftStatus_(u, id, status) {
-  return withLock_(() => {
+  const rec = withLock_(() => {
     const s = shiftEditable_(u, id);
     const patch = { status: status, updated_by: u.username, updated_at: nowIso_() };
     if (status === 'closed') { patch.closed_by = u.username; patch.closed_at = nowIso_(); }
     return Repo.update('Shifts', s.id, patch);
   });
+  syncAutoTrack_(u, shiftVesselIds_(id));
+  return rec;
 }
 // ============ 清空資料（驗證碼寄到固定信箱；帳號、規則設定、上傳項目、操作紀錄一律保留） ============
 const RESET_EMAIL = 'paul.tong@nmdc-group.com';
@@ -745,7 +748,7 @@ function resetRequest_(u, p) {
     MailApp.sendEmail({ to: RESET_EMAIL, name: 'NMDC MMO', subject: '[MMO] Data reset verification code｜清空資料驗證碼：' + code,
       body: '有人申請清空 NMDC MMO 鯨豚觀察系統的資料，請把驗證碼輸入系統以確認。\n\n驗證碼 Code：' + code + '\n申請人 Requested by：' + (u.name || u.username) + ' (' + u.username + ')\n將刪除 Data to delete：' + groups.join(', ') +
         '\n有效時間 Valid for：10 分鐘 (10 minutes)\n\n若非本人申請，請忽略此信，資料不會被刪除。 If you did not request this, ignore this email.' });
-  } catch (e) { fail_('Could not send email: ' + e.message + ' — run setup() once in the Apps Script editor to authorise sending mail'); }
+  } catch (e) { PropertiesService.getScriptProperties().deleteProperty('reset_pending'); fail_('Could not send email: ' + e.message + ' — run setup() once in the Apps Script editor to authorise sending mail'); }
   return { to: RESET_EMAIL.replace(/^(.).*(@.*)$/, '$1***$2'), groups: groups };
 }
 function resetConfirm_(u, p) {
@@ -793,7 +796,42 @@ const CREW_FIELDS = ['crew'];
 const PAUSE_FIELDS = ['start','end','reason','sighting_id','monitoring','restart','remark','pre_start','pre_end'];
 const SV_FIELDS = ['pre_start','pre_end','work_start','full_start','work_end','lat','lon','pos_time','pos_source','weather','sea_state','remark'];
 const SV_TIME_FIELDS = { pre_start: 1, pre_end: 1, work_start: 1, full_start: 1, work_end: 1, pos_time: 1 };
+// 一個批次＝預觀測開始到施工船宣布停工（實際觀測結束）：這段期間 MMO 船與施工船自動記錄軌跡，暫停施工不中斷
+const AUTO_TRACK = '班次自動記錄';
+function activeSv_(sv) { return !!sv.pre_start && !sv.work_end; }
+/** 依目前進行中的批次，開始或停止指定船舶的軌跡；手動開始的軌跡不會被自動停止。失敗不影響原本的儲存 */
+function syncAutoTrack_(u, ids) {
+  const st = settings_();
+  if (!st.ais_api_url || !st.ais_api_key) return;
+  const open = {};
+  Repo.all('Shifts').forEach(s => { if (s.status !== 'closed') open[s.id] = s; });
+  const needed = {};
+  Repo.all('ShiftVessels').forEach(x => {
+    if (!open[x.shift_id] || !activeSv_(x)) return;
+    needed[x.vessel_id] = 1;
+    if (open[x.shift_id].construction_vessel_id) needed[open[x.shift_id].construction_vessel_id] = 1;
+  });
+  ids.filter((id, i) => id && ids.indexOf(id) === i).forEach(id => {
+    try {
+      const v = Repo.get('Vessels', id);
+      if (!v) return;
+      if (needed[id]) { if (!bool_(v.tracking) && bool_(v.active) && v.mmsi) startTrack_(u, { vessel_id: id, remark: AUTO_TRACK }); return; }
+      const t = bool_(v.tracking) && v.track_id && Repo.get('Tracks', v.track_id);
+      if (t && t.remark === AUTO_TRACK) stopTrack_(u, { vessel_id: id });
+    } catch (e) { console.warn('auto track ' + id + ': ' + e.message); }
+  });
+}
+function shiftVesselIds_(shiftId) {
+  const s = Repo.get('Shifts', shiftId);
+  return (s ? [s.construction_vessel_id] : []).concat(Repo.all('ShiftVessels').filter(x => x.shift_id === shiftId).map(x => x.vessel_id));
+}
 function saveShiftVessel_(u, p) {
+  const before = Repo.get('ShiftVessels', p.id);
+  const rec = saveShiftVesselRow_(u, p);
+  if (before && activeSv_(before) !== activeSv_(rec)) syncAutoTrack_(u, shiftVesselIds_(rec.shift_id));
+  return rec;
+}
+function saveShiftVesselRow_(u, p) {
   return withLock_(() => {
     const sv = Repo.get('ShiftVessels', p.id);
     if (!sv) fail_('Record not found', 'NOT_FOUND');

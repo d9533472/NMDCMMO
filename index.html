@@ -1677,6 +1677,19 @@ function nextAction(sv, ck) {
     default: return null;
   }
 }
+function preFillModal(svId, id) {
+  const p = S.pauses.find(x => x.id === id);
+  const st = pauseState(p), left = st.zs.map(x => x.left_time || x.time).sort().pop();
+  openModal(L('Fill in pre-watch times', '補填預觀測時間'), `<div class="alert blue" style="margin-bottom:12px;font-size:12px">
+      ${L('Paused ', '暫停施工 ')}${fmtT(p.start, true)} → ${fmtT(p.end, true)}${left ? L(' · cetaceans left ', '・鯨豚離開 ') + fmtT(left, true) : ''}<br>
+      ${L('The pre-watch must last at least ' + settingsNum('pre_watch_min', 30) + ' min and end before work resumed' + (left ? ', and start after the cetaceans left.' : '.'), '預觀測須滿 ' + settingsNum('pre_watch_min', 30) + ' 分鐘，並在回復施工前結束' + (left ? '，開始時間要在鯨豚離開之後。' : '。'))}</div>
+    <div class="form-grid"><div class="fg"><label>${L('Pre-watch start', '預觀測開始')}</label><input id="pfS" type="datetime-local" value="${esc(p.pre_start || '')}"></div>
+    <div class="fg"><label>${L('Pre-watch end', '預觀測結束')}</label><input id="pfE" type="datetime-local" value="${esc(p.pre_end || '')}"></div></div>`, {
+    onSave: async (bg, btn) => {
+      if (!val(bg, 'pfS') || !val(bg, 'pfE')) { toast(L('Enter both times', '請填寫開始與結束時間'), 'error'); return false; }
+      await mut('pause.save', { id, pre_start: val(bg, 'pfS'), pre_end: val(bg, 'pfE') }, L('Saved', '已儲存'), btn);
+    } });
+}
 function pausePreTag(p) {
   const st = pauseState(p);
   if (!st.need && !p.pre_start) return '';
@@ -1712,12 +1725,12 @@ function svPanel(s, sv, ed) {
   const wx = json(sv.weather, null);
   const site = sites().find(x => x.name === s.site);
   return `
-  ${ck.warnings.length ? `<div class="alert red"><b>⚠ ${L('Guideline checks', '作業指引檢核')}</b><ul>${warnList(ck).map(w => `<li>${esc(w)}</li>`).join('')}</ul></div>` : ''}
+  ${ck.warnings.length ? `<div class="alert red"><b>⚠ ${L('Guideline checks', '作業指引檢核')}</b><ul>${ck.warnings.map(w => `<li>${esc(L(w.en, w.zh))}${ed && w.pause_id ? ` <button class="btn btn-sm w" style="margin-left:6px" onclick="preFillModal('${sv.id}','${w.pause_id}')">✏️ ${L('Fill in pre-watch times', '補填預觀測時間')}</button>` : ''}</li>`).join('')}</ul></div>` : ''}
   <div class="section">
     ${ed && na ? `<div class="next-box"><button class="btn btn-lg ${na.cls} w" onclick="doNext('${sv.id}','${na.k}')">${na.t}</button>
       <div><div class="timer" id="timer" data-k="${na.k}"></div><div class="small muted" id="timerHint"></div></div>
       ${ck.status === 'work' || ck.status === 'paused' || ck.status === 'preDone' || ck.status === 'pre' ? `<button class="btn w" style="margin-left:auto" onclick="sightingModal('${sv.id}')">🐬 ${L('Record sighting', '登錄目擊')}</button>` : ''}
-      ${ck.status === 'work' || ck.status === 'paused' ? `<button class="btn w" onclick="doNext('${sv.id}','work_end')">■ ${L('End observation', '結束實際觀測')}</button>` : ''}</div>` :
+      ${ck.status === 'work' || ck.status === 'paused' ? `<button class="btn w" onclick="doNext('${sv.id}','work_end')">■ ${L('End observation (work stopped)', '結束實際觀測（施工船宣布停工）')}</button>` : ''}</div>` :
       `<div class="next-box"><div><div class="timer" id="timer" data-k="${na.k}"></div><div class="small muted" id="timerHint"></div></div></div>`}
     <div class="section-header"><h3>⏱ ${L('Operation times', '作業時間')}</h3>
       <span class="small muted">${L('Pre-watch', '預觀測')} ${isNaN(pre) ? '—' : `<b style="color:${pre < preMin ? 'var(--danger)' : 'var(--green-dark)'}">${pre} min</b>`} / ${preMin} · ${L('Observation', '實際觀測')} <b>${fmtDur(work)}</b></span></div>
