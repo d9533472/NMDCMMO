@@ -573,7 +573,7 @@ function buildState_(rev) {
     sheetUrl: 'https://docs.google.com/spreadsheets/d/' + PropertiesService.getScriptProperties().getProperty('ss_id'),
     rootUrl: 'https://drive.google.com/drive/folders/' + ROOT_FOLDER_ID
   };
-  out.tracks = Repo.all('Tracks');
+  out.tracks = tracksWithPoints_();
   out.positions = recentPositions_(24);
   return out;
 }
@@ -1042,6 +1042,12 @@ function posSheet_() {
   const sh = Repo.sheet(POS_SHEET);
   if (sh.getLastRow() === 0) { sh.getRange(1, 1, 1, POS_HEAD.length).setValues([POS_HEAD]).setFontWeight('bold'); sh.setFrozenRows(1); }
   return sh;
+}
+/** 每段軌跡實際記到幾筆（只讀 Positions 的 track_id 一欄） */
+function tracksWithPoints_() {
+  const sh = posSheet_(), last = sh.getLastRow(), n = {};
+  if (last > 1) sh.getRange(2, POS_HEAD.indexOf('track_id') + 1, last - 1, 1).getValues().forEach(r => { if (r[0]) n[r[0]] = (n[r[0]] || 0) + 1; });
+  return Repo.all('Tracks').map(t => Object.assign({}, t, { points: n[t.id] || 0 }));
 }
 function posRows_(sh, first, n) {
   if (n <= 0) return [];

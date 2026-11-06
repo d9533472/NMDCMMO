@@ -2310,10 +2310,10 @@ function renderTracks() {
       </div></div></div>
     <div id="tqResult"></div>
     <div class="section"><div class="section-header"><h3>⏺ ${L('Recorded track sessions', '軌跡記錄紀錄')}</h3><span class="small muted">${L('Click a row to select that period', '點一列即選取該時段')}</span></div>
-      ${sessions.length ? `<div class="table-wrap"><table class="tbl"><tr><th>${L('Vessel', '船舶')}</th><th>${L('Start', '開始')}</th><th>${L('End', '結束')}</th><th>${L('Duration', '時長')}</th><th>${L('Interval', '間隔')}</th><th>${L('Last update', '最近一次更新')}</th><th>${L('By', '操作者')}</th></tr>
+      ${sessions.length ? `<div class="table-wrap"><table class="tbl"><tr><th>${L('Vessel', '船舶')}</th><th>${L('Start', '開始')}</th><th>${L('End', '結束')}</th><th>${L('Duration', '時長')}</th><th>${L('Points', '筆數')}</th><th>${L('Interval', '間隔')}</th><th>${L('Last update', '最近一次更新')}</th><th>${L('By', '操作者')}</th></tr>
         ${sessions.map(t => `<tr class="click" onclick="tqSession('${t.id}')"><td><b>${esc(t.vessel_name)}</b></td><td class="mono">${fmtT(t.start, true)}</td>
           <td class="mono">${t.end ? fmtT(t.end, true) : `<span class="rec"></span>${L('Recording', '記錄中')}`}</td><td>${fmtDur(mins(t.start, t.end || nowLocal()))}</td>
-          <td>${esc(t.interval_min)} min</td><td class="mono">${(() => { const v = S.vessels.find(x => x.id === t.vessel_id); return !t.end && v && v.last_fetch ? fmtT(v.last_fetch, true) : (t.end ? '—' : '—'); })()}</td><td class="small">${esc(t.started_by)}${t.stopped_by && t.stopped_by !== t.started_by ? ' / ' + esc(t.stopped_by) : ''}</td></tr>`).join('')}</table></div>`
+          <td>${t.points === undefined ? '—' : esc(t.points) + L(' pts', ' 筆')}</td><td>${esc(t.interval_min)} min</td><td class="mono">${(() => { const v = S.vessels.find(x => x.id === t.vessel_id); return !t.end && v && v.last_fetch ? fmtT(v.last_fetch, true) : (t.end ? '—' : '—'); })()}</td><td class="small">${esc(t.started_by)}${t.stopped_by && t.stopped_by !== t.started_by ? ' / ' + esc(t.stopped_by) : ''}</td></tr>`).join('')}</table></div>`
         : `<div class="empty">${L('No track sessions yet — start one from the Dashboard.', '還沒有軌跡記錄，請在儀表板按「開始記錄軌跡」。')}</div>`}</div>`;
   if (TQ.data) tqRender();
 }
