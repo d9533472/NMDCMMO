@@ -973,7 +973,7 @@ function uploadFile_(u, p) {
     return slot ? childFolder_(childFolder_(base, '照片'), slotFolder_(slot)) : childFolder_(base, '紙本紀錄');
   });
   const orig = safeName_(file.name || 'file');
-  const name = safeName_(shift.date + '_' + sv.vessel_name + '_' + item.name_zh) + '_' + orig;
+  const name = safeName_(shift.date + (slot ? '' : '_批次' + shift.shift_no) + '_' + sv.vessel_name + '_' + item.name_zh) + '_' + orig;
   const f = folder.createFile(Utilities.newBlob(bytes, str_(file.mime) || 'application/octet-stream', name));
   const thumb = str_(p.thumb);
   const rec = { id: genId_(), shift_id: shift.id, sv_id: sv.id, item_id: item.id, item_name: item.name_zh, kind: item.kind, drive_id: f.getId(),
