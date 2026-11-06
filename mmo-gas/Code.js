@@ -973,7 +973,10 @@ function uploadFile_(u, p) {
     return slot ? childFolder_(childFolder_(base, '照片'), slotFolder_(slot)) : childFolder_(base, '紙本紀錄');
   });
   const orig = safeName_(file.name || 'file');
-  const name = safeName_(shift.date + (slot ? '' : '_批次' + shift.shift_no) + '_' + sv.vessel_name + '_' + item.name_zh) + '_' + orig;
+  // Drive 檔名不帶原檔名（原檔名只存在 Files.name 給系統顯示）；同一項第二份起加序號
+  const ext = (orig.match(/\.[A-Za-z0-9]{1,8}$/) || [''])[0];
+  const seq = Repo.all('Files').filter(x => x.sv_id === sv.id && x.item_id === item.id && str_(x.slot) === slot).length;
+  const name = safeName_(shift.date + (slot ? '' : '_批次' + shift.shift_no) + '_' + sv.vessel_name + '_' + item.name_zh) + (seq ? '_' + (seq + 1) : '') + ext;
   const f = folder.createFile(Utilities.newBlob(bytes, str_(file.mime) || 'application/octet-stream', name));
   const thumb = str_(p.thumb);
   const rec = { id: genId_(), shift_id: shift.id, sv_id: sv.id, item_id: item.id, item_name: item.name_zh, kind: item.kind, drive_id: f.getId(),
