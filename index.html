@@ -2264,7 +2264,7 @@ function exportSightings() {
 }
 
 // ==================== 船舶軌跡：選時段 → 地圖預覽 → 匯出 CSV／KML／GPX ====================
-const TQ = { ids: [], from: '', to: '', data: null, map: null };
+const TQ = { ids: [], from: '', to: '', data: null, map: null, batch: '' };
 function tmsS(t) { const x = tms(t); const sec = Number(String(t).slice(17, 19)) || 0; return isNaN(x) ? NaN : x + sec * 1000; }
 function nm(a, b) {
   const R = 3440.065, rad = Math.PI / 180, dLa = (b[0] - a[0]) * rad, dLo = (b[1] - a[1]) * rad;
@@ -2307,13 +2307,17 @@ function renderTracks() {
   if (!TQ.ids.length) TQ.ids = vs.filter(v => bool(v.active)).map(v => v.id);
   if (!TQ.from) { TQ.to = nowLocal(); TQ.from = new Date(tms(TQ.to) + 8 * 3600e3 - 24 * 3600e3).toISOString().slice(0, 16); }
   const sessions = S.tracks.slice().sort((a, b) => b.start.localeCompare(a.start)).slice(0, 30);
+  const batches = S.shifts.filter(x => svsOf(x.id).some(sv => sv.pre_start))
+    .sort((a, b) => (b.date + b.shift_no).localeCompare(a.date + a.shift_no, undefined, { numeric: true }));
   $('content').innerHTML = `
     <div class="section"><div class="section-header"><h3>🔎 ${L('Select vessels and period', '選擇船舶與時段')}</h3></div><div class="section-body">
+      <div class="toolbar" style="margin-bottom:12px"><label class="small muted">${L('Batch', '批次')}</label>
+        <select id="tqBatch" style="width:auto;max-width:100%" onchange="tqBatch(this.value)">${opts(batches.map(x => ({ v: x.id, t: shiftLabel(x) + (x.construction_vessel ? ' · ' + x.construction_vessel : '') })), TQ.batch, L('— Select a batch —', '— 選擇批次 —'))}</select></div>
       <div class="chk-list" style="margin-bottom:12px">${vs.map(v => `<label class="chk"><input type="checkbox" class="tqV" value="${v.id}" ${TQ.ids.indexOf(v.id) >= 0 ? 'checked' : ''}>
         <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${vColor(v.id)}"></span>${esc(v.name)}</label>`).join('') || `<span class="muted small">${L('No vessels with MMSI', '沒有填 MMSI 的船')}</span>`}</div>
       <div class="toolbar">
-        <label class="small muted">${L('From', '從')}</label><input type="datetime-local" id="tqFrom" style="width:auto" value="${esc(TQ.from)}">
-        <label class="small muted">${L('to', '到')}</label><input type="datetime-local" id="tqTo" style="width:auto" value="${esc(TQ.to)}">
+        <label class="small muted">${L('From', '從')}</label><input type="datetime-local" id="tqFrom" style="width:auto" value="${esc(TQ.from)}" onchange="tqNoBatch()">
+        <label class="small muted">${L('to', '到')}</label><input type="datetime-local" id="tqTo" style="width:auto" value="${esc(TQ.to)}" onchange="tqNoBatch()">
         <button class="btn btn-sm" onclick="tqPreset(24)">${L('Last 24 h', '最近 24 小時')}</button>
         <button class="btn btn-sm" onclick="tqPreset(0)">${L('Today', '今天')}</button>
         <button class="btn btn-sm" onclick="tqPreset(-1)">${L('Yesterday', '昨天')}</button>
@@ -2332,7 +2336,19 @@ function tqRead() {
   TQ.ids = Array.from(document.querySelectorAll('.tqV:checked')).map(x => x.value);
   TQ.from = $('tqFrom').value; TQ.to = $('tqTo').value;
 }
+// 選批次：帶入該批次的 MMO 船＋施工船，時段＝最早預觀測開始到最晚實際觀測結束（還沒結束算到現在）
+function tqBatch(id) {
+  TQ.batch = id;
+  if (!id) return;
+  const s = shiftOf(id), svs = svsOf(id).filter(x => x.pre_start);
+  TQ.ids = Array.from(new Set(svs.map(x => x.vessel_id).concat(s.construction_vessel_id || []))).filter(v => S.vessels.some(x => x.id === v && x.mmsi));
+  TQ.from = svs.map(x => x.pre_start).sort()[0].slice(0, 16);
+  TQ.to = (svs.every(x => x.work_end) ? svs.map(x => x.work_end).sort().pop() : nowLocal()).slice(0, 16);
+  TQ.data = null; renderTracks(); tqLoad();
+}
+function tqNoBatch() { TQ.batch = ''; if ($('tqBatch')) $('tqBatch').value = ''; }
 function tqPreset(h) {
+  tqNoBatch();
   const now = nowLocal();
   if (h > 0) { TQ.to = now; TQ.from = new Date(tms(now) + 8 * 3600e3 - h * 3600e3).toISOString().slice(0, 16); }
   else { const d = new Date(tms(now.slice(0, 10) + 'T00:00') + 8 * 3600e3 + h * 864e5).toISOString().slice(0, 10); TQ.from = d + 'T00:00'; TQ.to = d + 'T23:59'; }
@@ -2340,7 +2356,7 @@ function tqPreset(h) {
 }
 function tqSession(id) {
   const t = S.tracks.find(x => x.id === id);
-  TQ.ids = [t.vessel_id]; TQ.from = t.start.slice(0, 16); TQ.to = (t.end || nowLocal()).slice(0, 16);
+  TQ.batch = ''; TQ.ids = [t.vessel_id]; TQ.from = t.start.slice(0, 16); TQ.to = (t.end || nowLocal()).slice(0, 16);
   TQ.data = null; renderTracks(); tqLoad();
 }
 async function tqLoad(btn) {
