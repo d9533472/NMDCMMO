@@ -2121,10 +2121,13 @@ function uploadGrid(sv, ed) {
   const grid = html => `<div class="items" style="margin-bottom:16px">${html}</div>`;
   const docs = list.filter(i => i.kind !== 'photo'), photos = list.filter(i => i.kind === 'photo'), slots = svSlots(sv);
   const trk = S.files.filter(f => f.sv_id === sv.id && f.kind === 'track');
+  const noSlot = S.files.filter(f => f.sv_id === sv.id && f.kind === 'photo' && !f.slot);   // v1.4 之前上傳、沒有時段的照片
   return (docs.length ? head('📄', L('Paper records (one set per vessel)', '紙本紀錄（每艘 MMO 船一份）')) + grid(docs.map(i => card(i)).join('')) : '') +
     (photos.length ? head('📷', L('Photos (one set per 12-hour period)', '照片（每 12 小時時段一組）')) +
       (slots.length ? slots.map(k => `<div class="small" style="margin:0 0 8px"><b>${slotLabel(k)}</b></div>` + grid(photos.map(i => card(i, k)).join('')) ).join('')
         : `<div class="small muted" style="margin-bottom:16px">${L('Periods appear once the pre-watch starts.', '預觀測開始後才會出現時段。')}</div>`) : '') +
+    (noSlot.length ? `<div class="alert blue small" style="margin-bottom:16px">${L('Uploaded before 12-hour periods existed — these do not count; upload them again under a period.', '以下照片在分時段之前上傳，不計入時段，請重新傳到對應時段：')}
+      <div class="files" style="margin-top:6px">${noSlot.map(f => `<div class="file">🖼<a onclick="viewFile('${f.id}')" title="${esc(f.name)}">${esc(f.name)}</a>${ed ? `<button class="btn btn-sm w" style="padding:1px 6px" onclick="delFile('${f.id}')">×</button>` : ''}</div>`).join('')}</div></div>` : '') +
     head('🗺', L('Track image', '軌跡圖')) +
     `<div class="files" style="margin-bottom:8px">${trk.map(f => `<div class="file">🖼<a onclick="viewFile('${f.id}')" title="${esc(f.name)}">${esc(f.name)}</a><span class="muted">${fmtSize(f.size)}</span></div>`).join('')}</div>
     ${!trk.length && !sv.work_end ? `<div class="small muted">${L('Created automatically when the observation ends.', '結束實際觀測時自動產生。')}</div>` : ''}
