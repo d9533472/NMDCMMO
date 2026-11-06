@@ -111,7 +111,8 @@ function handle_(req) {
     if (user && user.role === 'viewer' && !VIEWER_OK[action]) fail_('Guest account is read-only', 'FORBIDDEN');
     const data = fn(user, payload);
     if (!NO_REV[action]) bumpRev_();
-    if (SUMMARY_ACTIONS.test(action)) { try { rebuildSummary_(); } catch (e) { console.warn('summary: ' + e.message); } }
+    // 重建總表要好幾秒，不拖慢存檔：先記下來，由 positionTick 排程補做
+    if (SUMMARY_ACTIONS.test(action)) PropertiesService.getScriptProperties().setProperty('summary_dirty', '1');
     audit_(action, user, payload, data, true, '');
     const out = { ok: true, data: data === undefined ? null : data };
     // 寫入後順便回傳最新全部資料，前端不用再多打一次 data.load
@@ -141,7 +142,7 @@ const ROUTES = {
   'shift.delete': (u, p) => { requireRole_(u, ['admin']); const ids = shiftVesselIds_(p.id), r = deleteShift_(p.id); syncAutoTrack_(u, ids); return r; },
   'shift.files': (u, p) => ({ files: Repo.all('Files').filter(f => f.shift_id === p.id) }),
   'sv.save': (u, p) => saveShiftVessel_(u, p),
-  'pause.save': (u, p) => saveChild_(u, 'Pauses', p, PAUSE_FIELDS, ['start']),
+  'pause.save': (u, p) => savePause_(u, p),
   'pause.delete': (u, p) => deleteChild_(u, 'Pauses', p.id),
   'sighting.save': (u, p) => saveSighting_(u, p),
   'sighting.delete': (u, p) => deleteChild_(u, 'Sightings', p.id),
@@ -873,6 +874,14 @@ function saveChild_(u, sheet, p, fields, required) {
     return rec;
   });
 }
+/** p.sighting：同一請求先存目擊再連到這筆暫停，前端不用打兩次 */
+function savePause_(u, p) {
+  const q = Object.assign({}, p);
+  delete q.sighting;
+  if (!q.id && !q.start) fail_('Missing field: start');
+  if (p.sighting) q.sighting_id = saveSighting_(u, Object.assign({}, p.sighting, { auto_pause: false })).id;
+  return saveChild_(u, 'Pauses', q, PAUSE_FIELDS, ['start']);
+}
 function saveSighting_(u, p) {
   const st = settings_();
   if (p.min_distance_m !== undefined && str_(p.min_distance_m) !== '' && !isFinite(Number(p.min_distance_m))) fail_('Distance must be a number');
@@ -1051,6 +1060,14 @@ function positionTick() {
     PropertiesService.getScriptProperties().setProperty('pos_tick', nowIso_());
     if (r.done.length) bumpRev_();
   } catch (e) { console.warn('positionTick: ' + e.message); }
+  flushSummary_();
+}
+function flushSummary_() {
+  const props = PropertiesService.getScriptProperties();
+  if (props.getProperty('summary_dirty') !== '1') return;
+  props.deleteProperty('summary_dirty');
+  try { rebuildSummary_(); }
+  catch (e) { props.setProperty('summary_dirty', '1'); console.warn('summary: ' + e.message); }
 }
 function startTrack_(u, p) {
   const v = Repo.get('Vessels', p.vessel_id);

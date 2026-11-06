@@ -1931,7 +1931,6 @@ function pauseModal(svId, id, resume) {
   const linked = p && p.sighting_id ? ss.find(x => x.id === p.sighting_id) : null;
   // 舊資料補連結：只列還沒連到暫停施工的目擊，不選就直接新增一筆
   const free = p && !linked ? ss.filter(x => !S.pauses.some(q => q.sighting_id === x.id)) : [];
-  let newSight = '';
   const body = `<div class="form-grid">
     <div class="fg"><label>${L('Pause time', '暫停施工時間')} *</label><input id="pStart" type="datetime-local" value="${esc(p ? p.start : nowLocal())}"></div>
     <div class="fg"><label>${L('Resume time', '回復施工時間')}</label><input id="pEnd" type="datetime-local" value="${esc(p ? (p.end || (resume ? nowLocal() : '')) : '')}"></div>
@@ -1949,16 +1948,14 @@ function pauseModal(svId, id, resume) {
     foot: p ? `<button class="btn btn-danger w" style="margin-right:auto" onclick="delRec('pause.delete','${p.id}',this)">🗑 ${L('Delete', '刪除')}</button>` : '',
     onSave: async (bg, btn) => {
       const sight = isSightReason(val(bg, 'pReason')), picked = sight ? val(bg, 'pSight') : '';
-      let sightId = !sight ? '' : (picked || (linked ? linked.id : newSight));
+      const rec = { id: p ? p.id : '', sv_id: svId, start: val(bg, 'pStart'), end: val(bg, 'pEnd'), reason: val(bg, 'pReason'), sighting_id: !sight ? '' : (picked || (linked ? linked.id : '')), pre_start: val(bg, 'pPreS'), pre_end: val(bg, 'pPreE'), remark: val(bg, 'pRemark') };
       if (sight && !picked) {
         const v = sightVals(bg);
         if (!v) return false;
-        if (!linked || v.time !== linked.time || v.species !== linked.species || v.count !== String(linked.count)) {
-          const d = await saveSightRec(Object.assign({ id: sightId, sv_id: svId, in_alert_zone: true }, v, linked ? {} : { action: SIGHT_ACT, detection: /PAM/i.test(val(bg, 'pReason')) ? 'PAM 被動聲學 | PAM' : '' }));
-          sightId = newSight = d.id;   // 暫停存檔失敗重按時更新同一筆，不重複新增
-        }
+        if (!linked || v.time !== linked.time || v.species !== linked.species || v.count !== String(linked.count))
+          rec.sighting = Object.assign({ id: rec.sighting_id, sv_id: svId, in_alert_zone: true }, v, linked ? {} : { action: SIGHT_ACT, detection: /PAM/i.test(rec.reason) ? 'PAM 被動聲學 | PAM' : '' });
       }
-      await mut('pause.save', { id: p ? p.id : '', sv_id: svId, start: val(bg, 'pStart'), end: val(bg, 'pEnd'), reason: val(bg, 'pReason'), sighting_id: sightId, pre_start: val(bg, 'pPreS'), pre_end: val(bg, 'pPreE'), remark: val(bg, 'pRemark') }, L('Saved', '已儲存'), btn);
+      await mut('pause.save', rec, L('Saved', '已儲存'), btn);
     } });
   const q = s => bg.querySelector(s);
   const sync = () => {
@@ -1993,9 +1990,6 @@ function sightVals(bg) {
   toast(L('Enter the sighting time, species and count', '請填寫目擊時間、鯨豚種類與數量'), 'error');
   return null;
 }
-async function saveSightRec(rec) {
-  try { return await api('sighting.save', rec); } catch (e) { toast(e.message, 'error'); throw e; }
-}
 function sightingModal(svId, id) {
   const x = id ? S.sightings.find(z => z.id === id) : null;
   const sv = S.svs.find(z => z.id === svId);
@@ -2018,11 +2012,7 @@ function sightingModal(svId, id) {
         if (!zone) rec.min_distance_m = '';
       } else if (zone && (stop || open)) rec.action = SIGHT_ACT;
       // 暫停施工中登錄的目擊 → 連到這次暫停
-      if (zone && link) {
-        const d = await saveSightRec(rec);
-        await mut('pause.save', { id: open.id, sighting_id: d.id }, L('Sighting saved', '目擊紀錄已儲存'), btn);
-        return;
-      }
+      if (zone && link) return mut('pause.save', { id: open.id, sighting: rec }, L('Sighting saved', '目擊紀錄已儲存'), btn);
       rec.auto_pause = zone && stop;
       await mut('sighting.save', rec, rec.auto_pause ? L('Sighting saved, work paused', '目擊紀錄已儲存，已暫停施工') : L('Sighting saved', '目擊紀錄已儲存'), btn);
     } });
