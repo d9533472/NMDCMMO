@@ -137,6 +137,7 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
 .tbl tr.click:hover td{background:#f7f9fb}
 .tbl tr:last-child td{border-bottom:0}
 .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.env-in{min-width:84px;padding:5px 6px;font-size:13px}
 .alert{border-radius:var(--radius);padding:10px 14px;font-size:13px;margin-bottom:12px;line-height:1.55}
 .alert.red{background:var(--danger-bg);color:var(--danger);border:1px solid #f1c3c3}
 .alert.amber{background:var(--warn-bg);color:var(--warn);border:1px solid #f0d48a}
@@ -549,12 +550,16 @@ const ERR_ZH = {
   'Tick at least one item to clear': '請至少勾選一項要清空的資料', 'No reset request — send a new verification code': '沒有待確認的清空申請，請重新寄送驗證碼',
   'This code was requested by another administrator': '此驗證碼是由其他管理員申請的', 'Verification code expired — send a new one': '驗證碼已過期，請重新寄送',
   'Too many wrong codes — send a new one': '驗證碼錯誤次數過多，請重新寄送',
-  'Could not find a position in the API response': 'API 回應中沒有船位資料', 'You cannot demote or disable your own account': '不能降級或停用自己的帳號'
+  'Could not find a position in the API response': 'API 回應中沒有船位資料',
+  'This vessel has environmental records — set it inactive instead': '這艘船已有環保紀錄，請改為停用',
+  'Enter the weight of at least one waste category': '請至少填一個廢棄物類別的重量', 'Time is required': '請填時間',
+  'Incident type is required': '請選事件類型', 'Vessel not found': '找不到船舶', 'You cannot demote or disable your own account': '不能降級或停用自己的帳號'
 };
 function trErr(m) {
   if (LANG !== 'zh') return m;
   if (ERR_ZH[m]) return ERR_ZH[m];
   let r = m.match(/^Batch number (.+) already exists$/); if (r) return '批次編號 ' + r[1] + ' 已存在';
+  r = m.match(/^Invalid number: (.+)$/); if (r) return '數字格式錯誤：' + (ENV_LABEL[r[1]] ? ENV_LABEL[r[1]][1] : r[1]);
   r = m.match(/^Wrong verification code \((\d+) tries left\)$/); if (r) return '驗證碼錯誤（還可再試 ' + r[1] + ' 次）';
   r = m.match(/^(.+) already has records in this batch and cannot be removed$/); if (r) return r[1] + ' 在此批次已有紀錄，不能移除';
   return m;
@@ -733,6 +738,7 @@ const PAGES = [
   { id: 'sightings', ico: '🐬', en: 'Sightings', zh: '目擊紀錄' },
   { id: 'summary', ico: '📑', en: 'Summary sheet', zh: '總表' },
   { id: 'tracks', ico: '🗺', en: 'Vessel tracks', zh: '船舶軌跡' },
+  { id: 'env', ico: '🌱', en: 'Environment', zh: '環保統計', admin: true },
   { id: 'admin', ico: '⚙️', en: 'Back office', zh: '後台管理', admin: true }
 ];
 function enterApp() {
@@ -746,6 +752,7 @@ function enterApp() {
 }
 function go(page, shiftId, svId) {
   PAGE = page;
+  ENV.dirty = false;
   if (shiftId) { CUR.shift = shiftId; CUR.sv = svId || ''; }
   history.replaceState(null, '', page === 'shift' ? '#shift=' + shiftId : location.pathname + location.search);
   document.body.classList.remove('nav-open');
@@ -765,8 +772,8 @@ function render() {
   const role = { admin: 'Admin', mmo: 'MMO', viewer: L('Guest', '訪客') }[S.user.role];
   $('userChip').innerHTML = `👤 <span class="nm">${esc(S.user.name || S.user.username)}</span><span class="role">${role}</span>`;
   if (!/…|離線|Offline/.test($('liveTxt').textContent)) $('liveTxt').textContent = L('Live', '即時');
-  const P = { tracks: renderTracks, dashboard: renderDashboard, shifts: renderShifts, shift: renderShift, sightings: renderSightings, summary: renderSummary, admin: renderAdmin };
-  if (PAGE === 'admin' && !isAdmin()) PAGE = 'dashboard';
+  const P = { tracks: renderTracks, dashboard: renderDashboard, shifts: renderShifts, shift: renderShift, sightings: renderSightings, summary: renderSummary, admin: renderAdmin, env: renderEnv };
+  if ((PAGE === 'admin' || PAGE === 'env') && !isAdmin()) PAGE = 'dashboard';
   if (PAGE === 'shift' && !shiftOf(CUR.shift)) PAGE = 'shifts';
   (P[PAGE] || renderDashboard)();
 }
@@ -803,7 +810,7 @@ function startPoll() {
     if (!S || !TOKEN || document.hidden) return;
     try {
       const r = await api('data.rev');
-      if (r.rev !== LAST_REV && !$('modals').children.length && !(document.activeElement && /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName))) {
+      if (r.rev !== LAST_REV && !$('modals').children.length && !ENV.dirty &&!(document.activeElement && /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName))) {
         S = await api('data.load'); LAST_REV = S.rev; render();
       }
     } catch (e) {}
@@ -1449,6 +1456,7 @@ function renderDashboard() {
       <div class="stat amber"><div class="v">${monthSight.length}</div><div class="l">${L('Sightings this month', '本月目擊次數')}</div></div>
       <div class="stat ${missing.length ? 'red' : ''}"><div class="v">${missing.length}</div><div class="l">${L('Completed but missing uploads', '已完工但缺件')}</div></div>
     </div>
+    ${envKpiRow()}
     <div class="section-header" style="padding:0 0 10px;border:0"><h3>${L('Active MMO vessels', '作業中 MMO 船')}</h3>
       <button class="btn btn-green w" onclick="shiftModal()">＋ ${L('New batch', '新增批次')}</button></div>
     ${active.length ? `<div class="vgrid">${active.map(card).join('')}</div>` : `<div class="section"><div class="empty">${L('No active batches. Create a batch to start recording.', '目前沒有作業中的批次，請先新增批次。')}</div></div>`}
@@ -2637,6 +2645,354 @@ async function rebuildSheet(btn) {
   btn.disabled = false;
 }
 
+// ==================== 離岸環保統計（只有管理員；資料在 S.env） ====================
+const ENV_LABEL = {
+  fuel_used_l: ['Fuel used (L)', '用油量 (L)'], fuel_bunkered_l: ['Fuel bunkered (L)', '加油量 (L)'], fuel_rob_l: ['Fuel ROB (L)', '油存量 ROB (L)'],
+  water_used_m3: ['Water used (m³)', '用水量 (m³)'], water_bunkered_m3: ['Water bunkered (m³)', '加水量 (m³)'], water_made_m3: ['Water made (m³)', '造水量 (m³)'],
+  pob: ['POB', '在船人數']
+};
+const ENV_DAILY_KEYS = Object.keys(ENV_LABEL);
+const ENV_SEV = { near_miss: ['Near miss', '虛驚', 'blue'], minor: ['Minor', '輕微', 'amber'], major: ['Major', '重大', 'red'] };
+const ENV = { tab: 'overview', month: '', date: '', dirty: false };
+function vesselKinds() { return { mmo: L('MMO vessel', 'MMO 觀察船'), construction: L('Construction vessel', '施工船'), support: L('Support vessel (CTV/SOV…)', '支援船（CTV／SOV…）') }; }
+function envOn(v) { return v.env_report !== 'FALSE'; }
+function envData() { return S.env || { daily: [], waste: [], incidents: [] }; }
+function envFuels() {
+  return lines(S.settings.env_fuels).map(l => { const a = l.split(/[,，]/).map(x => x.trim()); return { name: a[0], density: parseFloat(a[1]), cf: parseFloat(a[2]) }; }).filter(f => f.name);
+}
+function envNum(v) { const n = parseFloat(v); return isFinite(n) ? n : 0; }
+function fmtN(n, dec) { return isFinite(n) ? n.toLocaleString('en-US', { maximumFractionDigits: dec === undefined ? 1 : dec }) : '—'; }
+/** 公升 → t CO₂（依船舶燃料種類；沒設就用清單第一個） */
+function envCo2(v, litres) {
+  const fs = envFuels(), f = fs.find(x => x.name === v.fuel_type) || fs[0];
+  return f && isFinite(f.density) && isFinite(f.cf) ? litres * f.density / 1000 * f.cf : 0;
+}
+function addDays(d, n) { const t = new Date(d + 'T00:00:00Z'); t.setUTCDate(t.getUTCDate() + n); return t.toISOString().slice(0, 10); }
+function monthEnd(m) { return addDays(addDays(m + '-28', 4).slice(0, 7) + '-01', -1); }
+/** 某月應填報的日期＝起租日～退租日（或昨天）與該月的交集；沒有起租日不計 */
+function envDueDays(v, month) {
+  if (!envOn(v) || !v.charter_start || (!bool(v.active) && !v.charter_end)) return [];
+  const from = [month + '-01', v.charter_start].sort()[1];
+  const to = [monthEnd(month), v.charter_end || '9999-12-31', addDays(today(), -1)].sort()[0];
+  const out = [];
+  for (let d = from; d <= to; d = addDays(d, 1)) out.push(d);
+  return out;
+}
+/** 當天應出現在每日填報表的船：租期內、或當天已有資料、或還沒設起租日的啟用船 */
+function envVesselsOn(date) {
+  const E = envData();
+  return S.vessels.filter(v => E.daily.some(x => x.vessel_id === v.id && x.date === date) ||
+    (envOn(v) && (v.charter_start ? v.charter_start <= date && (!v.charter_end || date <= v.charter_end) && (bool(v.active) || v.charter_end) : bool(v.active))))
+    .sort((a, b) => (a.kind + (Number(a.sort) || 999) + a.name).localeCompare(b.kind + (Number(b.sort) || 999) + b.name));
+}
+function envWasteItems(w) { return json(w.items, {}); }
+function envSummary(month) {
+  const E = envData();
+  const rows = S.vessels.map(v => {
+    const d = E.daily.filter(x => x.vessel_id === v.id && x.date.slice(0, 7) === month);
+    const due = envDueDays(v, month), have = new Set(d.map(x => x.date));
+    const sum = k => d.reduce((n, x) => n + envNum(x[k]), 0);
+    const pd = d.filter(x => envNum(x.pob) > 0 && x.water_used_m3 !== '');
+    const waste = E.waste.filter(x => x.vessel_id === v.id && x.date.slice(0, 7) === month), byCat = {};
+    waste.forEach(w => { const it = envWasteItems(w); Object.keys(it).forEach(k => { byCat[k] = (byCat[k] || 0) + envNum(it[k]); }); });
+    const fuel = sum('fuel_used_l');
+    return { v, days: d.length, due: due.length, missing: due.filter(x => !have.has(x)), fuel, bunk: sum('fuel_bunkered_l'),
+      water: sum('water_used_m3'), wbunk: sum('water_bunkered_m3'), made: sum('water_made_m3'),
+      pob: d.length ? sum('pob') / d.filter(x => x.pob !== '').length || 0 : 0,
+      perPax: pd.length ? pd.reduce((n, x) => n + envNum(x.water_used_m3), 0) * 1000 / pd.reduce((n, x) => n + envNum(x.pob), 0) : NaN,
+      co2: envCo2(v, fuel), wasteKg: waste.reduce((n, w) => n + envNum(w.total_kg), 0), byCat,
+      inc: E.incidents.filter(x => x.vessel_id === v.id && x.time.slice(0, 7) === month).length,
+      noCharter: envOn(v) && bool(v.active) && !v.charter_start };
+  }).filter(r => r.due || r.days || r.wasteKg || r.inc || r.noCharter);
+  const tot = { fuel: 0, bunk: 0, water: 0, wbunk: 0, made: 0, co2: 0, wasteKg: 0, inc: 0, days: 0, due: 0, missing: 0, byCat: {} };
+  rows.forEach(r => {
+    ['fuel', 'bunk', 'water', 'wbunk', 'made', 'co2', 'wasteKg', 'inc', 'days', 'due'].forEach(k => { tot[k] += r[k]; });
+    tot.missing += r.missing.length;
+    Object.keys(r.byCat).forEach(k => { tot.byCat[k] = (tot.byCat[k] || 0) + r.byCat[k]; });
+  });
+  const E2 = E.daily.filter(x => x.date.slice(0, 7) === month && envNum(x.pob) > 0 && x.water_used_m3 !== '');
+  tot.perPax = E2.length ? E2.reduce((n, x) => n + envNum(x.water_used_m3), 0) * 1000 / E2.reduce((n, x) => n + envNum(x.pob), 0) : NaN;
+  return { rows, tot };
+}
+/** 最近一次非虛驚的環境事件到今天幾天；沒有事件回傳 null */
+function envZeroDays() {
+  const last = envData().incidents.filter(x => x.severity !== 'near_miss').map(x => x.time.slice(0, 10)).sort().pop();
+  return last ? Math.max(0, Math.round((Date.parse(today()) - Date.parse(last)) / 86400000)) : null;
+}
+function envMissingYesterday() {
+  const y = addDays(today(), -1), E = envData();
+  return S.vessels.filter(v => envDueDays(v, y.slice(0, 7)).indexOf(y) >= 0 && !E.daily.some(x => x.vessel_id === v.id && x.date === y));
+}
+/** 儀表板上的環保 KPI 列（管理員） */
+function envKpiRow() {
+  if (!isAdmin() || !S.env) return '';
+  const m = today().slice(0, 7), t = envSummary(m).tot, miss = envMissingYesterday(), z = envZeroDays();
+  const st = (cls, v, l, tab) => `<div class="stat ${cls}" style="cursor:pointer" onclick="ENV.tab='${tab}';ENV.month='${m}';go('env')"><div class="v">${v}</div><div class="l">${l}</div></div>`;
+  return `<div class="section-header" style="padding:0 0 10px;border:0"><h3>🌱 ${L('Environmental KPIs this month', '本月環保 KPI')}</h3>
+      <button class="btn btn-sm" onclick="ENV.tab='overview';go('env')">${L('Details', '詳細')} →</button></div>
+    <div class="stat-grid">
+      ${st('', fmtN(t.fuel, 0), L('Fuel used (L)', '用油量 (L)'), 'overview')}
+      ${st('blue', fmtN(t.water, 1), L('Water used (m³)', '用水量 (m³)'), 'overview')}
+      ${st('amber', fmtN(t.wasteKg, 0), L('Waste (kg)', '廢棄物 (kg)'), 'waste')}
+      ${st('', fmtN(t.co2, 1), L('CO₂ estimate (t)', 'CO₂ 估算 (t)'), 'overview')}
+      ${st(miss.length ? 'red' : 'green', miss.length, L('Vessels not reported yesterday', '昨日未填報船數'), 'daily')}
+      ${st(z === null ? 'green' : (z < 30 ? 'red' : 'green'), z === null ? '—' : z, L('Days without incident', '連續零事件天數'), 'incidents')}
+    </div>`;
+}
+function envMonths() {
+  const E = envData(), set = new Set([today().slice(0, 7)]);
+  E.daily.forEach(x => set.add(x.date.slice(0, 7))); E.waste.forEach(x => set.add(x.date.slice(0, 7))); E.incidents.forEach(x => set.add(x.time.slice(0, 7)));
+  return Array.from(set).sort().reverse();
+}
+const ENV_TABS = [['overview', 'Overview', '總覽'], ['daily', 'Daily entry', '每日填報'], ['waste', 'Waste deliveries', '廢棄物交運'], ['incidents', 'Incidents', '環境事件']];
+async function envTab(t) {
+  if (ENV.dirty && !(await confirmBox(L('Discard unsaved daily entries?', '每日填報還沒儲存，確定離開？'), L('Discard', '放棄'), true))) return;
+  ENV.dirty = false; ENV.tab = t; renderEnv();
+}
+function renderEnv() {
+  setTitle(L('Environmental statistics', '離岸環保統計'));
+  if (!ENV.month) ENV.month = today().slice(0, 7);
+  if (!ENV.date) ENV.date = addDays(today(), -1);
+  if (!S.env) { $('content').innerHTML = `<div class="section"><div class="empty">${L('Reload the page to load environmental data.', '請重新整理頁面以載入環保資料。')}</div></div>`; return; }
+  $('content').innerHTML = `<div class="admin-tabs">${ENV_TABS.map(t => `<div class="${ENV.tab === t[0] ? 'active' : ''}" onclick="envTab('${t[0]}')">${L(t[1], t[2])}</div>`).join('')}</div><div id="envBody"></div>`;
+  ({ overview: envOverview, daily: envDaily, waste: envWaste, incidents: envIncidents }[ENV.tab] || envOverview)();
+}
+function envMonthSel(fn) { return `<select style="width:auto" onchange="ENV.month=this.value;${fn}()">${opts(envMonths(), ENV.month)}</select>`; }
+function envOverview() {
+  const { rows, tot } = envSummary(ENV.month), z = envZeroDays(), kinds = vesselKinds();
+  const cats = Array.from(new Set(lines(S.settings.env_waste_cats).concat(Object.keys(tot.byCat)))).filter(k => tot.byCat[k]);
+  $('envBody').innerHTML = `
+    <div class="toolbar" style="margin-bottom:12px">${envMonthSel('envOverview')}
+      <button class="btn btn-sm" onclick="envExportMonth()">⬇ ${L('Monthly report CSV', '月報 CSV')}</button></div>
+    <div class="stat-grid">
+      <div class="stat"><div class="v">${fmtN(tot.fuel, 0)}</div><div class="l">${L('Fuel used (L)', '用油量 (L)')}</div></div>
+      <div class="stat"><div class="v">${fmtN(tot.co2, 1)}</div><div class="l">${L('CO₂ estimate (t)', 'CO₂ 估算 (t)')}</div></div>
+      <div class="stat blue"><div class="v">${fmtN(tot.water, 1)}</div><div class="l">${L('Water used (m³)', '用水量 (m³)')}</div></div>
+      <div class="stat blue"><div class="v">${fmtN(tot.perPax, 0)}</div><div class="l">${L('Water per person per day (L)', '每人每日用水 (L)')}</div></div>
+      <div class="stat amber"><div class="v">${fmtN(tot.wasteKg, 0)}</div><div class="l">${L('Waste (kg)', '廢棄物 (kg)')}</div></div>
+      <div class="stat ${tot.inc ? 'red' : 'green'}"><div class="v">${tot.inc}</div><div class="l">${L('Incidents this month', '本月環境事件')}</div></div>
+      <div class="stat green"><div class="v">${z === null ? '—' : z}</div><div class="l">${L('Days without incident', '連續零事件天數')}</div></div>
+      <div class="stat ${tot.missing ? 'red' : 'green'}"><div class="v">${tot.days}/${tot.due}</div><div class="l">${L('Days reported / required', '已填 / 應填天數')}</div></div>
+    </div>
+    <div class="section"><div class="section-header"><h3>${L('By vessel', '各船統計')} · ${esc(ENV.month)}</h3></div>
+      ${rows.length ? `<div class="table-wrap"><table class="tbl"><tr><th>${L('Vessel', '船名')}</th><th>${L('Reported', '填報')}</th><th>${L('Fuel (L)', '用油 (L)')}</th><th>${L('Bunkered (L)', '加油 (L)')}</th>
+        <th>${L('Water (m³)', '用水 (m³)')}</th><th>${L('Made (m³)', '造水 (m³)')}</th><th>${L('Avg POB', '平均人數')}</th><th>${L('L/person/day', '每人每日 (L)')}</th><th>CO₂ (t)</th><th>${L('Waste (kg)', '廢棄物 (kg)')}</th><th>${L('Incidents', '事件')}</th></tr>
+        ${rows.map(r => `<tr><td><b>${esc(r.v.name)}</b><div class="small muted">${esc(kinds[r.v.kind] || r.v.kind)}${r.v.fuel_type ? ' · ' + esc(r.v.fuel_type) : ''}</div></td>
+          <td style="white-space:nowrap">${r.noCharter && !r.due ? `<span class="tag amber" title="${L('Set the charter start in Back office › Vessels', '請到後台 › 船舶設定起租日')}">${L('No charter start', '未設起租日')}</span>` :
+            `${r.days}/${r.due} ${r.missing.length ? `<span class="tag red" title="${esc(r.missing.join(', '))}">${L('Missing', '缺')} ${r.missing.length}</span>` : (r.due ? '<span class="tag green">✓</span>' : '')}`}</td>
+          <td class="mono">${fmtN(r.fuel, 0)}</td><td class="mono">${fmtN(r.bunk, 0)}</td><td class="mono">${fmtN(r.water, 1)}</td><td class="mono">${fmtN(r.made, 1)}</td>
+          <td class="mono">${r.pob ? fmtN(r.pob, 1) : '—'}</td><td class="mono">${fmtN(r.perPax, 0)}</td><td class="mono">${fmtN(r.co2, 2)}</td><td class="mono">${fmtN(r.wasteKg, 1)}</td><td>${r.inc ? `<span class="tag red">${r.inc}</span>` : '—'}</td></tr>`).join('')}
+        <tr style="font-weight:700"><td>${L('Total', '合計')}</td><td>${tot.days}/${tot.due}</td><td class="mono">${fmtN(tot.fuel, 0)}</td><td class="mono">${fmtN(tot.bunk, 0)}</td><td class="mono">${fmtN(tot.water, 1)}</td><td class="mono">${fmtN(tot.made, 1)}</td>
+          <td></td><td class="mono">${fmtN(tot.perPax, 0)}</td><td class="mono">${fmtN(tot.co2, 2)}</td><td class="mono">${fmtN(tot.wasteKg, 1)}</td><td>${tot.inc || '—'}</td></tr></table></div>`
+        : `<div class="empty">${L('No vessels to report. Set “Daily environmental report required” and the charter start in Back office › Vessels.', '沒有需填報的船。請到後台 › 船舶勾選「需填每日環保資料」並設定起租日。')}</div>`}</div>
+    <div class="grid-2">
+      <div class="section"><div class="section-header"><h3>🗑 ${L('Waste by category', '廢棄物分類統計')}</h3></div>
+        ${cats.length ? `<div class="table-wrap"><table class="tbl"><tr><th>${L('Category', '類別')}</th><th>kg</th><th>%</th></tr>
+          ${cats.map(k => `<tr><td>${esc(biName(k))}</td><td class="mono">${fmtN(tot.byCat[k], 1)}</td><td class="mono">${fmtN(tot.byCat[k] / tot.wasteKg * 100, 1)}%</td></tr>`).join('')}</table></div>`
+          : `<div class="empty">${L('No waste deliveries this month', '本月沒有廢棄物交運紀錄')}</div>`}</div>
+      <div class="section"><div class="section-header"><h3>📅 ${L('Missing daily reports', '缺填的每日資料')}</h3></div>
+        ${rows.some(r => r.missing.length) ? `<div style="padding:12px 16px;display:flex;flex-direction:column;gap:10px">${rows.filter(r => r.missing.length).map(r => `<div><b>${esc(r.v.name)}</b>
+          <div class="toolbar" style="margin-top:4px">${r.missing.map(d => `<button class="btn btn-sm" onclick="ENV.date='${d}';envTab('daily')">${d.slice(5).replace('-', '/')}</button>`).join('')}</div></div>`).join('')}</div>`
+          : `<div class="empty">✅ ${L('All required days are reported', '應填天數都已填報')}</div>`}</div>
+    </div>`;
+}
+// ---- 每日填報：選日期 → 當天所有需填報的船一次填完 ----
+function envDaily() {
+  const date = ENV.date, E = envData(), vs = envVesselsOn(date), prev = addDays(date, -1);
+  const rec = v => E.daily.find(x => x.vessel_id === v.id && x.date === date) || {};
+  const inp = (v, k, r) => `<td><input class="env-in mono" type="number" step="any" min="0" inputmode="decimal" data-k="${k}" value="${esc(r[k])}" oninput="ENV.dirty=true;envRobCheck(this)"></td>`;
+  $('envBody').innerHTML = `
+    <div class="section"><div class="section-header"><div class="toolbar">
+        <button class="btn btn-sm" onclick="envSetDate('${addDays(date, -1)}')">◀</button>
+        <input type="date" style="width:auto" value="${date}" max="${today()}" onchange="envSetDate(this.value)">
+        <button class="btn btn-sm" onclick="envSetDate('${addDays(date, 1)}')" ${date >= today() ? 'disabled' : ''}>▶</button>
+        <span class="small muted">${L('Leave a row blank to skip it; clearing a saved row deletes it.', '整列留白＝不填；把已存的列清空＝刪除該筆。')}</span></div>
+      <div class="toolbar"><button class="btn btn-sm" onclick="envExportDaily()">⬇ ${L('Month CSV', '當月明細 CSV')}</button>
+        <button class="btn btn-primary btn-sm" onclick="envSaveDaily(this)">💾 ${L('Save', '儲存')}</button></div></div>
+      ${vs.length ? `<div class="table-wrap"><table class="tbl" id="envDaily"><tr><th>${L('Vessel', '船名')}</th>${ENV_DAILY_KEYS.map(k => `<th>${L(ENV_LABEL[k][0], ENV_LABEL[k][1])}</th>`).join('')}<th>${L('Remark', '備註')}</th></tr>
+        ${vs.map(v => { const r = rec(v), p = E.daily.find(x => x.vessel_id === v.id && x.date === prev);
+          return `<tr data-vid="${v.id}" data-prev-rob="${esc(p ? p.fuel_rob_l : '')}"><td style="white-space:nowrap"><b>${esc(v.name)}</b>${r.id ? ' <span class="tag green">✓</span>' : ''}
+            <div class="small muted env-warn">${p && p.fuel_rob_l !== '' ? L('Prev. ROB ', '前日 ROB ') + fmtN(envNum(p.fuel_rob_l), 0) + ' L' : ''}</div></td>
+            ${ENV_DAILY_KEYS.map(k => inp(v, k, r)).join('')}<td><input class="env-in" style="min-width:140px" data-k="remark" value="${esc(r.remark)}" oninput="ENV.dirty=true"></td></tr>`; }).join('')}</table></div>`
+        : `<div class="empty">${L('No vessels need a report on this date. Set charter dates and “Daily environmental report required” in Back office › Vessels.', '這天沒有需填報的船。請到後台 › 船舶設定租期並勾選「需填每日環保資料」。')}</div>`}</div>
+    <div class="small muted">${L('ROB check: previous ROB + bunkered − used should equal today’s ROB (flagged when off by more than 2% or 50 L).', 'ROB 檢查：前日 ROB＋加油量－用油量 應等於今日 ROB（差超過 2% 或 50 L 會提醒）。')}</div>`;
+  document.querySelectorAll('#envDaily tr[data-vid] input[data-k="fuel_rob_l"]').forEach(envRobCheck);
+}
+function envRobCheck(el) {
+  const tr = el.closest('tr'), prev = parseFloat(tr.dataset.prevRob), g = k => parseFloat(tr.querySelector(`[data-k="${k}"]`).value);
+  const rob = g('fuel_rob_l'), used = g('fuel_used_l'), bunk = g('fuel_bunkered_l') || 0, warn = tr.querySelector('.env-warn');
+  if (!isFinite(prev) || !isFinite(rob) || !isFinite(used)) { tr.querySelector('[data-k="fuel_rob_l"]').style.borderColor = ''; return; }
+  const exp = prev + bunk - used, off = Math.abs(rob - exp) > Math.max(50, Math.abs(exp) * 0.02);
+  tr.querySelector('[data-k="fuel_rob_l"]').style.borderColor = off ? 'var(--danger)' : '';
+  warn.innerHTML = L('Prev. ROB ', '前日 ROB ') + fmtN(prev, 0) + ' L' + (off ? ` · <span style="color:var(--danger)">⚠ ${L('expected', '應為')} ${fmtN(exp, 0)} L</span>` : '');
+}
+async function envSetDate(d) {
+  if (!d || d > today()) return;
+  if (ENV.dirty && !(await confirmBox(L('Discard unsaved entries for this date?', '這天的資料還沒儲存，確定換日期？'), L('Discard', '放棄'), true))) {
+    const i = document.querySelector('#envBody input[type=date]'); if (i) i.value = ENV.date;
+    return;
+  }
+  ENV.dirty = false; ENV.date = d; renderEnv();
+}
+async function envSaveDaily(btn) {
+  const E = envData(), rows = [];
+  document.querySelectorAll('#envDaily tr[data-vid]').forEach(tr => {
+    const r = { vessel_id: tr.dataset.vid, date: ENV.date };
+    tr.querySelectorAll('input[data-k]').forEach(i => { r[i.dataset.k] = i.value.trim(); });
+    const blank = ENV_DAILY_KEYS.every(k => r[k] === '') && !r.remark;
+    if (!blank || E.daily.some(x => x.vessel_id === r.vessel_id && x.date === ENV.date)) rows.push(r);
+  });
+  if (!rows.length) return toast(L('Nothing to save', '沒有要儲存的資料'), 'error');
+  try { await mut('env.daily.save', { rows }, '', btn).then(d => { ENV.dirty = false; toast(L(`Saved ${d.saved} vessel(s)`, `已儲存 ${d.saved} 艘`) + (d.removed ? L(`, deleted ${d.removed}`, `，刪除 ${d.removed} 筆`) : '')); }); } catch (e) {}
+}
+function envExportDaily() {
+  const m = ENV.date.slice(0, 7), head = ['日期', '船名'].concat(ENV_DAILY_KEYS.map(k => ENV_LABEL[k][1])).concat(['CO₂ 估算 (t)', '備註', '填報人', '更新時間']);
+  const rows = envData().daily.filter(x => x.date.slice(0, 7) === m).sort((a, b) => (a.date + a.vessel_name).localeCompare(b.date + b.vessel_name)).map(x => {
+    const v = S.vessels.find(z => z.id === x.vessel_id) || {};
+    return [x.date, x.vessel_name].concat(ENV_DAILY_KEYS.map(k => x[k])).concat([x.fuel_used_l !== '' ? envCo2(v, envNum(x.fuel_used_l)).toFixed(3) : '', x.remark, x.updated_by, (x.updated_at || '').replace('T', ' ')]);
+  });
+  downloadCsv('ENV_daily_' + m + '.csv', [head].concat(rows));
+}
+// ---- 廢棄物交運：每次一筆，附聯單 ----
+function envWaste() {
+  const list = envData().waste.filter(x => x.date.slice(0, 7) === ENV.month).sort((a, b) => b.date.localeCompare(a.date));
+  $('envBody').innerHTML = `<div class="section"><div class="section-header"><div class="toolbar">${envMonthSel('envWaste')}
+      <span class="muted small">${list.length} ${L('deliveries', '筆')} · ${fmtN(list.reduce((n, w) => n + envNum(w.total_kg), 0), 1)} kg</span></div>
+      <div class="toolbar"><button class="btn btn-sm" onclick="envExportWaste()">⬇ CSV</button><button class="btn btn-green btn-sm" onclick="envWasteModal()">＋ ${L('Add delivery', '新增交運')}</button></div></div>
+    ${list.length ? `<div class="table-wrap"><table class="tbl"><tr><th>${L('Date', '日期')}</th><th>${L('Vessel', '船名')}</th><th>${L('Method', '處理方式')}</th><th>${L('Total (kg)', '合計 (kg)')}</th><th>${L('Categories', '類別明細')}</th>
+      <th>${L('Receiver', '清運廠商')}</th><th>${L('Receipt no.', '聯單號碼')}</th><th>${L('Receipt', '聯單')}</th></tr>
+      ${list.map(w => { const it = envWasteItems(w); return `<tr class="click" onclick="envWasteModal('${w.id}')"><td class="mono">${esc(w.date)}</td><td><b>${esc(w.vessel_name)}</b></td><td>${esc(biName(w.method))}</td>
+        <td class="mono">${fmtN(envNum(w.total_kg), 1)}</td><td class="small">${Object.keys(it).map(k => esc(biName(k)) + ' ' + fmtN(it[k], 1)).join('、')}</td><td>${esc(w.receiver)}</td><td class="mono">${esc(w.receipt_no)}</td>
+        <td>${w.drive_id ? `<button class="btn btn-sm" onclick="event.stopPropagation();envViewFile('${w.id}')">📎</button>` : `<span class="tag amber">${L('None', '未附')}</span>`}</td></tr>`; }).join('')}</table></div>`
+      : `<div class="empty">${L('No waste deliveries this month', '本月沒有廢棄物交運紀錄')}</div>`}</div>`;
+}
+function envWasteModal(id) {
+  const w = id ? envData().waste.find(x => x.id === id) : { date: today(), method: lines(S.settings.env_waste_methods)[0] || '' };
+  const it = id ? envWasteItems(w) : {};
+  const cats = Array.from(new Set(lines(S.settings.env_waste_cats).concat(Object.keys(it))));
+  const methods = lines(S.settings.env_waste_methods); if (w.method && methods.indexOf(w.method) < 0) methods.push(w.method);
+  const vs = S.vessels.filter(v => envOn(v) || v.id === w.vessel_id);
+  const bg = openModal(id ? L('Edit waste delivery', '編輯廢棄物交運') : L('Add waste delivery', '新增廢棄物交運'), `<div class="form-grid">
+    <div class="fg"><label>${L('Vessel', '船名')} *</label><select id="ewV">${opts(vs.map(v => ({ v: v.id, t: v.name })), w.vessel_id, '—')}</select></div>
+    <div class="fg"><label>${L('Date', '日期')} *</label><input id="ewD" type="date" value="${esc(w.date)}"></div>
+    <div class="fg"><label>${L('Method', '處理方式')}</label><select id="ewM">${opts(methods.map(m => ({ v: m, t: biName(m) })), w.method)}</select></div>
+    <div class="fg"><label>${L('Port', '港口')}</label><input id="ewP" value="${esc(w.port)}"></div>
+    <div class="fg"><label>${L('Receiver / contractor', '清運廠商')}</label><input id="ewR" value="${esc(w.receiver)}"></div>
+    <div class="fg"><label>${L('Receipt no.', '聯單號碼')}</label><input id="ewN" class="mono" value="${esc(w.receipt_no)}"></div>
+    <div class="fg full" style="border-top:1px solid var(--border);padding-top:10px"><b>${L('Weight by category (kg)', '各類別重量 (kg)')}</b> <span class="small muted" id="ewTot"></span></div>
+    ${cats.map((c, i) => `<div class="fg"><label>${esc(biName(c))}</label><input class="mono ew-cat" data-cat="${esc(c)}" type="number" step="any" min="0" inputmode="decimal" value="${esc(it[c] !== undefined ? it[c] : '')}"></div>`).join('')}
+    <div class="fg full"><label>${L('Remark', '備註')}</label><input id="ewRem" value="${esc(w.remark)}"></div>
+    <div class="fg full"><label>${L('Receipt (PDF or photo)', '交運聯單（PDF 或照片）')}${w.drive_id ? ` · <a href="#" onclick="event.preventDefault();envViewFile('${w.id}')">📎 ${esc(w.file_name)}</a> <span class="small muted">${L('(choosing a file replaces it)', '（選新檔會取代）')}</span>` : ''}</label>
+      <input id="ewF" type="file" accept=".pdf,image/*"></div></div>`, {
+    foot: id ? `<button class="btn btn-danger" style="margin-right:auto" onclick="envDel('env.waste.delete','${id}',this,true)">🗑</button>` : '',
+    onSave: async (bg, btn) => {
+      const items = {};
+      bg.querySelectorAll('.ew-cat').forEach(i => { if (i.value.trim() !== '') items[i.dataset.cat] = i.value.trim(); });
+      const p = { id: id || '', vessel_id: val(bg, 'ewV'), date: val(bg, 'ewD'), method: val(bg, 'ewM'), port: val(bg, 'ewP'), receiver: val(bg, 'ewR'), receipt_no: val(bg, 'ewN'), remark: val(bg, 'ewRem'), items };
+      if (!p.vessel_id) { toast(L('Select a vessel', '請選船'), 'error'); return false; }
+      const f = bg.querySelector('#ewF').files[0];
+      if (f) {
+        let dataUrl = await readAsDataURL(f), name = f.name, mime = f.type || 'application/octet-stream';
+        if (/^image\//.test(mime) && f.size > 3 * 1024 * 1024) { try { dataUrl = scaleTo(await loadImg(dataUrl), 2400, 0.85); mime = 'image/jpeg'; name = name.replace(/\.\w+$/, '') + '.jpg'; } catch (e) {} }
+        const data = dataUrl.slice(dataUrl.indexOf(',') + 1);
+        if (data.length * 0.75 > MAX_UPLOAD) { toast(L('File is larger than 20 MB', '檔案超過 20 MB'), 'error'); return false; }
+        p.file = { name, mime, data };
+      }
+      return mut('env.waste.save', p, L('Saved', '已儲存'), btn);
+    } });
+  const tot = () => { let n = 0; bg.querySelectorAll('.ew-cat').forEach(i => { n += envNum(i.value); }); bg.querySelector('#ewTot').textContent = L('Total ', '合計 ') + fmtN(n, 1) + ' kg'; };
+  bg.querySelectorAll('.ew-cat').forEach(i => { i.oninput = tot; }); tot();
+}
+async function envViewFile(id) {
+  showLoading(L('Opening…', '開啟中…'));
+  try {
+    const r = await api('env.file', { id });
+    const bin = atob(r.data), arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    const url = URL.createObjectURL(new Blob([arr], { type: r.mime }));
+    const w = window.open(url, '_blank');
+    if (!w) { const a = document.createElement('a'); a.href = url; a.download = r.name; a.click(); }
+  } catch (e) { toast(e.message, 'error'); }
+  finally { hideLoading(); }
+}
+async function envDel(action, id, btn, file) {
+  if (!(await confirmBox(file ? L('Delete this record? The attached receipt goes to the Drive trash.', '確定刪除？附加的聯單會移到 Drive 垃圾桶。') : L('Delete this record?', '確定刪除？'), L('Delete', '刪除'), true))) return;
+  btn.closest('.modal-bg').remove();
+  mut(action, { id }, L('Deleted', '已刪除')).catch(() => {});
+}
+function envExportWaste() {
+  const cats = lines(S.settings.env_waste_cats), list = envData().waste.filter(x => x.date.slice(0, 7) === ENV.month).sort((a, b) => a.date.localeCompare(b.date));
+  list.forEach(w => Object.keys(envWasteItems(w)).forEach(k => { if (cats.indexOf(k) < 0) cats.push(k); }));
+  const rows = [['日期', '船名', '處理方式', '港口', '清運廠商', '聯單號碼', '合計 (kg)'].concat(cats.map(c => c + ' (kg)')).concat(['聯單檔案', '備註', '登錄者'])];
+  list.forEach(w => { const it = envWasteItems(w); rows.push([w.date, w.vessel_name, w.method, w.port, w.receiver, w.receipt_no, w.total_kg].concat(cats.map(c => it[c] !== undefined ? it[c] : ''))
+    .concat([w.drive_id ? 'https://drive.google.com/file/d/' + w.drive_id + '/view' : '', w.remark, w.created_by])); });
+  downloadCsv('ENV_waste_' + ENV.month + '.csv', rows);
+}
+// ---- 環境事件 ----
+function envIncidents() {
+  const all = envData().incidents.slice().sort((a, b) => b.time.localeCompare(a.time)), z = envZeroDays();
+  const list = all.filter(x => x.time.slice(0, 7) === ENV.month), open = all.filter(x => x.status !== 'closed');
+  $('envBody').innerHTML = `<div class="stat-grid">
+      <div class="stat green"><div class="v">${z === null ? '—' : z}</div><div class="l">${L('Days without incident (near misses excluded)', '連續零事件天數（不含虛驚）')}</div></div>
+      <div class="stat ${open.length ? 'red' : ''}"><div class="v">${open.length}</div><div class="l">${L('Open incidents', '未結案事件')}</div></div>
+      <div class="stat amber"><div class="v">${list.length}</div><div class="l">${L('Incidents this month', '本月事件')}</div></div>
+      <div class="stat blue"><div class="v">${list.filter(x => x.severity === 'near_miss').length}</div><div class="l">${L('Near misses this month', '本月虛驚事件')}</div></div></div>
+    <div class="section"><div class="section-header"><div class="toolbar">${envMonthSel('envIncidents')}</div>
+      <div class="toolbar"><button class="btn btn-sm" onclick="envExportIncidents()">⬇ CSV</button><button class="btn btn-green btn-sm" onclick="envIncidentModal()">＋ ${L('Report incident', '新增事件')}</button></div></div>
+    ${list.length || open.length ? `<div class="table-wrap"><table class="tbl"><tr><th>${L('Time', '時間')}</th><th>${L('Vessel', '船名')}</th><th>${L('Type', '類型')}</th><th>${L('Severity', '嚴重度')}</th><th>${L('Substance / quantity', '物質／數量')}</th><th>${L('Description', '說明')}</th><th>${L('Status', '狀態')}</th></tr>
+      ${Array.from(new Set(open.concat(list))).sort((a, b) => b.time.localeCompare(a.time)).map(x => `<tr class="click" onclick="envIncidentModal('${x.id}')"><td class="mono" style="white-space:nowrap">${fmtT(x.time, true)}${x.time.slice(0, 7) !== ENV.month ? ' <span class="small muted">' + x.time.slice(0, 4) + '</span>' : ''}</td><td><b>${esc(x.vessel_name)}</b></td>
+        <td>${esc(biName(x.type))}</td><td><span class="tag ${(ENV_SEV[x.severity] || ENV_SEV.minor)[2]}">${L((ENV_SEV[x.severity] || ENV_SEV.minor)[0], (ENV_SEV[x.severity] || ENV_SEV.minor)[1])}</span></td>
+        <td>${esc([x.substance, x.quantity].filter(Boolean).join(' · '))}</td><td class="small">${esc(x.description)}</td>
+        <td>${x.status === 'closed' ? `<span class="tag green">${L('Closed', '已結案')}</span>` : `<span class="tag red">${L('Open', '處理中')}</span>`}</td></tr>`).join('')}</table></div>`
+      : `<div class="empty">✅ ${L('No incidents this month', '本月沒有環境事件')}</div>`}</div>`;
+}
+function envIncidentModal(id) {
+  const x = id ? envData().incidents.find(i => i.id === id) : { time: nowLocal(), severity: 'minor', status: 'open' };
+  const types = lines(S.settings.env_incident_types); if (x.type && types.indexOf(x.type) < 0) types.push(x.type);
+  const vs = S.vessels.filter(v => bool(v.active) || v.id === x.vessel_id);
+  openModal(id ? L('Edit incident', '編輯環境事件') : L('Report incident', '新增環境事件'), `<div class="form-grid">
+    <div class="fg"><label>${L('Vessel', '船名')} *</label><select id="eiV">${opts(vs.map(v => ({ v: v.id, t: v.name })), x.vessel_id, '—')}</select></div>
+    <div class="fg"><label>${L('Time', '時間')} *</label><input id="eiT" type="datetime-local" value="${esc(String(x.time).slice(0, 16))}"></div>
+    <div class="fg"><label>${L('Type', '類型')} *</label><select id="eiTy">${opts(types.map(t => ({ v: t, t: biName(t) })), x.type, '—')}</select></div>
+    <div class="fg"><label>${L('Severity', '嚴重度')}</label><select id="eiS">${opts(Object.keys(ENV_SEV).map(k => ({ v: k, t: L(ENV_SEV[k][0], ENV_SEV[k][1]) })), x.severity)}</select></div>
+    <div class="fg"><label>${L('Substance / item', '物質／物品')}</label><input id="eiSub" value="${esc(x.substance)}" placeholder="${L('e.g. hydraulic oil', '例：液壓油')}"></div>
+    <div class="fg"><label>${L('Quantity', '數量')}</label><input id="eiQ" value="${esc(x.quantity)}" placeholder="${L('e.g. about 5 L', '例：約 5 L')}"></div>
+    <div class="fg"><label>${L('Latitude', '緯度')}</label><input id="eiLat" class="mono" inputmode="decimal" value="${esc(x.lat)}"></div>
+    <div class="fg"><label>${L('Longitude', '經度')}</label><input id="eiLon" class="mono" inputmode="decimal" value="${esc(x.lon)}"></div>
+    <div class="fg full"><label>${L('Description', '事件說明')}</label><textarea id="eiDesc" rows="3">${esc(x.description)}</textarea></div>
+    <div class="fg full"><label>${L('Action taken', '處置措施')}</label><textarea id="eiAct" rows="2">${esc(x.action)}</textarea></div>
+    <div class="fg"><label>${L('Reported to', '通報對象')}</label><input id="eiRep" value="${esc(x.reported_to)}" placeholder="${L('e.g. client, coast guard', '例：業主、海巡署')}"></div>
+    <div class="fg"><label>${L('Status', '狀態')}</label><select id="eiSt">${opts([{ v: 'open', t: L('Open', '處理中') }, { v: 'closed', t: L('Closed', '已結案') }], x.status)}</select></div></div>`, {
+    foot: id ? `<button class="btn btn-danger" style="margin-right:auto" onclick="envDel('env.incident.delete','${id}',this)">🗑</button>` : '',
+    onSave: async (bg, btn) => mut('env.incident.save', { id: id || '', vessel_id: val(bg, 'eiV'), time: val(bg, 'eiT'), type: val(bg, 'eiTy'), severity: val(bg, 'eiS'),
+      substance: val(bg, 'eiSub'), quantity: val(bg, 'eiQ'), lat: val(bg, 'eiLat'), lon: val(bg, 'eiLon'), description: val(bg, 'eiDesc'), action: val(bg, 'eiAct'),
+      reported_to: val(bg, 'eiRep'), status: val(bg, 'eiSt') }, L('Saved', '已儲存'), btn) });
+}
+function envExportIncidents() {
+  const sev = { near_miss: '虛驚', minor: '輕微', major: '重大' };
+  const rows = [['時間', '船名', '類型', '嚴重度', '物質／物品', '數量', '緯度', '經度', '事件說明', '處置措施', '通報對象', '狀態', '結案時間', '登錄者']];
+  envData().incidents.filter(x => x.time.slice(0, 7) === ENV.month).sort((a, b) => a.time.localeCompare(b.time)).forEach(x => rows.push([x.time.replace('T', ' '), x.vessel_name, x.type, sev[x.severity] || x.severity,
+    x.substance, x.quantity, x.lat, x.lon, x.description, x.action, x.reported_to, x.status === 'closed' ? '已結案' : '處理中', (x.closed_at || '').replace('T', ' '), x.created_by]));
+  downloadCsv('ENV_incidents_' + ENV.month + '.csv', rows);
+}
+/** 月報：每船一列＋合計列，廢棄物依類別展開 */
+function envExportMonth() {
+  const { rows, tot } = envSummary(ENV.month), kinds = { mmo: 'MMO 觀察船', construction: '施工船', support: '支援船' };
+  const cats = lines(S.settings.env_waste_cats);
+  Object.keys(tot.byCat).forEach(k => { if (cats.indexOf(k) < 0) cats.push(k); });
+  const r1 = (x, d) => isFinite(x) ? Math.round(x * Math.pow(10, d)) / Math.pow(10, d) : '';
+  const out = [['月份', '船名', '類別', 'MMSI', '起租日', '退租日', '燃料', '應填天數', '已填天數', '缺填日期', '用油量 (L)', '加油量 (L)', '用水量 (m³)', '加水量 (m³)', '造水量 (m³)',
+    '平均在船人數', '每人每日用水 (L)', 'CO₂ 估算 (t)', '廢棄物合計 (kg)'].concat(cats.map(c => c + ' (kg)')).concat(['環境事件數'])];
+  rows.forEach(r => out.push([ENV.month, r.v.name, kinds[r.v.kind] || r.v.kind, r.v.mmsi, r.v.charter_start, r.v.charter_end, r.v.fuel_type, r.due, r.days, r.missing.join(' '),
+    r1(r.fuel, 1), r1(r.bunk, 1), r1(r.water, 2), r1(r.wbunk, 2), r1(r.made, 2), r.pob ? r1(r.pob, 1) : '', r1(r.perPax, 0), r1(r.co2, 3), r1(r.wasteKg, 1)]
+    .concat(cats.map(c => r.byCat[c] ? r1(r.byCat[c], 1) : '')).concat([r.inc])));
+  out.push([ENV.month, '合計', '', '', '', '', '', tot.due, tot.days, '', r1(tot.fuel, 1), r1(tot.bunk, 1), r1(tot.water, 2), r1(tot.wbunk, 2), r1(tot.made, 2), '', r1(tot.perPax, 0), r1(tot.co2, 3), r1(tot.wasteKg, 1)]
+    .concat(cats.map(c => tot.byCat[c] ? r1(tot.byCat[c], 1) : '')).concat([tot.inc]));
+  out.push([]);
+  out.push(['CO₂＝用油量 (L) × 燃料密度 (kg/L) ÷ 1000 × 排放係數；係數與密度見後台 › 規則與清單 › 環保統計。連續零事件天數（不含虛驚）：' + (envZeroDays() === null ? '無事件紀錄' : envZeroDays())]);
+  downloadCsv('ENV_monthly_' + ENV.month + '.csv', out);
+}
+
 // ==================== Admin ====================
 const ADMIN_TABS = [['vessels', 'Vessels', '船舶'], ['observers', 'Observers', '觀察員'], ['items', 'Upload items', '上傳項目'], ['settings', 'Rules & lists', '規則與清單'], ['users', 'Accounts', '帳號'], ['audit', 'Activity log', '操作紀錄'], ['reset', 'Reset data', '清空資料']];
 function renderAdmin() {
@@ -2649,27 +3005,40 @@ function renderAdmin() {
 function yes(v) { return bool(v) ? `<span class="tag green">${L('Active', '啟用')}</span>` : `<span class="tag">${L('Inactive', '停用')}</span>`; }
 function adminVessels() {
   const list = S.vessels.slice().sort((a, b) => (a.kind + (Number(a.sort) || 999) + a.name).localeCompare(b.kind + (Number(b.sort) || 999) + b.name));
-  const kinds = { mmo: L('MMO vessel', 'MMO 觀察船'), construction: L('Construction vessel', '施工船') };
+  const kinds = vesselKinds();
   $('adminBody').innerHTML = `<div class="section"><div class="section-header"><h3>${L('Vessels', '船舶')}</h3><button class="btn btn-green btn-sm" onclick="vesselModal()">＋ ${L('Add vessel', '新增船舶')}</button></div>
-    ${list.length ? `<div class="table-wrap"><table class="tbl"><tr><th>${L('Name', '船名')}</th><th>${L('Type', '類別')}</th><th>MMSI</th><th>IMO</th><th>${L('Operator', '船東/營運')}</th><th>${L('Status', '狀態')}</th></tr>
-      ${list.map(v => `<tr class="click" onclick="vesselModal('${v.id}')"><td><b>${esc(v.name)}</b>${v.type ? `<div class="small muted">${esc(v.type)}</div>` : ''}</td><td>${kinds[v.kind] || esc(v.kind)}</td><td class="mono">${esc(v.mmsi)}</td><td class="mono">${esc(v.imo)}</td><td>${esc(v.operator)}</td><td>${yes(v.active)}</td></tr>`).join('')}</table></div>`
+    ${list.length ? `<div class="table-wrap"><table class="tbl"><tr><th>${L('Name', '船名')}</th><th>${L('Type', '類別')}</th><th>MMSI</th><th>IMO</th><th>${L('Operator', '船東/營運')}</th><th>${L('Charter', '租期')}</th><th>${L('Env. report', '環保填報')}</th><th>${L('Status', '狀態')}</th></tr>
+      ${list.map(v => `<tr class="click" onclick="vesselModal('${v.id}')"><td><b>${esc(v.name)}</b>${v.type ? `<div class="small muted">${esc(v.type)}</div>` : ''}</td><td>${kinds[v.kind] || esc(v.kind)}</td><td class="mono">${esc(v.mmsi)}</td><td class="mono">${esc(v.imo)}</td><td>${esc(v.operator)}</td>
+        <td class="mono small" style="white-space:nowrap">${v.charter_start ? esc(v.charter_start) + ' → ' + esc(v.charter_end || L('now', '迄今')) : '—'}</td><td>${envOn(v) ? '✅' + (v.fuel_type ? ' <span class="small muted">' + esc(v.fuel_type) + '</span>' : '') : '—'}</td><td>${yes(v.active)}</td></tr>`).join('')}</table></div>`
       : `<div class="empty">${L('Add MMO vessels (e.g. T1, T8) and construction vessels (e.g. Arzana).', '請新增 MMO 觀察船（如 T1、T8）與施工船（如 Arzana）。')}</div>`}</div>`;
 }
 function vesselModal(id) {
-  const v = id ? S.vessels.find(x => x.id === id) : { kind: 'mmo', active: 'TRUE' };
+  const v = id ? S.vessels.find(x => x.id === id) : { kind: 'mmo', active: 'TRUE', env_report: 'TRUE' };
+  const kinds = vesselKinds(), fuels = envFuels().map(f => f.name);
+  if (v.fuel_type && fuels.indexOf(v.fuel_type) < 0) fuels.push(v.fuel_type);
   openModal(id ? L('Edit vessel', '編輯船舶') : L('Add vessel', '新增船舶'), `<div class="form-grid">
     <div class="fg"><label>${L('Name', '船名')} *</label><input id="vName" value="${esc(v.name)}"></div>
-    <div class="fg"><label>${L('Category', '類別')} *</label><select id="vKind">${opts([{ v: 'mmo', t: L('MMO vessel', 'MMO 觀察船') }, { v: 'construction', t: L('Construction vessel', '施工船') }], v.kind)}</select></div>
+    <div class="fg"><label>${L('Category', '類別')} *</label><select id="vKind">${opts(Object.keys(kinds).map(k => ({ v: k, t: kinds[k] })), v.kind)}</select></div>
     <div class="fg"><label>MMSI</label><input id="vMmsi" class="mono" value="${esc(v.mmsi)}"></div>
     <div class="fg"><label>IMO</label><input id="vImo" class="mono" value="${esc(v.imo)}"></div>
     <div class="fg"><label>${L('Vessel type', '船型')}</label><input id="vType" value="${esc(v.type)}"></div>
     <div class="fg"><label>${L('Operator', '船東/營運')}</label><input id="vOp" value="${esc(v.operator)}"></div>
     <div class="fg"><label>${L('Sort order', '排序')}</label><input id="vSort" inputmode="numeric" value="${esc(v.sort)}"></div>
     <div class="fg"><label>&nbsp;</label><label class="chk"><input type="checkbox" id="vAct" ${bool(v.active) ? 'checked' : ''}> ${L('Active', '啟用')}</label></div>
-    <div class="fg full"><label>${L('Remark', '備註')}</label><input id="vRem" value="${esc(v.remark)}"></div></div>`, {
+    <div class="fg full"><label>${L('Remark', '備註')}</label><input id="vRem" value="${esc(v.remark)}"></div>
+    <div class="fg full" style="border-top:1px solid var(--border);padding-top:10px"><b>🌱 ${L('Environmental reporting', '環保填報')}</b></div>
+    <div class="fg"><label>${L('Charter start', '起租日')}</label><input id="vCs" type="date" value="${esc(v.charter_start)}"></div>
+    <div class="fg"><label>${L('Charter end (blank = ongoing)', '退租日（空白＝租用中）')}</label><input id="vCe" type="date" value="${esc(v.charter_end)}"></div>
+    <div class="fg"><label>${L('Fuel type (for CO₂)', '燃料種類（算 CO₂）')}</label><select id="vFuel">${opts(fuels, v.fuel_type || fuels[0])}</select></div>
+    <div class="fg"><label>&nbsp;</label><label class="chk"><input type="checkbox" id="vEnv" ${envOn(v) ? 'checked' : ''}> ${L('Daily environmental report required', '需填每日環保資料')}</label></div>
+    <div class="fg full"><span class="small muted">${L('Days between charter start and end (or yesterday) count as required reporting days.', '起租日到退租日（或昨天）之間的每一天都算應填報日。')}</span></div></div>`, {
     foot: id ? `<button class="btn btn-danger" style="margin-right:auto" onclick="delMaster('vessel.delete','${id}',this)">🗑</button>` : '',
-    onSave: async (bg, btn) => mut('vessel.save', { id: id || '', name: val(bg, 'vName'), kind: val(bg, 'vKind'), mmsi: val(bg, 'vMmsi'), imo: val(bg, 'vImo'), type: val(bg, 'vType'),
-      operator: val(bg, 'vOp'), sort: val(bg, 'vSort'), active: val(bg, 'vAct'), remark: val(bg, 'vRem') }, L('Saved', '已儲存'), btn) });
+    onSave: async (bg, btn) => {
+      if (val(bg, 'vCs') && val(bg, 'vCe') && val(bg, 'vCe') < val(bg, 'vCs')) { toast(L('Charter end is before charter start', '退租日早於起租日'), 'error'); return false; }
+      return mut('vessel.save', { id: id || '', name: val(bg, 'vName'), kind: val(bg, 'vKind'), mmsi: val(bg, 'vMmsi'), imo: val(bg, 'vImo'), type: val(bg, 'vType'),
+        operator: val(bg, 'vOp'), sort: val(bg, 'vSort'), active: val(bg, 'vAct'), remark: val(bg, 'vRem'),
+        charter_start: val(bg, 'vCs'), charter_end: val(bg, 'vCe'), fuel_type: val(bg, 'vFuel'), env_report: val(bg, 'vEnv') }, L('Saved', '已儲存'), btn);
+    } });
 }
 async function delMaster(action, id, btn) {
   if (!(await confirmBox(L('Delete this record?', '確定刪除？'), L('Delete', '刪除'), true))) return;
@@ -2776,6 +3145,13 @@ function adminSettings() {
       <div class="fg full"><label>${L('API key (stored on the server only)', 'API 金鑰（只存在伺服器端）')}</label><input id="st_ais_api_key" class="mono" value="${esc(st.ais_api_key)}"></div>
       <div class="full toolbar"><button class="btn btn-sm" type="button" onclick="testAis(this)">🔑 ${L('Test key (free, no credits used)', '測試金鑰（不扣點）')}</button><span class="small muted" id="aisTest">${L('Save settings first, then test.', '請先儲存設定再測試。')}</span></div>
     </div></div></div>
+    <div class="section"><div class="section-header"><h3>🌱 ${L('Environmental statistics', '環保統計')}</h3></div><div class="section-body"><div class="form-grid">
+      <div class="fg full"><label>${L('Fuels (name, density kg/L, CO₂ factor t CO₂ per t fuel — one per line)', '燃料（每行：名稱, 密度 kg/L, CO₂ 排放係數 t CO₂／t 燃料）')}</label><textarea id="st_env_fuels" class="mono" rows="4">${esc(st.env_fuels)}</textarea>
+        <span class="small muted">${L('CO₂ = litres × density ÷ 1000 × factor. Default factors follow IMO MEPC.308(73); densities are typical values — use your bunker delivery notes if you have them.', 'CO₂＝公升 × 密度 ÷ 1000 × 係數。預設係數依 IMO MEPC.308(73)；密度為一般值，有加油單（BDN）請以實際密度為準。')}</span></div>
+      ${ta('env_waste_cats', 'Waste categories', '廢棄物類別', '', 6)}
+      ${ta('env_waste_methods', 'Waste disposal methods', '廢棄物處理方式', '', 4)}
+      ${ta('env_incident_types', 'Environmental incident types', '環境事件類型', '', 4)}
+    </div></div></div>
     <button class="btn btn-primary" onclick="saveSettings(this)">💾 ${L('Save settings', '儲存設定')}</button>`;
   const est = () => {
     const n = S.vessels.filter(v => bool(v.active) && v.mmsi).length, iv = Number($('st_pos_interval_min').value), t = Number($('st_track_interval_min').value);
@@ -2800,7 +3176,7 @@ async function testAis(btn) {
 }
 function saveSettings(btn) {
   const p = {};
-  ['project_name', 'pre_watch_min', 'alert_zone_m', 'watch_zone_m', 'response_min', 'repre_pause_min', 'mmo_dist_tol_m', 'sites', 'crew_slots', 'scopes', 'species', 'pause_reasons', 'ais_api_url', 'ais_api_key', 'weather_name', 'weather_points', 'weather_wave_limit', 'weather_wind_limit', 'pos_interval_min', 'track_interval_min'].forEach(k => { p[k] = $('st_' + k).value.trim(); });
+  ['project_name', 'pre_watch_min', 'alert_zone_m', 'watch_zone_m', 'response_min', 'repre_pause_min', 'mmo_dist_tol_m', 'sites', 'crew_slots', 'scopes', 'species', 'pause_reasons', 'ais_api_url', 'ais_api_key', 'weather_name', 'weather_points', 'weather_wave_limit', 'weather_wind_limit', 'pos_interval_min', 'track_interval_min', 'env_fuels', 'env_waste_cats', 'env_waste_methods', 'env_incident_types'].forEach(k => { p[k] = $('st_' + k).value.trim(); });
   mut('settings.save', p, L('Settings saved', '設定已儲存'), btn).catch(() => {});
 }
 function adminUsers() {
@@ -2826,8 +3202,9 @@ function userModal(id) {
 const RESET_GROUPS = [
   ['shifts', 'Batches (incl. pauses, sightings and uploaded files)', '施工批次（含暫停施工、目擊紀錄與上傳檔案）', () => S.shifts.length, true],
   ['tracks', 'Vessel tracks and position history', '船舶軌跡與船位紀錄', () => S.tracks.length, true],
-  ['vessels', 'Vessel list (also clears tracks)', '船舶清單（一併清除軌跡）', () => S.vessels.length, false],
-  ['observers', 'Observer list', '觀察員清單', () => S.observers.length, false]
+  ['vessels', 'Vessel list (also clears tracks and environmental records)', '船舶清單（一併清除軌跡與環保紀錄）', () => S.vessels.length, false],
+  ['observers', 'Observer list', '觀察員清單', () => S.observers.length, false],
+  ['env', 'Environmental records (daily, waste, incidents)', '環保紀錄（每日、廢棄物、環境事件）', () => S.env ? S.env.daily.length + S.env.waste.length + S.env.incidents.length : 0, false]
 ];
 function adminReset() {
   $('adminBody').innerHTML = `<div class="section" style="border-color:#efc4c4"><div class="section-header"><h3>⚠️ ${L('Reset data', '清空資料')}</h3></div><div style="padding:14px 16px">
@@ -2841,6 +3218,7 @@ async function resetRequest(btn) {
   const groups = [...document.querySelectorAll('.rs_grp')].filter(c => c.checked).map(c => c.value);
   if (!groups.length) return toast(L('Tick at least one item to clear', '請至少勾選一項要清空的資料'), 'error');
   if (groups.indexOf('vessels') >= 0 && groups.indexOf('tracks') < 0) groups.push('tracks');
+  if (groups.indexOf('vessels') >= 0 && groups.indexOf('env') < 0) groups.push('env');
   const names = RESET_GROUPS.filter(x => groups.indexOf(x[0]) >= 0).map(x => L(x[1], x[2]));
   if (!(await confirmBox(L('Send a verification code to permanently delete:', '確定要寄送驗證碼，永久刪除以下資料？') + '<br><b>' + names.map(esc).join('<br>') + '</b>', L('Send code', '寄送驗證碼'), true))) return;
   btn.disabled = true; showLoading(L('Sending…', '寄送中…'));

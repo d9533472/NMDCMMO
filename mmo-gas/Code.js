@@ -10,7 +10,7 @@
 // 角色：admin（全部＋後台）、mmo（建立／填報批次、上傳）、viewer（唯讀）
 // ============================================================
 
-const VERSION = '1.5';
+const VERSION = '1.6';
 const ROOT_FOLDER_ID = '1uVkbv4tndRVERhrHmHUzaTvPlHaFV4em';
 const SS_NAME = 'MMO 鯨豚觀察總表';
 const TZ = 'Asia/Taipei';
@@ -20,7 +20,8 @@ const SCHEMAS = {
   Sessions: ['token','user_id','expires_at','created_at'],
   Settings: ['key','value'],
   Vessels: ['id','name','kind','mmsi','imo','type','operator','remark','active','sort','created_at','updated_at',
-    'last_lat','last_lon','last_fix','last_speed','last_course','last_fetch','last_error','tracking','track_id'],
+    'last_lat','last_lon','last_fix','last_speed','last_course','last_fetch','last_error','tracking','track_id',
+    'charter_start','charter_end','fuel_type','env_report'],
   Tracks: ['id','vessel_id','vessel_name','mmsi','start','end','interval_min','started_by','stopped_by','remark'],
   Observers: ['id','name','role','company','phone','cert_no','remark','active','created_at','updated_at'],
   UploadItems: ['id','kind','name_zh','name_en','required','cond','active','sort','note'],
@@ -33,7 +34,14 @@ const SCHEMAS = {
     'lat','lon','behavior','remark','bearing','direction','deck','vessel_dist_m','piling_status','mother_calf','image',
     'call_type','freq_khz','hydrophone_m','created_by','created_at','updated_at'],
   Files: ['id','shift_id','sv_id','item_id','item_name','kind','drive_id','name','mime','size','thumb','uploaded_by','uploaded_at','slot'],
-  AuditLog: ['time','user','role','action','target','detail','ok','error']
+  AuditLog: ['time','user','role','action','target','detail','ok','error'],
+  // 離岸環保統計（只有管理員看得到，不放進共用快取）
+  EnvDaily: ['id','vessel_id','vessel_name','date','fuel_used_l','fuel_bunkered_l','fuel_rob_l','water_used_m3','water_bunkered_m3','water_made_m3','pob','remark',
+    'updated_by','updated_at'],
+  EnvWaste: ['id','vessel_id','vessel_name','date','method','receiver','port','receipt_no','items','total_kg','drive_id','file_name','file_mime','remark',
+    'created_by','created_at','updated_by','updated_at'],
+  EnvIncidents: ['id','vessel_id','vessel_name','time','type','severity','substance','quantity','lat','lon','description','action','reported_to','status','closed_at',
+    'created_by','created_at','updated_by','updated_at']
 };
 
 const DEFAULT_SETTINGS = {
@@ -56,7 +64,12 @@ const DEFAULT_SETTINGS = {
   weather_name: '',             // 儀表板海象地圖標題
   weather_points: '',           // 海象預報點：每行「名稱, 緯度, 經度」（空白＝用工區座標）
   weather_wave_limit: '1.5',
-  weather_wind_limit: '25'
+  weather_wind_limit: '25',
+  // 環保：燃料每行「名稱, 密度 kg/L, CO₂ 排放係數 t/t 燃料」（係數依 IMO MEPC.308(73)）
+  env_fuels: 'MGO, 0.85, 3.206\nMDO, 0.89, 3.206\nVLSFO, 0.94, 3.151\nHFO, 0.98, 3.114',
+  env_waste_cats: '塑膠 Plastics\n食物廢棄物 Food waste\n生活廢棄物 Domestic waste\n廢食用油 Cooking oil\n焚化爐灰燼 Incinerator ash\n作業廢棄物 Operational waste\n電子廢棄物 E-waste\n有害廢棄物 Hazardous waste\n油泥 Oil sludge\n艙底油水 Oily bilge water\n污水 Sewage\n資源回收 Recyclables',
+  env_waste_methods: '上岸交運 Landed ashore\n船上焚化 Incinerated on board\n依 MARPOL 排放 Discharged per MARPOL\n資源回收 Recycled',
+  env_incident_types: '漏油／溢油 Oil spill\n化學品洩漏 Chemical spill\n物品落海 Object overboard\n廢棄物不當排放 Improper discharge\n其他 Other'
 };
 const SECRET_SETTINGS = { ais_api_key: 1 };
 
@@ -94,9 +107,9 @@ function doPost(e) {
 function json_(o) { return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON); }
 
 const PUBLIC = { 'ping': 1, 'auth.status': 1, 'auth.setup': 1, 'auth.login': 1, 'data.rev': 1 };
-const NO_REV = { 'ping': 1, 'auth.status': 1, 'auth.login': 1, 'auth.logout': 1, 'auth.changePassword': 1, 'data.load': 1, 'data.rev': 1,
+const NO_REV = { 'env.file': 1, 'ping': 1, 'auth.status': 1, 'auth.login': 1, 'auth.logout': 1, 'auth.changePassword': 1, 'data.load': 1, 'data.rev': 1,
   'audit.list': 1, 'file.get': 1, 'shift.files': 1, 'pos.fetch': 1, 'pos.test': 1, 'pos.list': 1, 'reset.request': 1 };
-const AUDIT_SKIP = { 'ping': 1, 'auth.status': 1, 'data.load': 1, 'data.rev': 1, 'audit.list': 1, 'file.get': 1, 'shift.files': 1, 'pos.list': 1 };
+const AUDIT_SKIP = { 'env.file': 1, 'ping': 1, 'auth.status': 1, 'data.load': 1, 'data.rev': 1, 'audit.list': 1, 'file.get': 1, 'shift.files': 1, 'pos.list': 1 };
 // 這些寫入會改到批次資料 → 重建試算表「總表」
 const SUMMARY_ACTIONS = /^((shift|sv|pause|sighting|file)\.(save|delete|close|reopen|upload)|reset\.confirm)$/;
 
@@ -157,7 +170,8 @@ const ROUTES = {
   'track.start': (u, p) => startTrack_(u, p),
   'track.stop': (u, p) => stopTrack_(u, p),
 
-  'vessel.save': (u, p) => { requireRole_(u, ['admin']); return saveMaster_('Vessels', p, ['name','kind','mmsi','imo','type','operator','remark','active','sort'], ['name','kind']); },
+  'vessel.save': (u, p) => { requireRole_(u, ['admin']); return saveMaster_('Vessels', p, ['name','kind','mmsi','imo','type','operator','remark','active','sort',
+    'charter_start','charter_end','fuel_type','env_report'], ['name','kind']); },
   'vessel.delete': (u, p) => { requireRole_(u, ['admin']); return deleteMaster_('Vessels', p.id); },
   'observer.save': (u, p) => { requireRole_(u, ['admin']); return saveMaster_('Observers', p, ['name','role','company','phone','cert_no','remark','active'], ['name']); },
   'observer.delete': (u, p) => { requireRole_(u, ['admin']); return deleteMaster_('Observers', p.id); },
@@ -169,6 +183,13 @@ const ROUTES = {
   'audit.list': (u, p) => { requireRole_(u, ['admin']); return auditList_(p); },
   'reset.request': (u, p) => { requireRole_(u, ['admin']); return resetRequest_(u, p); },
   'reset.confirm': (u, p) => { requireRole_(u, ['admin']); return resetConfirm_(u, p); },
+  'env.daily.save': (u, p) => { requireRole_(u, ['admin']); return envDailySave_(u, p); },
+  'env.daily.delete': (u, p) => { requireRole_(u, ['admin']); return withLock_(() => ({ id: p.id, ok: Repo.remove('EnvDaily', p.id) })); },
+  'env.waste.save': (u, p) => { requireRole_(u, ['admin']); return envWasteSave_(u, p); },
+  'env.waste.delete': (u, p) => { requireRole_(u, ['admin']); return envWasteDelete_(p.id); },
+  'env.file': (u, p) => { requireRole_(u, ['admin']); return envFile_(p.id); },
+  'env.incident.save': (u, p) => { requireRole_(u, ['admin']); return envIncidentSave_(u, p); },
+  'env.incident.delete': (u, p) => { requireRole_(u, ['admin']); return withLock_(() => ({ id: p.id, ok: Repo.remove('EnvIncidents', p.id) })); },
   'summary.rebuild': (u) => { requireRole_(u, ['admin']); rebuildSummary_(); return { url: ss_().getUrl() }; }
 };
 
@@ -553,7 +574,10 @@ function loadData_(u) {
   const out = Object.assign({}, sharedState_());
   out.user = publicUser_(u);
   out.posTick = PropertiesService.getScriptProperties().getProperty('pos_tick') || '';
-  if (u.role === 'admin') out.users = Repo.all('Users').map(publicUser_);
+  if (u.role === 'admin') {
+    out.users = Repo.all('Users').map(publicUser_);
+    out.env = { daily: Repo.all('EnvDaily'), waste: Repo.all('EnvWaste'), incidents: Repo.all('EnvIncidents') };
+  }
   return out;
 }
 function sharedState_() {
@@ -792,12 +816,14 @@ const RESET_GROUPS = {
   shifts: ['Shifts', 'ShiftVessels', 'Pauses', 'Sightings', 'Files'],
   tracks: ['Tracks'],
   vessels: ['Vessels'],
-  observers: ['Observers']
+  observers: ['Observers'],
+  env: ['EnvDaily', 'EnvWaste', 'EnvIncidents']
 };
 function resetRequest_(u, p) {
   const groups = (Array.isArray(p.groups) ? p.groups : []).filter(k => RESET_GROUPS[k]);
   if (!groups.length) fail_('Tick at least one item to clear');
   if (groups.indexOf('vessels') >= 0 && groups.indexOf('tracks') < 0) groups.push('tracks');   // 軌跡依附船舶
+  if (groups.indexOf('vessels') >= 0 && groups.indexOf('env') < 0) groups.push('env');         // 環保紀錄也依附船舶
   const code = String(parseInt(Utilities.getUuid().replace(/-/g, '').slice(0, 8), 16) % 900000 + 100000);
   const state = { hash: hash_(code, 'reset'), groups: groups, by: u.id, tries: 0, exp: Date.now() + 10 * 60000 };
   PropertiesService.getScriptProperties().setProperty('reset_pending', JSON.stringify(state));
@@ -828,6 +854,7 @@ function resetConfirm_(u, p) {
     const backup = DriveApp.getFileById(ss_().getId()).makeCopy(SS_NAME + ' 清空前備份 ' + stamp, DriveApp.getFolderById(ROOT_FOLDER_ID));
     const g = st.groups;
     let rows = 0, folders = 0;
+    if (g.indexOf('env') >= 0) Repo.all('EnvWaste').forEach(w => { if (w.drive_id) { try { DriveApp.getFileById(w.drive_id).setTrashed(true); } catch (e) {} } });
     if (g.indexOf('shifts') >= 0) Repo.all('Shifts').forEach(s => { if (s.folder_id) { try { DriveApp.getFolderById(s.folder_id).setTrashed(true); folders++; } catch (e) { console.warn('trash folder: ' + e.message); } } });
     if (g.indexOf('tracks') >= 0) {
       if (g.indexOf('vessels') < 0) Repo.all('Vessels').filter(v => bool_(v.tracking) || v.track_id).forEach(v => Repo.update('Vessels', v.id, { tracking: 'FALSE', track_id: '' }));
@@ -1207,7 +1234,7 @@ function fetchPosition_(p) {
 function saveMaster_(sheet, p, fields, required) {
   return withLock_(() => {
     const patch = { };
-    fields.forEach(k => { if (p[k] !== undefined) patch[k] = (k === 'active' || k === 'required') ? (bool_(p[k]) ? 'TRUE' : 'FALSE') : str_(p[k]); });
+    fields.forEach(k => { if (p[k] !== undefined) patch[k] = (k === 'active' || k === 'required' || k === 'env_report') ? (bool_(p[k]) ? 'TRUE' : 'FALSE') : str_(p[k]); });
     required.forEach(k => { if (!p.id && !patch[k]) fail_('Missing field: ' + k); });
     if (SCHEMAS[sheet].indexOf('updated_at') >= 0) patch.updated_at = nowIso_();
     if (p.id) return Repo.update(sheet, p.id, patch);
@@ -1221,6 +1248,8 @@ function deleteMaster_(sheet, id) {
   return withLock_(() => {
     if (sheet === 'Vessels' && (Repo.all('ShiftVessels').some(x => x.vessel_id === id) || Repo.all('Shifts').some(x => x.construction_vessel_id === id)))
       fail_('This vessel is used in batches — set it inactive instead');
+    if (sheet === 'Vessels' && ['EnvDaily', 'EnvWaste', 'EnvIncidents'].some(t => Repo.all(t).some(x => x.vessel_id === id)))
+      fail_('This vessel has environmental records — set it inactive instead');
     const r = Repo.get(sheet, id);
     Repo.remove(sheet, id);
     return { id: id, name: r && r.name };
@@ -1242,6 +1271,109 @@ function saveSettings_(p) {
       if (Repo.get('Settings', k)) Repo.update('Settings', k, { value: v }); else Repo.insert('Settings', { key: k, value: v });
     });
     return true;
+  });
+}
+
+// ============ 離岸環保統計（管理員輸入） ============
+/** 數量欄：空白可；其他必須是 ≥ 0 的數字 */
+function envNum_(v, label) {
+  const t = str_(v).replace(/,/g, '');
+  if (t === '') return '';
+  const n = Number(t);
+  if (!isFinite(n) || n < 0) fail_('Invalid number: ' + label);
+  return String(n);
+}
+function envVessel_(id) {
+  const v = Repo.get('Vessels', id);
+  if (!v) fail_('Vessel not found', 'NOT_FOUND');
+  return v;
+}
+function envDate_(d) { d = str_(d); if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) fail_('Date is required'); return d; }
+const ENV_DAILY_NUM = ['fuel_used_l','fuel_bunkered_l','fuel_rob_l','water_used_m3','water_bunkered_m3','water_made_m3','pob'];
+/** 每日填報：一次存多艘船；同船同日已有就更新，整列清空就刪除 */
+function envDailySave_(u, p) {
+  const rows = Array.isArray(p.rows) ? p.rows : [p];
+  return withLock_(() => {
+    const all = Repo.all('EnvDaily');
+    let saved = 0, removed = 0;
+    rows.forEach(r => {
+      const v = envVessel_(r.vessel_id), date = envDate_(r.date);
+      const rec = { vessel_id: v.id, vessel_name: v.name, date: date, remark: str_(r.remark), updated_by: u.username, updated_at: nowIso_() };
+      ENV_DAILY_NUM.forEach(k => { rec[k] = envNum_(r[k], k); });
+      const old = all.find(x => x.vessel_id === v.id && x.date === date);
+      if (ENV_DAILY_NUM.every(k => rec[k] === '') && !rec.remark) { if (old) { Repo.remove('EnvDaily', old.id); removed++; } return; }
+      if (old) Repo.update('EnvDaily', old.id, rec); else Repo.insert('EnvDaily', Object.assign({ id: genId_() }, rec));
+      saved++;
+    });
+    return { saved: saved, removed: removed };
+  });
+}
+/** 廢棄物：每次交運一筆，items＝{類別: kg}；聯單存 Drive「環保/<船名>/廢棄物聯單」 */
+function envWasteSave_(u, p) {
+  const v = envVessel_(p.vessel_id), date = envDate_(p.date);
+  const items = {};
+  let total = 0;
+  Object.keys(p.items || {}).forEach(k => {
+    const n = envNum_(p.items[k], k);
+    if (n !== '' && Number(n) > 0) { items[str_(k)] = Number(n); total += Number(n); }
+  });
+  if (!total) fail_('Enter the weight of at least one waste category');
+  const rec = { vessel_id: v.id, vessel_name: v.name, date: date, method: str_(p.method), receiver: str_(p.receiver), port: str_(p.port),
+    receipt_no: str_(p.receipt_no), items: JSON.stringify(items), total_kg: String(Math.round(total * 1000) / 1000), remark: str_(p.remark),
+    updated_by: u.username, updated_at: nowIso_() };
+  const file = p.file && p.file.data ? p.file : null;
+  const bytes = file ? Utilities.base64Decode(String(file.data)) : null;
+  if (bytes && bytes.length > MAX_FILE_BYTES) fail_('File is larger than 20 MB');
+  return withLock_(() => {
+    const old = p.id ? Repo.get('EnvWaste', p.id) : null;
+    if (p.id && !old) fail_('Record not found', 'NOT_FOUND');
+    if (file) {
+      const folder = childFolder_(childFolder_(childFolder_(DriveApp.getFolderById(ROOT_FOLDER_ID), '環保'), safeName_(v.name)), '廢棄物聯單');
+      const orig = safeName_(file.name || 'file'), ext = (orig.match(/\.[A-Za-z0-9]{1,8}$/) || [''])[0];
+      const f = folder.createFile(Utilities.newBlob(bytes, str_(file.mime) || 'application/octet-stream',
+        safeName_(date + '_' + v.name + '_廢棄物聯單' + (rec.receipt_no ? '_' + rec.receipt_no : '')) + ext));
+      if (old && old.drive_id) { try { DriveApp.getFileById(old.drive_id).setTrashed(true); } catch (e) {} }
+      rec.drive_id = f.getId(); rec.file_name = orig; rec.file_mime = str_(file.mime);
+    }
+    if (old) return Repo.update('EnvWaste', old.id, rec);
+    const out = Object.assign({ id: genId_(), created_by: u.username, created_at: nowIso_() }, rec);
+    Repo.insert('EnvWaste', out);
+    return out;
+  });
+}
+function envWasteDelete_(id) {
+  return withLock_(() => {
+    const r = Repo.get('EnvWaste', id);
+    if (!r) fail_('Record not found', 'NOT_FOUND');
+    if (r.drive_id) { try { DriveApp.getFileById(r.drive_id).setTrashed(true); } catch (e) {} }
+    Repo.remove('EnvWaste', id);
+    return { id: id };
+  });
+}
+function envFile_(id) {
+  const r = Repo.get('EnvWaste', id);
+  if (!r || !r.drive_id) fail_('File not found', 'NOT_FOUND');
+  const blob = DriveApp.getFileById(r.drive_id).getBlob();
+  if (blob.getBytes().length > 25 * 1024 * 1024) fail_('File too large to preview — open it in Drive');
+  return { name: r.file_name, mime: blob.getContentType(), data: Utilities.base64Encode(blob.getBytes()) };
+}
+const ENV_INC_FIELDS = ['type','severity','substance','quantity','lat','lon','description','action','reported_to','status'];
+function envIncidentSave_(u, p) {
+  const v = envVessel_(p.vessel_id), time = str_(p.time);
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(time)) fail_('Time is required');
+  const rec = { vessel_id: v.id, vessel_name: v.name, time: time, updated_by: u.username, updated_at: nowIso_() };
+  ENV_INC_FIELDS.forEach(k => { rec[k] = str_(p[k]); });
+  if (!rec.type) fail_('Incident type is required');
+  if (['near_miss', 'minor', 'major'].indexOf(rec.severity) < 0) rec.severity = 'minor';
+  if (rec.status !== 'closed') rec.status = 'open';
+  return withLock_(() => {
+    const old = p.id ? Repo.get('EnvIncidents', p.id) : null;
+    if (p.id && !old) fail_('Record not found', 'NOT_FOUND');
+    rec.closed_at = rec.status === 'closed' ? ((old && old.closed_at) || nowIso_()) : '';
+    if (old) return Repo.update('EnvIncidents', old.id, rec);
+    const out = Object.assign({ id: genId_(), created_by: u.username, created_at: nowIso_() }, rec);
+    Repo.insert('EnvIncidents', out);
+    return out;
   });
 }
 
