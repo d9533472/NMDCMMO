@@ -10,7 +10,7 @@
 // 角色：admin（全部＋後台）、mmo（建立／填報批次、上傳）、viewer（唯讀）
 // ============================================================
 
-const VERSION = '1.6.7';
+const VERSION = '1.6.8';
 const ROOT_FOLDER_ID = '1uVkbv4tndRVERhrHmHUzaTvPlHaFV4em';
 const SS_NAME = 'MMO 鯨豚觀察總表';
 const TZ = 'Asia/Taipei';
@@ -630,7 +630,7 @@ function buildState_(rev) {
   const sightings = Repo.all('Sightings');
   const files = Repo.all('Files').map(f => { const c = Object.assign({}, f); delete c.thumb; return c; });
   const items = Repo.all('UploadItems');
-  svs.forEach(sv => { sv.checks = checks_(sv, pauses, sightings, files, items, st, posFor_(sv, shifts.find(x => x.id === sv.shift_id), st)); });
+  svs.forEach(sv => { sv.checks = checks_(sv, pauses, sightings, files, items, st, posFor_(sv, shifts.find(x => x.id === sv.shift_id), st), svs); });
   const out = {
     version: VERSION, settings: pub, rev: rev,
     vessels: Repo.all('Vessels'), observers: Repo.all('Observers'), items: items,
@@ -675,10 +675,19 @@ function slotsOf_(from, to) {
   for (let t = Math.floor(a / H12) * H12; t <= b; t += H12) out.push(new Date(t).toISOString().slice(0, 13).replace('T', '_'));
   return out;
 }
-function slotLabel_(k) { return k.slice(5, 10) + ' ' + k.slice(11, 13) + '–' + (k.slice(11, 13) === '00' ? '12' : '24'); }
+/** 同批次各船時段同步：自最早的預觀測開始到最晚的實際觀測結束（有船仍進行中就算到現在）；此船尚未開始則無時段。前端 svSlots 同規則 */
+function shiftSlots_(sv, svs) {
+  if (!sv.pre_start) return [];
+  const sib = svs.filter(x => x.shift_id === sv.shift_id && x.pre_start);
+  const from = sib.reduce((m, x) => x.pre_start < m ? x.pre_start : m, sv.pre_start);
+  const to = sib.some(x => !x.work_end) ? '' : sib.reduce((m, x) => x.work_end > m ? x.work_end : m, '');
+  return slotsOf_(from, to);
+}
+function slotLabel_(k) { return k.slice(5, 10) + ' ' + k.slice(11, 13) + ':00–' + (k.slice(11, 13) === '00' ? '12' : '24') + ':00'; }
+function slotLabelZh_(k) { return Number(k.slice(5, 7)) + '月' + Number(k.slice(8, 10)) + '日 ' + k.slice(11, 13) + '時~' + (k.slice(11, 13) === '00' ? '12' : '24') + '時'; }
 function slotFolder_(k) { return k.slice(5, 10) + '_' + k.slice(11, 13) + '-' + (k.slice(11, 13) === '00' ? '12' : '24'); }
 /** 回傳 { status, warnings:[{code,en,zh}], missing:[{item_id,en,zh}], docs:[have,need], photos:[have,need] } */
-function checks_(sv, pauses, sightings, files, items, st, pos) {
+function checks_(sv, pauses, sightings, files, items, st, pos, svs) {
   const W = [];
   const add = (code, en, zh, pauseId) => W.push({ code: code, en: en, zh: zh, pause_id: pauseId || '' });
   const preMin = Number(st.pre_watch_min) || 30, alertM = Number(st.alert_zone_m) || 750;
@@ -748,7 +757,7 @@ function checks_(sv, pauses, sightings, files, items, st, pos) {
 
   const hasSighting = ss.length > 0, hasPause = ps.length > 0;
   const missing = [];
-  const cnt = { doc: [0, 0], photo: [0, 0] }, slots = slotsOf_(sv.pre_start, sv.work_end);
+  const cnt = { doc: [0, 0], photo: [0, 0] }, slots = shiftSlots_(sv, svs || [sv]);
   items.filter(i => bool_(i.active) && bool_(i.required)).forEach(i => {
     if (i.cond === 'sighting' && !hasSighting) return;
     if (i.cond === 'pause' && !hasPause) return;
@@ -757,7 +766,7 @@ function checks_(sv, pauses, sightings, files, items, st, pos) {
       slots.forEach(t => {
         cnt.photo[1]++;
         if (files.some(f => f.sv_id === sv.id && f.item_id === i.id && f.slot === t)) cnt.photo[0]++;
-        else missing.push({ item_id: i.id, en: (i.name_en || i.name_zh) + ' ' + slotLabel_(t), zh: i.name_zh + ' ' + slotLabel_(t) });
+        else missing.push({ item_id: i.id, en: (i.name_en || i.name_zh) + ' ' + slotLabel_(t), zh: i.name_zh + ' ' + slotLabelZh_(t) });
       });
       return;
     }
@@ -1412,7 +1421,7 @@ function rebuildSummary_() {
   const rows = [];
   shifts.forEach(s => {
     svs.filter(x => x.shift_id === s.id).sort((a, b) => Number(a.sort) - Number(b.sort)).forEach(sv => {
-      const ck = checks_(sv, pauses, sightings, files, items, st, posFor_(sv, s, st));
+      const ck = checks_(sv, pauses, sightings, files, items, st, posFor_(sv, s, st), svs);
       const crew = parseJson_(sv.crew, {});
       const ps = pauses.filter(p => p.sv_id === sv.id);
       const ss = sightings.filter(x => x.sv_id === sv.id);

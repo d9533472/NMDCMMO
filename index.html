@@ -2108,15 +2108,21 @@ function round1(v) { return v === undefined || v === null || isNaN(v) ? undefine
 
 // ==================== Uploads ====================
 function itemsActive() { return S.items.filter(i => bool(i.active)).sort((a, b) => Number(a.sort) - Number(b.sort)); }
-// 照片每 12 小時時段（00–12、12–24）各一組：預觀測開始到實際觀測結束，進行中算到現在；後端 slotsOf_ 同規則
+// 照片每 12 小時時段（00–12、12–24）各一組；同批次各船時段同步：最早預觀測開始到最晚實際觀測結束，有船進行中算到現在；後端 shiftSlots_ 同規則
 function svSlots(sv) {
   if (!sv.pre_start) return [];
+  const sib = S.svs.filter(x => x.shift_id === sv.shift_id && x.pre_start);
+  const from = sib.reduce((m, x) => x.pre_start < m ? x.pre_start : m, sv.pre_start);
+  const to = sib.some(x => !x.work_end) ? '' : sib.reduce((m, x) => x.work_end > m ? x.work_end : m, '');
   const abs = t => Date.UTC(+t.slice(0, 4), +t.slice(5, 7) - 1, +t.slice(8, 10), +t.slice(11, 13), +t.slice(14, 16));
-  const H12 = 12 * 36e5, a = abs(sv.pre_start), b = Math.max(abs(sv.work_end || nowLocal()) - 6e4, a), out = [];
+  const H12 = 12 * 36e5, a = abs(from), b = Math.max(abs(to || nowLocal()) - 6e4, a), out = [];
   for (let t = Math.floor(a / H12) * H12; t <= b; t += H12) out.push(new Date(t).toISOString().slice(0, 13).replace('T', '_'));
   return out;
 }
-function slotLabel(k) { return k.slice(5, 10) + ' ' + k.slice(11, 13) + '–' + (k.slice(11, 13) === '00' ? '12' : '24'); }
+function slotLabel(k) {
+  const e = k.slice(11, 13) === '00' ? '12' : '24';
+  return L(k.slice(5, 10) + ' ' + k.slice(11, 13) + ':00–' + e + ':00', Number(k.slice(5, 7)) + '月' + Number(k.slice(8, 10)) + '日 ' + k.slice(11, 13) + '時~' + e + '時');
+}
 function uploadGrid(sv, ed) {
   const hasS = S.sightings.some(x => x.sv_id === sv.id), hasP = S.pauses.some(x => x.sv_id === sv.id);
   const list = itemsActive().concat(S.items.filter(i => !bool(i.active) && S.files.some(f => f.sv_id === sv.id && f.item_id === i.id)));
