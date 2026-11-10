@@ -10,7 +10,7 @@
 // 角色：admin（全部＋後台）、mmo（建立／填報批次、上傳）、viewer（唯讀）
 // ============================================================
 
-const VERSION = '1.6.8';
+const VERSION = '1.6.9';
 const ROOT_FOLDER_ID = '1uVkbv4tndRVERhrHmHUzaTvPlHaFV4em';
 const SS_NAME = 'MMO 鯨豚觀察總表';
 const TZ = 'Asia/Taipei';
@@ -817,6 +817,7 @@ function saveShift_(u, p) {
       Repo.remove('ShiftVessels', x.id);
     });
     const crewDefault = p.crew && typeof p.crew === 'object' ? p.crew : {};
+    if (!p.id) crewUnique_(vesselIds.map(vid => crewIds_(crewDefault[vid])));   // 編輯批次不重檢，避免舊資料卡住；改人員時在 sv.save 檢查
     vesselIds.forEach((vid, i) => {
       const v = vessels.find(x => x.id === vid);
       if (!v) fail_('Vessel not found');
@@ -939,6 +940,19 @@ function shiftVesselIds_(shiftId) {
   const s = Repo.get('Shifts', shiftId);
   return (s ? [s.construction_vessel_id] : []).concat(Repo.all('ShiftVessels').filter(x => x.shift_id === shiftId).map(x => x.vessel_id));
 }
+/** crew（JSON 或物件）裡所有觀察人員 id */
+function crewIds_(crew) {
+  const c = typeof crew === 'string' ? parseJson_(crew, {}) : (crew || {});
+  return Object.keys(c).reduce((a, k) => a.concat(String((c[k] && c[k].id) || '').split(',').filter(Boolean)), []);
+}
+/** 同一批次中，一位觀察人員只能在一艘 MMO 船 */
+function crewUnique_(lists) {
+  const seen = {};
+  lists.forEach(ids => ids.filter((x, i) => ids.indexOf(x) === i).forEach(id => {
+    if (seen[id]) fail_('An observer can only be on one MMO vessel in a batch');
+    seen[id] = true;
+  }));
+}
 function saveShiftVessel_(u, p) {
   const before = Repo.get('ShiftVessels', p.id);
   const rec = saveShiftVesselRow_(u, p);
@@ -960,6 +974,7 @@ function saveShiftVesselRow_(u, p) {
       else v = str_(v);
       patch[k] = v;
     });
+    if (patch.crew !== undefined) crewUnique_([crewIds_(patch.crew)].concat(Repo.all('ShiftVessels').filter(x => x.shift_id === sv.shift_id && x.id !== sv.id).map(x => crewIds_(x.crew))));
     return Repo.update('ShiftVessels', sv.id, patch);
   });
 }

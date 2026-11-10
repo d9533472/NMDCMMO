@@ -327,6 +327,7 @@ textarea{resize:vertical;min-height:64px}
 .crew-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
 .crew-pick>label:first-child{display:block;font-weight:600;font-size:13px;margin-bottom:4px}
 .crew-list{display:flex;flex-direction:column;gap:4px;max-height:150px;overflow-y:auto;margin-top:6px;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius)}
+.crew-list .chk:has(input:disabled){opacity:.55;cursor:not-allowed}
 @media(max-width:560px){.crew-grid{grid-template-columns:1fr}}
 .trk-card .ro{display:flex;flex-wrap:wrap;align-items:center;gap:2px 6px}
 .trk-card i{flex:none;display:inline-block}
@@ -553,7 +554,7 @@ const ERR_ZH = {
   'Could not find a position in the API response': 'API 回應中沒有船位資料',
   'This vessel has environmental records — set it inactive instead': '這艘船已有環保紀錄，請改為停用',
   'Enter the weight of at least one waste category': '請至少填一個廢棄物類別的重量', 'Time is required': '請填時間',
-  'Incident type is required': '請選事件類型', 'Vessel not found': '找不到船舶', 'You cannot demote or disable your own account': '不能降級或停用自己的帳號'
+  'Incident type is required': '請選事件類型', 'An observer can only be on one MMO vessel in a batch': '同一批次中，一位觀察人員只能在一艘 MMO 船', 'Vessel not found': '找不到船舶', 'You cannot demote or disable your own account': '不能降級或停用自己的帳號'
 };
 function trErr(m) {
   if (LANG !== 'zh') return m;
@@ -1573,7 +1574,7 @@ function shiftModal(id) {
   const obs = S.observers.filter(o => bool(o.active));
   const crewGrid = vid => {
     const v = S.vessels.find(x => x.id === vid);
-    return `<div class="crew-block" data-vid="${vid}" style="border:1px solid var(--border);border-radius:var(--radius);padding:10px;margin-top:8px">
+    return `<div class="crew-block" data-vid="${vid}" data-name="${esc(v ? v.name : '')}" style="border:1px solid var(--border);border-radius:var(--radius);padding:10px;margin-top:8px">
       <b style="color:var(--navy)">🚤 ${esc(v ? v.name : '')}</b><div style="margin-top:8px">${crewPicker(slots, {}, obs)}</div></div>`;
   };
   const body = `<div class="form-grid">
@@ -1603,7 +1604,9 @@ function shiftModal(id) {
       area.querySelectorAll('.crew-block').forEach(b => keep[b.dataset.vid] = b);
       area.innerHTML = ids.length ? `<label class="small" style="font-weight:600;color:var(--muted)">${L('Observers on each MMO vessel', '各 MMO 船觀察人員')}</label>` : '';
       ids.forEach(id => { if (keep[id]) area.appendChild(keep[id]); else area.insertAdjacentHTML('beforeend', crewGrid(id)); });
+      crewLock(area);
     };
+    bg.querySelector('#crewArea').addEventListener('change', e => { if (e.target.closest('.crew-list')) crewLock(bg.querySelector('#crewArea')); });
     bg.querySelectorAll('.shV').forEach(c => c.onchange = sync);
     sync();
   }
@@ -1913,13 +1916,15 @@ async function deleteShift(id) {
 }
 
 // 觀察人員：每個職位一個可搜尋的勾選清單；crew[職位]＝{ id:'a,b', name:'甲、乙' }，顯示與報表都直接用 name
-function crewPicker(slots, crew, obs) {
+// 同一批次一位人員只能在一艘船：taken＝{ 人員 id: 已在的船名 }，這些人顯示但不能勾
+function crewPicker(slots, crew, obs, taken) {
+  taken = taken || {};
   return `<div class="crew-grid">${slots.map(k => {
     const ids = String((crew[k] && crew[k].id) || '').split(',').filter(Boolean);
     const list = obs.filter(o => !o.role || o.role === 'both' || k.toUpperCase().indexOf(o.role) === 0 || ids.indexOf(o.id) >= 0);
     return `<div class="crew-pick" data-slot="${esc(k)}"><label>${esc(k)} <span class="muted crew-n">${ids.length ? L(ids.length + ' selected', '已選 ' + ids.length) : ''}</span></label>
       <input type="search" placeholder="${L('Search name…', '搜尋姓名…')}" oninput="crewFilter(this)">
-      <div class="crew-list" onchange="crewCount(this)">${list.map(o => `<label class="chk"><input type="checkbox" value="${o.id}" ${ids.indexOf(o.id) >= 0 ? 'checked' : ''}>${esc(o.name)}</label>`).join('') || `<span class="small muted">${L('No one in the personnel list', '人員清單沒有這個職位的人')}</span>`}</div></div>`;
+      <div class="crew-list" onchange="crewCount(this)">${list.map(o => `<label class="chk"><input type="checkbox" value="${o.id}" ${ids.indexOf(o.id) >= 0 ? 'checked' : taken[o.id] ? 'disabled' : ''}>${esc(o.name)}<span class="crew-taken small muted">${ids.indexOf(o.id) < 0 && taken[o.id] ? ' · ' + L('on ', '已在 ') + esc(taken[o.id]) : ''}</span></label>`).join('') || `<span class="small muted">${L('No one in the personnel list', '人員清單沒有這個職位的人')}</span>`}</div></div>`;
   }).join('')}</div>`;
 }
 function crewFilter(input) {
@@ -1938,11 +1943,25 @@ function crewRead(root) {
   });
   return c;
 }
+function crewIdsOf(crew) { return Object.values(crew || {}).map(c => String((c && c.id) || '')).join(',').split(',').filter(Boolean); }
+// 新增批次時：某船勾了的人，在其他船的清單裡鎖住
+function crewLock(area) {
+  const blocks = Array.from(area.querySelectorAll('.crew-block'));
+  blocks.forEach(b => {
+    const taken = {};
+    blocks.filter(o => o !== b).forEach(o => o.querySelectorAll('.crew-list input:checked').forEach(x => { taken[x.value] = o.dataset.name; }));
+    b.querySelectorAll('.crew-list input').forEach(x => {
+      x.disabled = !x.checked && !!taken[x.value];
+      x.parentElement.querySelector('.crew-taken').textContent = x.disabled ? ' · ' + L('on ', '已在 ') + taken[x.value] : '';
+    });
+  });
+}
 function crewModal(svId) {
   const sv = S.svs.find(x => x.id === svId), crew = json(sv.crew, {});
-  const current = Object.values(crew).map(c => String((c && c.id) || '')).join(',').split(',');
+  const current = crewIdsOf(crew), taken = {};
+  S.svs.filter(x => x.shift_id === sv.shift_id && x.id !== sv.id).forEach(x => crewIdsOf(json(x.crew, {})).forEach(id => { taken[id] = x.vessel_name; }));
   const obs = S.observers.filter(o => bool(o.active) || current.indexOf(o.id) >= 0);
-  openModal(L('Observers', '觀察人員') + ' — ' + esc(sv.vessel_name), crewPicker(lines(S.settings.crew_slots), crew, obs), {
+  openModal(L('Observers', '觀察人員') + ' — ' + esc(sv.vessel_name), crewPicker(lines(S.settings.crew_slots), crew, obs, taken), {
     onSave: async (bg, btn) => { await mut('sv.save', { id: svId, crew: crewRead(bg) }, L('Saved', '已儲存'), btn); } });
 }
 
