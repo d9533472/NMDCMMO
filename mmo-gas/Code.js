@@ -10,7 +10,7 @@
 // 角色：admin（全部＋後台）、mmo（建立／填報批次、上傳）、viewer（唯讀）
 // ============================================================
 
-const VERSION = '1.6.9';
+const VERSION = '1.7.0';
 const ROOT_FOLDER_ID = '1uVkbv4tndRVERhrHmHUzaTvPlHaFV4em';
 const SS_NAME = 'MMO 鯨豚觀察總表';
 const TZ = 'Asia/Taipei';

@@ -597,6 +597,14 @@ function openModal(title, body, opt) {
   const f = bg.querySelector('input:not([type=checkbox]):not([type=file]),select,textarea'); if (f && !opt.noFocus) setTimeout(() => f.focus(), 30);
   return bg;
 }
+function alertBox(msg) {
+  return new Promise(res => {
+    const bg = openModal('⚠ ' + L('Check the times', '請確認時間'), `<div style="line-height:1.6">${msg}</div>`, { foot: `<button class="btn btn-primary" data-ok>${L('OK', '我知道了')}</button>`, noFocus: true });
+    bg.querySelector('[data-x]').remove();
+    bg.querySelector('[data-ok]').onclick = () => { bg.remove(); res(); };
+    bg.querySelector('.modal-x').addEventListener('click', () => res());
+  });
+}
 function confirmBox(msg, okText, danger) {
   return new Promise(res => {
     const bg = openModal(L('Please confirm', '請確認'), `<div style="line-height:1.6">${msg}</div>`, {
@@ -1457,6 +1465,7 @@ function renderDashboard() {
       <div class="stat amber"><div class="v">${monthSight.length}</div><div class="l">${L('Sightings this month', '本月目擊次數')}</div></div>
       <div class="stat ${missing.length ? 'red' : ''}"><div class="v">${missing.length}</div><div class="l">${L('Completed but missing uploads', '已完工但缺件')}</div></div>
     </div>
+    ${pauseStatsSection()}
     ${envKpiRow()}
     <div class="section-header" style="padding:0 0 10px;border:0"><h3>${L('Active MMO vessels', '作業中 MMO 船')}</h3>
       <button class="btn btn-green w" onclick="shiftModal()">＋ ${L('New batch', '新增批次')}</button></div>
@@ -1475,6 +1484,29 @@ function renderDashboard() {
     </div>`;
   WX.vfit = false;
   renderWeather();
+}
+// 暫停施工統計（今天／本月，依原因）：同批次各船同步記錄的同一次暫停只算一次；進行中的算到現在
+function pauseStats() {
+  const now = nowLocal(), td = today(), seen = {};
+  const cat = r => isSightReason(r) ? 1 : /天氣|能見度|weather|visib/i.test(r || '') ? 2 : 3;
+  const z = () => [0, 1, 2, 3].map(() => ({ n: 0, m: 0 })), out = { day: z(), month: z() };
+  S.pauses.forEach(p => {
+    if (!p.start || seen[p.shift_id + '|' + p.start]) return;
+    seen[p.shift_id + '|' + p.start] = 1;
+    const m = Math.max(0, mins(p.start, p.end || now)) || 0, c = cat(p.reason);
+    [['day', p.start.slice(0, 10) === td], ['month', p.start.slice(0, 7) === td.slice(0, 7)]].forEach(([k, on]) => {
+      if (on) [0, c].forEach(i => { out[k][i].n++; out[k][i].m += m; });
+    });
+  });
+  return out;
+}
+function pauseStatsSection() {
+  const st = pauseStats(), cell = x => x.n ? `<b>${x.n}</b> ${L('×', '次')} · ${fmtDur(x.m)}` : '<span class="muted">—</span>';
+  const row = (lbl, a) => `<tr><td><b>${lbl}</b></td>${a.map(x => `<td>${cell(x)}</td>`).join('')}</tr>`;
+  return `<div class="section"><div class="section-header"><h3>⏸ ${L('Work pauses', '暫停施工統計')}</h3>
+      <span class="small muted">${L('A pause recorded on several vessels of one batch counts once', '同批次各船同步的暫停只算一次')}</span></div>
+    <div class="table-wrap"><table class="tbl"><tr><th></th><th>${L('Total', '合計')}</th><th>🐬 ${L('Cetaceans', '目擊鯨豚')}</th><th>🌧 ${L('Weather', '天氣因素')}</th><th>${L('Other', '其他')}</th></tr>
+      ${row(L('Today', '今天'), st.day)}${row(L('This month', '本月'), st.month)}</table></div></div>`;
 }
 function vesselPosSection() {
   const vs = S.vessels.filter(v => bool(v.active) && v.mmsi).sort((a, b) => (a.kind + a.name).localeCompare(b.kind + b.name));
@@ -1696,6 +1728,7 @@ function preFillModal(svId, id) {
     <div class="fg"><label>${L('Pre-watch end', '預觀測結束')}</label><input id="pfE" type="datetime-local" value="${esc(p.pre_end || '')}"></div></div>`, {
     onSave: async (bg, btn) => {
       if (!val(bg, 'pfS') || !val(bg, 'pfE')) { toast(L('Enter both times', '請填寫開始與結束時間'), 'error'); return false; }
+      if (!(await timeOk(S.svs.find(x => x.id === svId), null, { id, pre_start: val(bg, 'pfS'), pre_end: val(bg, 'pfE') }))) return false;
       await mut('pause.save', { id, pre_start: val(bg, 'pfS'), pre_end: val(bg, 'pfE') }, L('Saved', '已儲存'), btn);
     } });
 }
@@ -1714,11 +1747,11 @@ function svPanel(s, sv, ed) {
   const ss = S.sightings.filter(x => x.sv_id === sv.id).sort((a, b) => a.time.localeCompare(b.time));
   const preMin = settingsNum('pre_watch_min', 30);
   const tRow = (k, en, zh, extra) => `<div class="trow"><label>${L(en, zh)}</label>
-      <input type="datetime-local" value="${esc(sv[k] || '')}" ${ed ? '' : 'disabled'} onchange="saveSv('${sv.id}',{${k}:this.value})">
-      <div class="toolbar">${ed ? `<button class="btn btn-sm w" onclick="saveSv('${sv.id}',{${k}:nowLocal()})">${L('Now', '現在')}</button>` : ''}${extra || ''}</div></div>`;
+      <input type="datetime-local" value="${esc(sv[k] || '')}" ${ed ? '' : 'disabled'} onchange="manualSv(this,'${sv.id}','${k}',this.value)">
+      <div class="toolbar">${ed ? `<button class="btn btn-sm w" onclick="manualSv(null,'${sv.id}','${k}',nowLocal())">${L('Now', '現在')}</button>` : ''}${extra || ''}</div></div>`;
   // 作業時間依實際順序：暫停施工 → （需要時）重新預觀測 → 回復施工；「現在」只出現在進行中暫停的下一步
   const pRow = (p, f, en, zh, step, note) => `<div class="trow"><label>${L(en, zh)}${note ? `<div class="small muted" style="font-weight:400">${note}</div>` : ''}</label>
-      <input type="datetime-local" value="${esc(p[f] || '')}" ${ed && !(f === 'end' && !p.end && !step) ? '' : 'disabled'} onchange="savePause('${p.id}','${f}',this.value)">
+      <input type="datetime-local" value="${esc(p[f] || '')}" ${ed && !(f === 'end' && !p.end && !step) ? '' : 'disabled'} onchange="manualPause(this,'${p.id}','${f}')">
       <div class="toolbar">${ed && step ? `<button class="btn btn-sm w" onclick="doNext('${sv.id}','${step}')">${L('Now', '現在')}</button>` : ''}</div></div>`;
   const pauseRows = () => ps.slice().sort((a, b) => tms(a.start) - tms(b.start)).map((p, i) => {
     const st = pauseState(p), step = p.end ? '' : pauseStep(p), n = ps.length > 1 ? ' ' + (i + 1) : '';
@@ -1862,6 +1895,56 @@ async function saveSv(id, patch) {
   try { await mut('sv.save', Object.assign({ id }, patch)); if (patch.work_end) trackImage(id, true); } catch (e) {}
 }
 async function savePause(id, field, value) { try { await mut('pause.save', { id, [field]: value }); } catch (e) {} }
+// 手動填時間的防呆：依作業順序（預觀測 → 實際觀測 → 各次暫停施工／重新預觀測／回復施工 → 實際觀測結束），後面的時間不能早於前面；預觀測不滿 N 分鐘要確認
+function timeSeq(sv, svPatch, pp) {
+  const v = Object.assign({}, sv, svPatch || {}), chS = svPatch || {}, chP = pp || {};
+  let ps = S.pauses.filter(p => p.sv_id === sv.id && (!pp || !pp.id || p.id !== pp.id)).map(p => ({ p, ch: {} }));
+  if (pp) ps.push({ p: Object.assign({}, pp.id ? S.pauses.find(x => x.id === pp.id) : {}, pp), ch: chP });
+  ps = ps.filter(x => x.p.start).sort((a, b) => a.p.start.localeCompare(b.p.start));
+  const seq = [[v.pre_start, L('Pre-watch start', '預觀測開始'), 'pre_start' in chS], [v.pre_end, L('Pre-watch end', '預觀測結束'), 'pre_end' in chS],
+    [v.work_start, L('Observation start', '實際觀測開始'), 'work_start' in chS]];
+  const pre = [[v.pre_start, v.pre_end, 'pre_start' in chS || 'pre_end' in chS, L('Pre-watch', '預觀測')]];
+  ps.forEach((x, i) => {
+    const n = ps.length > 1 ? ' ' + (i + 1) : '', p = x.p, c = x.ch;
+    seq.push([p.start, L('Work paused', '暫停施工') + n, 'start' in c], [p.pre_start, L('New pre-watch start', '重新預觀測開始') + n, 'pre_start' in c],
+      [p.pre_end, L('New pre-watch end', '重新預觀測結束') + n, 'pre_end' in c], [p.end, L('Work resumed', '回復施工') + n, 'end' in c]);
+    pre.push([p.pre_start, p.pre_end, 'pre_start' in c || 'pre_end' in c, L('New pre-watch', '重新預觀測') + n]);
+  });
+  seq.push([v.work_end, L('Observation end', '實際觀測結束'), 'work_end' in chS]);
+  return { seq: seq.filter(x => x[0]), pre };
+}
+async function timeOk(sv, svPatch, pp) {
+  const { seq, pre } = timeSeq(sv, svPatch, pp), f = t => fmtT(t, true);
+  for (let j = 1; j < seq.length; j++) for (let i = j - 1; i >= 0; i--) {   // 由近往遠找，提示緊鄰的上一步
+    if (seq[j][0] >= seq[i][0] || !(seq[i][2] || seq[j][2])) continue;   // 只檢查這次改到的時間，舊資料不卡
+    await alertBox(L(`<b>${seq[j][1]}</b> (${f(seq[j][0])}) cannot be earlier than <b>${seq[i][1]}</b> (${f(seq[i][0])}). Not saved.`,
+      `<b>${seq[j][1]}</b>（${f(seq[j][0])}）不能早於 <b>${seq[i][1]}</b>（${f(seq[i][0])}），未儲存。`));
+    return false;
+  }
+  const need = settingsNum('pre_watch_min', 30), short = pre.find(x => x[0] && x[1] && x[2] && mins(x[0], x[1]) < need);
+  if (short && !(await confirmBox(L(`${short[3]} is only <b>${mins(short[0], short[1])} min</b> (guideline: at least ${need} min). Save anyway?`,
+    `${short[3]}僅 <b>${mins(short[0], short[1])} 分鐘</b>（作業指引須滿 ${need} 分鐘），確定仍要儲存？`), L('Save anyway', '仍要儲存'), true))) return false;
+  return true;
+}
+async function manualSv(el, id, k, value) {
+  const sv = S.svs.find(x => x.id === id);
+  if (value && !(await timeOk(sv, { [k]: value }))) { if (el) el.value = sv[k] || ''; return; }
+  saveSv(id, { [k]: value });
+}
+async function manualPause(el, id, f) {
+  const p = S.pauses.find(x => x.id === id), sv = S.svs.find(x => x.id === p.sv_id);
+  if (el.value && !(await timeOk(sv, null, { id, [f]: el.value }))) { el.value = p[f] || ''; return; }
+  savePause(id, f, el.value);
+}
+// 同批次的 MMO 船流程同步：按一艘船的流程按鈕，其他狀態相符的船以同一時間記錄同一步驟（軌跡隨預觀測開始自動記錄）；目擊、照片仍各船分開
+function peerSvs(svId, ok) { const sv = S.svs.find(x => x.id === svId); return S.svs.filter(x => x.shift_id === sv.shift_id && x.id !== svId && ok(x)); }
+function openPauseOf(svId) { return S.pauses.find(p => p.sv_id === svId && !p.end); }
+async function syncPeers(list, fn) {
+  const done = [];
+  for (const x of list) { try { await fn(x); done.push(x.vessel_name); } catch (e) { toast(x.vessel_name + L(': ', '：') + e.message, 'error'); } }
+  return done.length ? L(' (also ', '（同步：') + done.join(L(', ', '、')) + L(')', '）') : '';
+}
+const stIn = (...a) => x => a.indexOf(x.checks.status) >= 0;
 async function doNext(svId, k) {
   const sv = S.svs.find(x => x.id === svId);
   const openP = S.pauses.find(x => x.sv_id === svId && !x.end);
@@ -1876,14 +1959,23 @@ async function doNext(svId, k) {
     return;
   }
   if (k === 'pre_redo') {
-    const t = fmtT(sv.pre_start, true), note = L(`Pre-watch started ${t} restarted after a sighting`, `${t} 開始的預觀測因目擊鯨豚重新計時`);
-    return mut('sv.save', { id: svId, pre_start: nowLocal(), pre_end: '', remark: (sv.remark ? sv.remark + '；' : '') + note }, L('Pre-watch restarted', '預觀測已重新開始')).catch(() => {});
+    const t = nowLocal(), note = x => L(`Pre-watch started ${fmtT(x.pre_start, true)} restarted after a sighting`, `${fmtT(x.pre_start, true)} 開始的預觀測因目擊鯨豚重新計時`);
+    showLoading(L('Saving…', '儲存中…'));
+    const also = await syncPeers(peerSvs(svId, stIn('pre', 'preDone')), x => api('sv.save', { id: x.id, pre_start: t, pre_end: '', remark: (x.remark ? x.remark + '；' : '') + note(x) }));
+    return mut('sv.save', { id: svId, pre_start: t, pre_end: '', remark: (sv.remark ? sv.remark + '；' : '') + note(sv) }, L('Pre-watch restarted', '預觀測已重新開始') + also).catch(() => {});
   }
-  if (k === 'rp_start') return mut('pause.save', { id: openP.id, pre_start: nowLocal(), pre_end: '' }, L('Pre-watch started', '預觀測開始')).catch(() => {});
+  if (k === 'rp_start') {
+    const t = nowLocal();
+    showLoading(L('Saving…', '儲存中…'));
+    const also = await syncPeers(peerSvs(svId, x => openPauseOf(x.id)), x => api('pause.save', { id: openPauseOf(x.id).id, pre_start: t, pre_end: '' }));
+    return mut('pause.save', { id: openP.id, pre_start: t, pre_end: '' }, L('Pre-watch started', '預觀測開始') + also).catch(() => {});
+  }
   if (k === 'rp_end') {
-    const m = mins(openP.pre_start, nowLocal()), need = settingsNum('pre_watch_min', 30);
+    const t = nowLocal(), m = mins(openP.pre_start, t), need = settingsNum('pre_watch_min', 30);
     if (m < need && !(await confirmBox(L(`Pre-watch has only lasted ${m} min (guideline: ${need} min). End it anyway?`, `預觀測僅 ${m} 分鐘（須滿 ${need} 分鐘），確定要結束？`), L('End pre-watch', '結束預觀測'), true))) return;
-    return mut('pause.save', { id: openP.id, pre_end: nowLocal() }, L('Pre-watch ended', '預觀測結束')).catch(() => {});
+    showLoading(L('Saving…', '儲存中…'));
+    const also = await syncPeers(peerSvs(svId, x => { const o = openPauseOf(x.id); return o && o.pre_start && !o.pre_end; }), x => api('pause.save', { id: openPauseOf(x.id).id, pre_end: t }));
+    return mut('pause.save', { id: openP.id, pre_end: t }, L('Pre-watch ended', '預觀測結束') + also).catch(() => {});
   }
   if (k === 'pause') return pauseModal(svId);
   if (k === 'resume') { const p = S.pauses.find(x => x.sv_id === svId && !x.end); return pauseModal(svId, p && p.id, true); }
@@ -1891,14 +1983,20 @@ async function doNext(svId, k) {
     const m = mins(sv.pre_start, nowLocal()), need = settingsNum('pre_watch_min', 30);
     if (m < need && !(await confirmBox(L(`Pre-watch has only lasted ${m} min (guideline: ${need} min). End it anyway?`, `預觀測僅 ${m} 分鐘（作業指引需 ${need} 分鐘），確定要結束？`), L('End pre-watch', '結束預觀測'), true))) return;
   }
-  if (k === 'work_end' && !(await confirmBox(L('End the observation for this vessel now?', '確定此船現在結束實際觀測？'), L('End observation', '結束實際觀測')))) return;
-  const patch = { id: svId }; patch[k] = nowLocal();
-  if (k === 'work_end') { const p = S.pauses.find(x => x.sv_id === svId && !x.end); if (p) await api('pause.save', { id: p.id, end: patch.work_end }); }
+  const peerOk = { pre_start: stIn('idle'), pre_end: stIn('pre'), work_start: stIn('preDone'), work_end: stIn('work', 'paused') }[k];
+  const peers = peerOk ? peerSvs(svId, peerOk) : [];
+  if (k === 'work_end' && !(await confirmBox(L('End the observation for this vessel now?', '確定此船現在結束實際觀測？') +
+    (peers.length ? '<br>' + L('Also ends: ', '同批次一併結束：') + esc(peers.map(x => x.vessel_name).join('、')) : ''), L('End observation', '結束實際觀測')))) return;
+  const t = nowLocal(), endPause = async id => { const p = openPauseOf(id); if (p) await api('pause.save', { id: p.id, end: t }); };
+  const patch = { id: svId }; patch[k] = t;
+  showLoading(L('Saving…', '儲存中…'));
+  const also = await syncPeers(peers, async x => { if (k === 'work_end') await endPause(x.id); await api('sv.save', { id: x.id, [k]: t }); });
   try {
-    await mut('sv.save', patch, { pre_start: L('Pre-watch started', '預觀測開始'), pre_end: L('Pre-watch ended', '預觀測結束'), work_start: L('Observation started', '開始實際觀測'), work_end: L('Observation ended', '實際觀測結束') }[k]);
-    if (k === 'pre_start' && !sv.weather) fetchWeather(svId, true);
-    if (k === 'work_end') trackImage(svId, true);
-  } catch (e) {}
+    if (k === 'work_end') await endPause(svId);
+    await mut('sv.save', patch, { pre_start: L('Pre-watch started', '預觀測開始'), pre_end: L('Pre-watch ended', '預觀測結束'), work_start: L('Observation started', '開始實際觀測'), work_end: L('Observation ended', '實際觀測結束') }[k] + also);
+    if (k === 'pre_start') [sv].concat(peers).forEach(x => { if (!x.weather) fetchWeather(x.id, true); });
+    if (k === 'work_end') for (const x of [sv].concat(peers)) await trackImage(x.id, true);
+  } catch (e) { hideLoading(); }
 }
 async function closeShift(id) {
   const vs = svsOf(id);
@@ -1997,7 +2095,12 @@ function pauseModal(svId, id, resume) {
         if (!linked || v.time !== linked.time || v.species !== linked.species || v.count !== String(linked.count))
           rec.sighting = Object.assign({ id: rec.sighting_id, sv_id: svId, in_alert_zone: true }, v, linked ? {} : { action: SIGHT_ACT, detection: /PAM/i.test(rec.reason) ? 'PAM 被動聲學 | PAM' : '' });
       }
-      await mut('pause.save', rec, L('Saved', '已儲存'), btn);
+      if (!(await timeOk(S.svs.find(x => x.id === svId), null, { id: rec.id, start: rec.start, end: rec.end, pre_start: rec.pre_start, pre_end: rec.pre_end }))) return false;
+      let also = '';
+      if (!p) also = await syncPeers(peerSvs(svId, stIn('work')), x => api('pause.save', { sv_id: x.id, start: rec.start, end: rec.end, reason: rec.reason, pre_start: rec.pre_start, pre_end: rec.pre_end, remark: rec.remark }));
+      else if (resume && rec.end) also = await syncPeers(peerSvs(svId, x => openPauseOf(x.id)), x => { const o = openPauseOf(x.id);
+        return api('pause.save', { id: o.id, end: rec.end, pre_start: o.pre_start || rec.pre_start, pre_end: o.pre_end || rec.pre_end }); });
+      await mut('pause.save', rec, L('Saved', '已儲存') + also, btn);
     } });
   const q = s => bg.querySelector(s);
   const sync = () => {
@@ -2056,7 +2159,8 @@ function sightingModal(svId, id) {
       // 暫停施工中登錄的目擊 → 連到這次暫停
       if (zone && link) return mut('pause.save', { id: open.id, sighting: rec }, L('Sighting saved', '目擊紀錄已儲存'), btn);
       rec.auto_pause = zone && stop;
-      await mut('sighting.save', rec, rec.auto_pause ? L('Sighting saved, work paused', '目擊紀錄已儲存，已暫停施工') : L('Sighting saved', '目擊紀錄已儲存'), btn);
+      const also = rec.auto_pause ? await syncPeers(peerSvs(svId, stIn('work')), y => api('pause.save', { sv_id: y.id, start: rec.time, reason: lines(S.settings.pause_reasons)[0] || 'Cetacean in alert zone', monitoring: true })) : '';
+      await mut('sighting.save', rec, rec.auto_pause ? L('Sighting saved, work paused', '目擊紀錄已儲存，已暫停施工') + also : L('Sighting saved', '目擊紀錄已儲存'), btn);
     } });
 }
 
@@ -2653,7 +2757,7 @@ function summaryRows() {
 }
 function renderSummary() {
   setTitle(L('Summary sheet', '總表'));
-  const { head, rows } = summaryRows();
+  const { head, rows } = summaryRows(), miss = head.indexOf('缺件');
   $('content').innerHTML = `<div class="alert blue">${L('The Google Sheet “MMO 鯨豚觀察總表” in the Drive folder is rebuilt automatically after every change (tabs “總表” and “目擊總表”).', 'Drive 資料夾裡的 Google 試算表「MMO 鯨豚觀察總表」會在每次異動後自動重建（分頁「總表」與「目擊總表」）。')}</div>
     <div class="section"><div class="section-header"><h3>${L('One row per batch × MMO vessel', '每列＝一個批次的一艘 MMO 船')} <span class="muted">(${rows.length})</span></h3>
       <div class="toolbar"><a class="btn btn-sm" target="_blank" href="${esc(S.sheetUrl)}">📗 ${L('Open Google Sheet', '開啟 Google 試算表')}</a>
@@ -2661,8 +2765,16 @@ function renderSummary() {
         <button class="btn btn-sm" onclick="downloadCsv('MMO_summary_'+today()+'.csv',[summaryRows().head].concat(summaryRows().rows.map(r=>r.cells)))">⬇ CSV</button>
         <button class="btn btn-sm adm" onclick="rebuildSheet(this)">🔄 ${L('Rebuild sheet', '重建試算表')}</button></div></div>
       ${rows.length ? `<div class="table-wrap"><table class="tbl" style="font-size:12px"><tr>${head.map(h => `<th>${esc(h)}</th>`).join('')}</tr>
-        ${rows.map(r => `<tr class="click" onclick="go('shift','${r.s.id}','${r.sv.id}')">${r.cells.map((c, i) => `<td style="${i >= head.length - 3 ? '' : 'white-space:nowrap'}">${esc(c)}</td>`).join('')}</tr>`).join('')}</table></div>`
+        ${rows.map(r => `<tr class="click" onclick="go('shift','${r.s.id}','${r.sv.id}')">${r.cells.map((c, i) => i === miss
+          ? `<td style="white-space:nowrap">${r.sv.checks.missing.length ? `<button class="btn btn-sm" onclick="event.stopPropagation();missingModal('${r.sv.id}')">${L('Details', '詳情')} (${r.sv.checks.missing.length})</button>` : '—'}</td>`
+          : `<td style="${i >= head.length - 3 ? '' : 'white-space:nowrap'}">${esc(c)}</td>`).join('')}</tr>`).join('')}</table></div>`
         : `<div class="empty">${L('No data yet', '尚無資料')}</div>`}</div>`;
+}
+function missingModal(svId) {
+  const sv = S.svs.find(x => x.id === svId), s = shiftOf(sv.shift_id);
+  openModal(L('Missing uploads', '缺件') + ' — ' + esc(shiftLabel(s) + ' · ' + sv.vessel_name),
+    `<ul style="margin:0;padding-left:20px;line-height:1.8">${sv.checks.missing.map(m => `<li>${esc(L(m.en, m.zh))}</li>`).join('')}</ul>
+    <div class="toolbar" style="margin-top:12px"><button class="btn btn-sm" onclick="this.closest('.modal-bg').remove();go('shift','${s.id}','${sv.id}')">${L('Go to batch', '前往批次上傳')} →</button></div>`);
 }
 async function rebuildSheet(btn) {
   btn.disabled = true;
