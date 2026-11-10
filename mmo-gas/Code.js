@@ -10,7 +10,7 @@
 // 角色：admin（全部＋後台）、mmo（建立／填報批次、上傳）、viewer（唯讀）
 // ============================================================
 
-const VERSION = '1.6.6';
+const VERSION = '1.6.7';
 const ROOT_FOLDER_ID = '1uVkbv4tndRVERhrHmHUzaTvPlHaFV4em';
 const SS_NAME = 'MMO 鯨豚觀察總表';
 const TZ = 'Asia/Taipei';
@@ -69,7 +69,8 @@ const DEFAULT_SETTINGS = {
   env_fuels: 'MGO, 0.85, 3.206\nMDO, 0.89, 3.206\nVLSFO, 0.94, 3.151\nHFO, 0.98, 3.114',
   env_waste_cats: '塑膠 Plastics\n食物廢棄物 Food waste\n生活廢棄物 Domestic waste\n廢食用油 Cooking oil\n焚化爐灰燼 Incinerator ash\n作業廢棄物 Operational waste\n電子廢棄物 E-waste\n有害廢棄物 Hazardous waste\n油泥 Oil sludge\n艙底油水 Oily bilge water\n污水 Sewage\n資源回收 Recyclables',
   env_waste_methods: '上岸交運 Landed ashore\n船上焚化 Incinerated on board\n依 MARPOL 排放 Discharged per MARPOL\n資源回收 Recycled',
-  env_incident_types: '漏油／溢油 Oil spill\n化學品洩漏 Chemical spill\n物品落海 Object overboard\n廢棄物不當排放 Improper discharge\n其他 Other'
+  env_incident_types: '漏油／溢油 Oil spill\n化學品洩漏 Chemical spill\n物品落海 Object overboard\n廢棄物不當排放 Improper discharge\n其他 Other',
+  env_zero_start: '2025-01-02'   // 連續零事件天數起算日（之後若有事件就從最近一次事件算）
 };
 const SECRET_SETTINGS = { ais_api_key: 1 };
 

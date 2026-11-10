@@ -2709,7 +2709,9 @@ function envSummary(month) {
 }
 /** 最近一次非虛驚的環境事件到今天幾天；沒有事件回傳 null */
 function envZeroDays() {
-  const last = envData().incidents.filter(x => x.severity !== 'near_miss').map(x => x.time.slice(0, 10)).sort().pop();
+  // 從起算日（後台設定）或最近一次事件，取較晚者開始算
+  const start = /^\d{4}-\d{2}-\d{2}$/.test(S.settings.env_zero_start || '') ? S.settings.env_zero_start : '';
+  const last = envData().incidents.filter(x => x.severity !== 'near_miss').map(x => x.time.slice(0, 10)).concat(start ? [start] : []).sort().pop();
   return last ? Math.max(0, Math.round((Date.parse(today()) - Date.parse(last)) / 86400000)) : null;
 }
 function envMissingYesterday() {
@@ -3131,6 +3133,8 @@ function adminSettings() {
       ${ta('env_waste_cats', 'Waste categories', '廢棄物類別', '', 6)}
       ${ta('env_waste_methods', 'Waste disposal methods', '廢棄物處理方式', '', 4)}
       ${ta('env_incident_types', 'Environmental incident types', '環境事件類型', '', 4)}
+      <div class="fg"><label>${L('Days-without-incident counted from', '連續零事件天數起算日')}</label><input id="st_env_zero_start" type="date" value="${esc(st.env_zero_start)}">
+        <span class="small muted">${L('Counts from this date, or from the latest incident after it (near misses excluded).', '從這天起算；之後若有事件（不含虛驚）就從最近一次事件重新算。')}</span></div>
     </div></div></div>
     <button class="btn btn-primary" onclick="saveSettings(this)">💾 ${L('Save settings', '儲存設定')}</button>`;
   const est = () => {
@@ -3156,7 +3160,7 @@ async function testAis(btn) {
 }
 function saveSettings(btn) {
   const p = {};
-  ['project_name', 'pre_watch_min', 'alert_zone_m', 'watch_zone_m', 'response_min', 'repre_pause_min', 'mmo_dist_tol_m', 'sites', 'crew_slots', 'scopes', 'species', 'pause_reasons', 'ais_api_url', 'ais_api_key', 'weather_name', 'weather_points', 'weather_wave_limit', 'weather_wind_limit', 'pos_interval_min', 'track_interval_min', 'env_fuels', 'env_waste_cats', 'env_waste_methods', 'env_incident_types'].forEach(k => { p[k] = $('st_' + k).value.trim(); });
+  ['project_name', 'pre_watch_min', 'alert_zone_m', 'watch_zone_m', 'response_min', 'repre_pause_min', 'mmo_dist_tol_m', 'sites', 'crew_slots', 'scopes', 'species', 'pause_reasons', 'ais_api_url', 'ais_api_key', 'weather_name', 'weather_points', 'weather_wave_limit', 'weather_wind_limit', 'pos_interval_min', 'track_interval_min', 'env_fuels', 'env_waste_cats', 'env_waste_methods', 'env_incident_types', 'env_zero_start'].forEach(k => { p[k] = $('st_' + k).value.trim(); });
   mut('settings.save', p, L('Settings saved', '設定已儲存'), btn).catch(() => {});
 }
 function adminUsers() {
