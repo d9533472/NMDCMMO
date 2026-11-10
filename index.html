@@ -2647,7 +2647,7 @@ async function rebuildSheet(btn) {
 
 // ==================== 離岸環保統計（只有管理員；資料在 S.env） ====================
 const ENV_LABEL = {
-  fuel_used_l: ['Fuel used (L)', '用油量 (L)'], fuel_bunkered_l: ['Fuel bunkered (L)', '加油量 (L)'], fuel_rob_l: ['Fuel ROB (L)', '油存量 ROB (L)'],
+  fuel_used_m3: ['Fuel used (m³)', '用油量 (m³)'], fuel_bunkered_m3: ['Fuel bunkered (m³)', '加油量 (m³)'], fuel_rob_m3: ['Fuel ROB (m³)', '油存量 ROB (m³)'],
   water_used_m3: ['Water used (m³)', '用水量 (m³)'], water_bunkered_m3: ['Water bunkered (m³)', '加水量 (m³)'], water_made_m3: ['Water made (m³)', '造水量 (m³)'],
   pob: ['POB', '在船人數']
 };
@@ -2662,10 +2662,10 @@ function envFuels() {
 }
 function envNum(v) { const n = parseFloat(v); return isFinite(n) ? n : 0; }
 function fmtN(n, dec) { return isFinite(n) ? n.toLocaleString('en-US', { maximumFractionDigits: dec === undefined ? 1 : dec }) : '—'; }
-/** 公升 → t CO₂（依船舶燃料種類；沒設就用清單第一個） */
-function envCo2(v, litres) {
+/** m³ → t CO₂（依船舶燃料種類；沒設就用清單第一個） */
+function envCo2(v, m3) {
   const fs = envFuels(), f = fs.find(x => x.name === v.fuel_type) || fs[0];
-  return f && isFinite(f.density) && isFinite(f.cf) ? litres * f.density / 1000 * f.cf : 0;
+  return f && isFinite(f.density) && isFinite(f.cf) ? m3 * f.density * f.cf : 0;
 }
 function addDays(d, n) { const t = new Date(d + 'T00:00:00Z'); t.setUTCDate(t.getUTCDate() + n); return t.toISOString().slice(0, 10); }
 function monthEnd(m) { return addDays(addDays(m + '-28', 4).slice(0, 7) + '-01', -1); }
@@ -2695,8 +2695,8 @@ function envSummary(month) {
     const pd = d.filter(x => envNum(x.pob) > 0 && x.water_used_m3 !== '');
     const waste = E.waste.filter(x => x.vessel_id === v.id && x.date.slice(0, 7) === month), byCat = {};
     waste.forEach(w => { const it = envWasteItems(w); Object.keys(it).forEach(k => { byCat[k] = (byCat[k] || 0) + envNum(it[k]); }); });
-    const fuel = sum('fuel_used_l');
-    return { v, days: d.length, due: due.length, missing: due.filter(x => !have.has(x)), fuel, bunk: sum('fuel_bunkered_l'),
+    const fuel = sum('fuel_used_m3');
+    return { v, days: d.length, due: due.length, missing: due.filter(x => !have.has(x)), fuel, bunk: sum('fuel_bunkered_m3'),
       water: sum('water_used_m3'), wbunk: sum('water_bunkered_m3'), made: sum('water_made_m3'),
       pob: d.length ? sum('pob') / d.filter(x => x.pob !== '').length || 0 : 0,
       perPax: pd.length ? pd.reduce((n, x) => n + envNum(x.water_used_m3), 0) * 1000 / pd.reduce((n, x) => n + envNum(x.pob), 0) : NaN,
@@ -2731,7 +2731,7 @@ function envKpiRow() {
   return `<div class="section-header" style="padding:0 0 10px;border:0"><h3>🌱 ${L('Environmental KPIs this month', '本月環保 KPI')}</h3>
       <button class="btn btn-sm" onclick="ENV.tab='overview';go('env')">${L('Details', '詳細')} →</button></div>
     <div class="stat-grid">
-      ${st('', fmtN(t.fuel, 0), L('Fuel used (L)', '用油量 (L)'), 'overview')}
+      ${st('', fmtN(t.fuel, 2), L('Fuel used (m³)', '用油量 (m³)'), 'overview')}
       ${st('blue', fmtN(t.water, 1), L('Water used (m³)', '用水量 (m³)'), 'overview')}
       ${st('amber', fmtN(t.wasteKg, 0), L('Waste (kg)', '廢棄物 (kg)'), 'waste')}
       ${st('', fmtN(t.co2, 1), L('CO₂ estimate (t)', 'CO₂ 估算 (t)'), 'overview')}
@@ -2765,7 +2765,7 @@ function envOverview() {
     <div class="toolbar" style="margin-bottom:12px">${envMonthSel('envOverview')}
       <button class="btn btn-sm" onclick="envExportMonth()">⬇ ${L('Monthly report CSV', '月報 CSV')}</button></div>
     <div class="stat-grid">
-      <div class="stat"><div class="v">${fmtN(tot.fuel, 0)}</div><div class="l">${L('Fuel used (L)', '用油量 (L)')}</div></div>
+      <div class="stat"><div class="v">${fmtN(tot.fuel, 2)}</div><div class="l">${L('Fuel used (m³)', '用油量 (m³)')}</div></div>
       <div class="stat"><div class="v">${fmtN(tot.co2, 1)}</div><div class="l">${L('CO₂ estimate (t)', 'CO₂ 估算 (t)')}</div></div>
       <div class="stat blue"><div class="v">${fmtN(tot.water, 1)}</div><div class="l">${L('Water used (m³)', '用水量 (m³)')}</div></div>
       <div class="stat blue"><div class="v">${fmtN(tot.perPax, 0)}</div><div class="l">${L('Water per person per day (L)', '每人每日用水 (L)')}</div></div>
@@ -2775,14 +2775,14 @@ function envOverview() {
       <div class="stat ${tot.missing ? 'red' : 'green'}"><div class="v">${tot.days}/${tot.due}</div><div class="l">${L('Days reported / required', '已填 / 應填天數')}</div></div>
     </div>
     <div class="section"><div class="section-header"><h3>${L('By vessel', '各船統計')} · ${esc(ENV.month)}</h3></div>
-      ${rows.length ? `<div class="table-wrap"><table class="tbl"><tr><th>${L('Vessel', '船名')}</th><th>${L('Reported', '填報')}</th><th>${L('Fuel (L)', '用油 (L)')}</th><th>${L('Bunkered (L)', '加油 (L)')}</th>
+      ${rows.length ? `<div class="table-wrap"><table class="tbl"><tr><th>${L('Vessel', '船名')}</th><th>${L('Reported', '填報')}</th><th>${L('Fuel (m³)', '用油 (m³)')}</th><th>${L('Bunkered (m³)', '加油 (m³)')}</th>
         <th>${L('Water (m³)', '用水 (m³)')}</th><th>${L('Made (m³)', '造水 (m³)')}</th><th>${L('Avg POB', '平均人數')}</th><th>${L('L/person/day', '每人每日 (L)')}</th><th>CO₂ (t)</th><th>${L('Waste (kg)', '廢棄物 (kg)')}</th><th>${L('Incidents', '事件')}</th></tr>
         ${rows.map(r => `<tr><td><b>${esc(r.v.name)}</b><div class="small muted">${esc(kinds[r.v.kind] || r.v.kind)}${r.v.fuel_type ? ' · ' + esc(r.v.fuel_type) : ''}</div></td>
           <td style="white-space:nowrap">${r.noCharter && !r.due ? `<span class="tag amber" title="${L('Set the charter start in Back office › Vessels', '請到後台 › 船舶設定起租日')}">${L('No charter start', '未設起租日')}</span>` :
             `${r.days}/${r.due} ${r.missing.length ? `<span class="tag red" title="${esc(r.missing.join(', '))}">${L('Missing', '缺')} ${r.missing.length}</span>` : (r.due ? '<span class="tag green">✓</span>' : '')}`}</td>
-          <td class="mono">${fmtN(r.fuel, 0)}</td><td class="mono">${fmtN(r.bunk, 0)}</td><td class="mono">${fmtN(r.water, 1)}</td><td class="mono">${fmtN(r.made, 1)}</td>
+          <td class="mono">${fmtN(r.fuel, 2)}</td><td class="mono">${fmtN(r.bunk, 2)}</td><td class="mono">${fmtN(r.water, 1)}</td><td class="mono">${fmtN(r.made, 1)}</td>
           <td class="mono">${r.pob ? fmtN(r.pob, 1) : '—'}</td><td class="mono">${fmtN(r.perPax, 0)}</td><td class="mono">${fmtN(r.co2, 2)}</td><td class="mono">${fmtN(r.wasteKg, 1)}</td><td>${r.inc ? `<span class="tag red">${r.inc}</span>` : '—'}</td></tr>`).join('')}
-        <tr style="font-weight:700"><td>${L('Total', '合計')}</td><td>${tot.days}/${tot.due}</td><td class="mono">${fmtN(tot.fuel, 0)}</td><td class="mono">${fmtN(tot.bunk, 0)}</td><td class="mono">${fmtN(tot.water, 1)}</td><td class="mono">${fmtN(tot.made, 1)}</td>
+        <tr style="font-weight:700"><td>${L('Total', '合計')}</td><td>${tot.days}/${tot.due}</td><td class="mono">${fmtN(tot.fuel, 2)}</td><td class="mono">${fmtN(tot.bunk, 2)}</td><td class="mono">${fmtN(tot.water, 1)}</td><td class="mono">${fmtN(tot.made, 1)}</td>
           <td></td><td class="mono">${fmtN(tot.perPax, 0)}</td><td class="mono">${fmtN(tot.co2, 2)}</td><td class="mono">${fmtN(tot.wasteKg, 1)}</td><td>${tot.inc || '—'}</td></tr></table></div>`
         : `<div class="empty">${L('No vessels to report. Set “Daily environmental report required” and the charter start in Back office › Vessels.', '沒有需填報的船。請到後台 › 船舶勾選「需填每日環保資料」並設定起租日。')}</div>`}</div>
     <div class="grid-2">
@@ -2811,20 +2811,20 @@ function envDaily() {
         <button class="btn btn-primary btn-sm" onclick="envSaveDaily(this)">💾 ${L('Save', '儲存')}</button></div></div>
       ${vs.length ? `<div class="table-wrap"><table class="tbl" id="envDaily"><tr><th>${L('Vessel', '船名')}</th>${ENV_DAILY_KEYS.map(k => `<th>${L(ENV_LABEL[k][0], ENV_LABEL[k][1])}</th>`).join('')}<th>${L('Remark', '備註')}</th></tr>
         ${vs.map(v => { const r = rec(v), p = E.daily.find(x => x.vessel_id === v.id && x.date === prev);
-          return `<tr data-vid="${v.id}" data-prev-rob="${esc(p ? p.fuel_rob_l : '')}"><td style="white-space:nowrap"><b>${esc(v.name)}</b>${r.id ? ' <span class="tag green">✓</span>' : ''}
-            <div class="small muted env-warn">${p && p.fuel_rob_l !== '' ? L('Prev. ROB ', '前日 ROB ') + fmtN(envNum(p.fuel_rob_l), 0) + ' L' : ''}</div></td>
+          return `<tr data-vid="${v.id}" data-prev-rob="${esc(p ? p.fuel_rob_m3 : '')}"><td style="white-space:nowrap"><b>${esc(v.name)}</b>${r.id ? ' <span class="tag green">✓</span>' : ''}
+            <div class="small muted env-warn">${p && p.fuel_rob_m3 !== '' ? L('Prev. ROB ', '前日 ROB ') + fmtN(envNum(p.fuel_rob_m3), 2) + ' m³' : ''}</div></td>
             ${ENV_DAILY_KEYS.map(k => inp(v, k, r)).join('')}<td><input class="env-in" style="min-width:140px" data-k="remark" value="${esc(r.remark)}" oninput="ENV.dirty=true"></td></tr>`; }).join('')}</table></div>`
         : `<div class="empty">${L('No vessels need a report on this date. Set charter dates and “Daily environmental report required” in Back office › Vessels.', '這天沒有需填報的船。請到後台 › 船舶設定租期並勾選「需填每日環保資料」。')}</div>`}</div>
-    <div class="small muted">${L('ROB check: previous ROB + bunkered − used should equal today’s ROB (flagged when off by more than 2% or 50 L).', 'ROB 檢查：前日 ROB＋加油量－用油量 應等於今日 ROB（差超過 2% 或 50 L 會提醒）。')}</div>`;
-  document.querySelectorAll('#envDaily tr[data-vid] input[data-k="fuel_rob_l"]').forEach(envRobCheck);
+    <div class="small muted">${L('ROB check: previous ROB + bunkered − used should equal today’s ROB (flagged when off by more than 2% or 0.05 m³).', 'ROB 檢查：前日 ROB＋加油量－用油量 應等於今日 ROB（差超過 2% 或 0.05 m³ 會提醒）。')}</div>`;
+  document.querySelectorAll('#envDaily tr[data-vid] input[data-k="fuel_rob_m3"]').forEach(envRobCheck);
 }
 function envRobCheck(el) {
   const tr = el.closest('tr'), prev = parseFloat(tr.dataset.prevRob), g = k => parseFloat(tr.querySelector(`[data-k="${k}"]`).value);
-  const rob = g('fuel_rob_l'), used = g('fuel_used_l'), bunk = g('fuel_bunkered_l') || 0, warn = tr.querySelector('.env-warn');
-  if (!isFinite(prev) || !isFinite(rob) || !isFinite(used)) { tr.querySelector('[data-k="fuel_rob_l"]').style.borderColor = ''; return; }
-  const exp = prev + bunk - used, off = Math.abs(rob - exp) > Math.max(50, Math.abs(exp) * 0.02);
-  tr.querySelector('[data-k="fuel_rob_l"]').style.borderColor = off ? 'var(--danger)' : '';
-  warn.innerHTML = L('Prev. ROB ', '前日 ROB ') + fmtN(prev, 0) + ' L' + (off ? ` · <span style="color:var(--danger)">⚠ ${L('expected', '應為')} ${fmtN(exp, 0)} L</span>` : '');
+  const rob = g('fuel_rob_m3'), used = g('fuel_used_m3'), bunk = g('fuel_bunkered_m3') || 0, warn = tr.querySelector('.env-warn');
+  if (!isFinite(prev) || !isFinite(rob) || !isFinite(used)) { tr.querySelector('[data-k="fuel_rob_m3"]').style.borderColor = ''; return; }
+  const exp = prev + bunk - used, off = Math.abs(rob - exp) > Math.max(0.05, Math.abs(exp) * 0.02);
+  tr.querySelector('[data-k="fuel_rob_m3"]').style.borderColor = off ? 'var(--danger)' : '';
+  warn.innerHTML = L('Prev. ROB ', '前日 ROB ') + fmtN(prev, 2) + ' m³' + (off ? ` · <span style="color:var(--danger)">⚠ ${L('expected', '應為')} ${fmtN(exp, 2)} m³</span>` : '');
 }
 async function envSetDate(d) {
   if (!d || d > today()) return;
@@ -2849,7 +2849,7 @@ function envExportDaily() {
   const m = ENV.date.slice(0, 7), head = ['日期', '船名'].concat(ENV_DAILY_KEYS.map(k => ENV_LABEL[k][1])).concat(['CO₂ 估算 (t)', '備註', '填報人', '更新時間']);
   const rows = envData().daily.filter(x => x.date.slice(0, 7) === m).sort((a, b) => (a.date + a.vessel_name).localeCompare(b.date + b.vessel_name)).map(x => {
     const v = S.vessels.find(z => z.id === x.vessel_id) || {};
-    return [x.date, x.vessel_name].concat(ENV_DAILY_KEYS.map(k => x[k])).concat([x.fuel_used_l !== '' ? envCo2(v, envNum(x.fuel_used_l)).toFixed(3) : '', x.remark, x.updated_by, (x.updated_at || '').replace('T', ' ')]);
+    return [x.date, x.vessel_name].concat(ENV_DAILY_KEYS.map(k => x[k])).concat([x.fuel_used_m3 !== '' ? envCo2(v, envNum(x.fuel_used_m3)).toFixed(3) : '', x.remark, x.updated_by, (x.updated_at || '').replace('T', ' ')]);
   });
   downloadCsv('ENV_daily_' + m + '.csv', [head].concat(rows));
 }
@@ -2981,15 +2981,15 @@ function envExportMonth() {
   const cats = lines(S.settings.env_waste_cats);
   Object.keys(tot.byCat).forEach(k => { if (cats.indexOf(k) < 0) cats.push(k); });
   const r1 = (x, d) => isFinite(x) ? Math.round(x * Math.pow(10, d)) / Math.pow(10, d) : '';
-  const out = [['月份', '船名', '類別', 'MMSI', '起租日', '退租日', '燃料', '應填天數', '已填天數', '缺填日期', '用油量 (L)', '加油量 (L)', '用水量 (m³)', '加水量 (m³)', '造水量 (m³)',
+  const out = [['月份', '船名', '類別', 'MMSI', '起租日', '退租日', '燃料', '應填天數', '已填天數', '缺填日期', '用油量 (m³)', '加油量 (m³)', '用水量 (m³)', '加水量 (m³)', '造水量 (m³)',
     '平均在船人數', '每人每日用水 (L)', 'CO₂ 估算 (t)', '廢棄物合計 (kg)'].concat(cats.map(c => c + ' (kg)')).concat(['環境事件數'])];
   rows.forEach(r => out.push([ENV.month, r.v.name, kinds[r.v.kind] || r.v.kind, r.v.mmsi, r.v.charter_start, r.v.charter_end, r.v.fuel_type, r.due, r.days, r.missing.join(' '),
-    r1(r.fuel, 1), r1(r.bunk, 1), r1(r.water, 2), r1(r.wbunk, 2), r1(r.made, 2), r.pob ? r1(r.pob, 1) : '', r1(r.perPax, 0), r1(r.co2, 3), r1(r.wasteKg, 1)]
+    r1(r.fuel, 3), r1(r.bunk, 3), r1(r.water, 2), r1(r.wbunk, 2), r1(r.made, 2), r.pob ? r1(r.pob, 1) : '', r1(r.perPax, 0), r1(r.co2, 3), r1(r.wasteKg, 1)]
     .concat(cats.map(c => r.byCat[c] ? r1(r.byCat[c], 1) : '')).concat([r.inc])));
-  out.push([ENV.month, '合計', '', '', '', '', '', tot.due, tot.days, '', r1(tot.fuel, 1), r1(tot.bunk, 1), r1(tot.water, 2), r1(tot.wbunk, 2), r1(tot.made, 2), '', r1(tot.perPax, 0), r1(tot.co2, 3), r1(tot.wasteKg, 1)]
+  out.push([ENV.month, '合計', '', '', '', '', '', tot.due, tot.days, '', r1(tot.fuel, 3), r1(tot.bunk, 3), r1(tot.water, 2), r1(tot.wbunk, 2), r1(tot.made, 2), '', r1(tot.perPax, 0), r1(tot.co2, 3), r1(tot.wasteKg, 1)]
     .concat(cats.map(c => tot.byCat[c] ? r1(tot.byCat[c], 1) : '')).concat([tot.inc]));
   out.push([]);
-  out.push(['CO₂＝用油量 (L) × 燃料密度 (kg/L) ÷ 1000 × 排放係數；係數與密度見後台 › 規則與清單 › 環保統計。連續零事件天數（不含虛驚）：' + (envZeroDays() === null ? '無事件紀錄' : envZeroDays())]);
+  out.push(['CO₂＝用油量 (m³) × 燃料密度 (t/m³，即 kg/L) × 排放係數；係數與密度見後台 › 規則與清單 › 環保統計。連續零事件天數（不含虛驚）：' + (envZeroDays() === null ? '無事件紀錄' : envZeroDays())]);
   downloadCsv('ENV_monthly_' + ENV.month + '.csv', out);
 }
 
@@ -3147,7 +3147,7 @@ function adminSettings() {
     </div></div></div>
     <div class="section"><div class="section-header"><h3>🌱 ${L('Environmental statistics', '環保統計')}</h3></div><div class="section-body"><div class="form-grid">
       <div class="fg full"><label>${L('Fuels (name, density kg/L, CO₂ factor t CO₂ per t fuel — one per line)', '燃料（每行：名稱, 密度 kg/L, CO₂ 排放係數 t CO₂／t 燃料）')}</label><textarea id="st_env_fuels" class="mono" rows="4">${esc(st.env_fuels)}</textarea>
-        <span class="small muted">${L('CO₂ = litres × density ÷ 1000 × factor. Default factors follow IMO MEPC.308(73); densities are typical values — use your bunker delivery notes if you have them.', 'CO₂＝公升 × 密度 ÷ 1000 × 係數。預設係數依 IMO MEPC.308(73)；密度為一般值，有加油單（BDN）請以實際密度為準。')}</span></div>
+        <span class="small muted">${L('CO₂ = m³ × density (t/m³ = kg/L) × factor. Default factors follow IMO MEPC.308(73); densities are typical values — use your bunker delivery notes if you have them.', 'CO₂＝用油 m³ × 密度（t/m³，數值同 kg/L）× 係數。預設係數依 IMO MEPC.308(73)；密度為一般值，有加油單（BDN）請以實際密度為準。')}</span></div>
       ${ta('env_waste_cats', 'Waste categories', '廢棄物類別', '', 6)}
       ${ta('env_waste_methods', 'Waste disposal methods', '廢棄物處理方式', '', 4)}
       ${ta('env_incident_types', 'Environmental incident types', '環境事件類型', '', 4)}

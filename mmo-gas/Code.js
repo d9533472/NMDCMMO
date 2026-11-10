@@ -10,7 +10,7 @@
 // 角色：admin（全部＋後台）、mmo（建立／填報批次、上傳）、viewer（唯讀）
 // ============================================================
 
-const VERSION = '1.6.2';
+const VERSION = '1.6.3';
 const ROOT_FOLDER_ID = '1uVkbv4tndRVERhrHmHUzaTvPlHaFV4em';
 const SS_NAME = 'MMO 鯨豚觀察總表';
 const TZ = 'Asia/Taipei';
@@ -36,7 +36,7 @@ const SCHEMAS = {
   Files: ['id','shift_id','sv_id','item_id','item_name','kind','drive_id','name','mime','size','thumb','uploaded_by','uploaded_at','slot'],
   AuditLog: ['time','user','role','action','target','detail','ok','error'],
   // 離岸環保統計（只有管理員看得到，不放進共用快取）
-  EnvDaily: ['id','vessel_id','vessel_name','date','fuel_used_l','fuel_bunkered_l','fuel_rob_l','water_used_m3','water_bunkered_m3','water_made_m3','pob','remark',
+  EnvDaily: ['id','vessel_id','vessel_name','date','fuel_used_m3','fuel_bunkered_m3','fuel_rob_m3','water_used_m3','water_bunkered_m3','water_made_m3','pob','remark',
     'updated_by','updated_at'],
   EnvWaste: ['id','vessel_id','vessel_name','date','method','receiver','port','receipt_no','items','total_kg','drive_id','file_name','file_mime','remark',
     'created_by','created_at','updated_by','updated_at'],
@@ -345,6 +345,19 @@ function ensureSchema_() {
         });
       }
       props.setProperty('v15_crew', '1');
+      bumpRev_();
+    }
+    // v1.6.3：用油改用 m³；v1.6 存的公升欄位換算後清空（舊欄位留在表上不再使用）
+    if (!props.getProperty('v163_fuel_m3')) {
+      Repo.all('EnvDaily').forEach(r => {
+        const patch = {};
+        ['used', 'bunkered', 'rob'].forEach(k => {
+          const l = r['fuel_' + k + '_l'];
+          if (l !== undefined && l !== '') { if (r['fuel_' + k + '_m3'] === '') patch['fuel_' + k + '_m3'] = String(Number(l) / 1000); patch['fuel_' + k + '_l'] = ''; }
+        });
+        if (Object.keys(patch).length) Repo.update('EnvDaily', r.id, patch);
+      });
+      props.setProperty('v163_fuel_m3', '1');
       bumpRev_();
     }
     // v1.6.2：系統名稱加上離岸環保統計（後台自訂過的名稱不動）
@@ -1296,7 +1309,7 @@ function envVessel_(id) {
   return v;
 }
 function envDate_(d) { d = str_(d); if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) fail_('Date is required'); return d; }
-const ENV_DAILY_NUM = ['fuel_used_l','fuel_bunkered_l','fuel_rob_l','water_used_m3','water_bunkered_m3','water_made_m3','pob'];
+const ENV_DAILY_NUM = ['fuel_used_m3','fuel_bunkered_m3','fuel_rob_m3','water_used_m3','water_bunkered_m3','water_made_m3','pob'];
 /** 每日填報：一次存多艘船；同船同日已有就更新，整列清空就刪除 */
 function envDailySave_(u, p) {
   const rows = Array.isArray(p.rows) ? p.rows : [p];
