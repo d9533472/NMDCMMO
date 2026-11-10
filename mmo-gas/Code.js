@@ -10,7 +10,7 @@
 // 角色：admin（全部＋後台）、mmo（建立／填報批次、上傳）、viewer（唯讀）
 // ============================================================
 
-const VERSION = '1.6.1';
+const VERSION = '1.6.2';
 const ROOT_FOLDER_ID = '1uVkbv4tndRVERhrHmHUzaTvPlHaFV4em';
 const SS_NAME = 'MMO 鯨豚觀察總表';
 const TZ = 'Asia/Taipei';
@@ -347,11 +347,11 @@ function ensureSchema_() {
       props.setProperty('v15_crew', '1');
       bumpRev_();
     }
-    // v1.6.1：系統名稱加上離岸環保統計（後台自訂過的名稱不動）
-    if (!props.getProperty('v161_name')) {
+    // v1.6.2：系統名稱加上離岸環保統計（後台自訂過的名稱不動）
+    if (!props.getProperty('v162_name')) {
       const cur = Repo.all('Settings').find(x => x.key === 'project_name');
-      if (cur && cur.value === 'NMDC 鯨豚觀察作業系統') Repo.update('Settings', 'project_name', { value: DEFAULT_SETTINGS.project_name });
-      props.setProperty('v161_name', '1');
+      if (cur && /鯨豚觀察作業系統/.test(cur.value) && !/環保/.test(cur.value)) Repo.update('Settings', 'project_name', { value: DEFAULT_SETTINGS.project_name });
+      props.setProperty('v162_name', '1');
       bumpRev_();
     }
     // v1.4：資料夾改用批次名稱、照片多一項 AIS 照片
