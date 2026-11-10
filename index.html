@@ -2714,14 +2714,10 @@ function envZeroDays() {
   const last = envData().incidents.filter(x => x.severity !== 'near_miss').map(x => x.time.slice(0, 10)).concat(start ? [start] : []).sort().pop();
   return last ? Math.max(0, Math.round((Date.parse(today()) - Date.parse(last)) / 86400000)) : null;
 }
-function envMissingYesterday() {
-  const y = addDays(today(), -1), E = envData();
-  return S.vessels.filter(v => envDueDays(v, y.slice(0, 7)).indexOf(y) >= 0 && !E.daily.some(x => x.vessel_id === v.id && x.date === y));
-}
 /** 儀表板上的環保 KPI 列（管理員） */
 function envKpiRow() {
   if (!isAdmin() || !S.env) return '';
-  const m = today().slice(0, 7), t = envSummary(m).tot, miss = envMissingYesterday(), z = envZeroDays();
+  const m = today().slice(0, 7), t = envSummary(m).tot, z = envZeroDays();
   const st = (cls, v, l, tab) => `<div class="stat ${cls}" style="cursor:pointer" onclick="ENV.tab='${tab}';ENV.month='${m}';go('env')"><div class="v">${v}</div><div class="l">${l}</div></div>`;
   return `<div class="section-header" style="padding:0 0 10px;border:0"><h3>🌱 ${L('Environmental KPIs this month', '本月環保 KPI')}</h3>
       <button class="btn btn-sm" onclick="ENV.tab='overview';go('env')">${L('Details', '詳細')} →</button></div>
@@ -2730,7 +2726,6 @@ function envKpiRow() {
       ${st('blue', fmtN(t.water, 1), L('Water used (m³)', '用水量 (m³)'), 'overview')}
       ${st('amber', fmtN(t.wasteKg, 0), L('Waste (kg)', '廢棄物 (kg)'), 'waste')}
       ${st('', fmtN(t.co2, 1), L('CO₂ estimate (t)', 'CO₂ 估算 (t)'), 'overview')}
-      ${st(miss.length ? 'red' : 'green', miss.length, L('Vessels not reported yesterday', '昨日未填報船數'), 'daily')}
       ${st(z === null ? 'green' : (z < 30 ? 'red' : 'green'), z === null ? '—' : z, L('Days without incident', '連續零事件天數'), 'incidents')}
     </div>`;
 }
