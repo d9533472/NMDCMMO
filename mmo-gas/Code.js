@@ -1,5 +1,5 @@
 // ============================================================
-// NMDC MMO — 鯨豚觀察作業系統 · Google Apps Script backend
+// NMDC MMO — 鯨豚觀察及離岸環保統計系統 · Google Apps Script backend
 // 前端 https://d9533472.github.io/NMDCMMO/ ；原始碼 E:\NMDCMMO\mmo-gas\Code.js（clasp push + deploy -i <prod id>）
 // 依「台灣鯨豚觀察員制度作業指引（第四版）」：預觀測 → 施工 → 目擊／暫停施工／回復施工 → 結束，紙本表單掃描上傳。
 //
@@ -10,7 +10,7 @@
 // 角色：admin（全部＋後台）、mmo（建立／填報批次、上傳）、viewer（唯讀）
 // ============================================================
 
-const VERSION = '1.6';
+const VERSION = '1.6.1';
 const ROOT_FOLDER_ID = '1uVkbv4tndRVERhrHmHUzaTvPlHaFV4em';
 const SS_NAME = 'MMO 鯨豚觀察總表';
 const TZ = 'Asia/Taipei';
@@ -45,7 +45,7 @@ const SCHEMAS = {
 };
 
 const DEFAULT_SETTINGS = {
-  project_name: 'NMDC 鯨豚觀察作業系統',
+  project_name: 'NMDC 鯨豚觀察及離岸環保統計系統',
   pre_watch_min: '30',          // 預觀測時間（分）
   alert_zone_m: '750',          // 警戒區半徑（m）
   watch_zone_m: '1500',         // 觀察區半徑（m）
@@ -345,6 +345,13 @@ function ensureSchema_() {
         });
       }
       props.setProperty('v15_crew', '1');
+      bumpRev_();
+    }
+    // v1.6.1：系統名稱加上離岸環保統計（後台自訂過的名稱不動）
+    if (!props.getProperty('v161_name')) {
+      const cur = Repo.all('Settings').find(x => x.key === 'project_name');
+      if (cur && cur.value === 'NMDC 鯨豚觀察作業系統') Repo.update('Settings', 'project_name', { value: DEFAULT_SETTINGS.project_name });
+      props.setProperty('v161_name', '1');
       bumpRev_();
     }
     // v1.4：資料夾改用批次名稱、照片多一項 AIS 照片

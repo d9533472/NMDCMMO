@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>NMDC MMO 鯨豚觀察作業系統</title>
+<title>NMDC 鯨豚觀察及離岸環保統計系統</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
@@ -640,7 +640,7 @@ function warnList(ck) {
 // ==================== AUTH ====================
 function authView(which, msg) {
   $('auth').classList.remove('hidden'); $('app').classList.add('hidden');
-  $('authTitle').textContent = L('Marine Mammal Observation System', '鯨豚觀察作業系統');
+  $('authTitle').textContent = L('Marine Mammal Observation & Offshore Environmental Statistics System', 'NMDC 鯨豚觀察及離岸環保統計系統');
   $('authSub').textContent = L('Based on the Taiwan MMO Operation Guideline (4th ed.)', '依台灣鯨豚觀察員制度作業指引（第四版）');
   const b = $('authBody');
   if (which === 'loading') b.innerHTML = `<div style="text-align:center;padding:14px 0 6px"><div class="spinner" style="margin:0 auto 12px"></div>
