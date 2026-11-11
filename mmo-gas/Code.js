@@ -7,10 +7,10 @@
 //       GET ?action=ping 僅供健康檢查（GET 不做任何寫入）
 // 資料：Drive 資料夾 ROOT_FOLDER_ID 內的試算表「MMO 鯨豚觀察總表」（setup() 建立，id 存 Script Properties ss_id）
 //       上傳檔案：ROOT/<日期>_<批次>_<施工船>/軌跡/、<MMO 船>/紙本紀錄/、<MMO 船>/照片/<MM-DD_00-12>/
-// 角色：admin（全部＋後台）、mmo（建立／填報批次、上傳）、viewer（唯讀）
+// 角色：admin（全部，固定）＋後台自訂角色（Roles 表，勾選 PERMS 裡的功能）；預設 mmo（填報批次）、viewer（唯讀共用帳號）
 // ============================================================
 
-const VERSION = '1.7.0';
+const VERSION = '1.8.0';
 const ROOT_FOLDER_ID = '1uVkbv4tndRVERhrHmHUzaTvPlHaFV4em';
 const SS_NAME = 'MMO 鯨豚觀察總表';
 const TZ = 'Asia/Taipei';
@@ -41,7 +41,8 @@ const SCHEMAS = {
   EnvWaste: ['id','vessel_id','vessel_name','date','method','receiver','port','receipt_no','items','total_kg','drive_id','file_name','file_mime','remark',
     'created_by','created_at','updated_by','updated_at'],
   EnvIncidents: ['id','vessel_id','vessel_name','time','type','severity','substance','quantity','lat','lon','description','action','reported_to','status','closed_at',
-    'created_by','created_at','updated_by','updated_at']
+    'created_by','created_at','updated_by','updated_at','drive_url'],
+  Roles: ['id','name','perms','sort','updated_at']
 };
 
 const DEFAULT_SETTINGS = {
@@ -87,8 +88,26 @@ const ITEM_SEED = [
   ['photo', 'AIS 照片', 'AIS photos', 'always']
 ];
 
-const ROLES = ['admin', 'mmo', 'viewer'];
-const VIEWER_OK = { 'data.load': 1, 'data.rev': 1, 'file.get': 1, 'shift.files': 1, 'pos.list': 1, 'auth.logout': 1 };
+// 可勾選的功能（前端 PERM_LABELS 要同步）；admin 角色固定擁有全部，帳號／角色／清空資料只有 admin
+const PERMS = ['dashboard', 'shifts', 'sightings', 'summary', 'tracks', 'shift.edit', 'shift.manage', 'env', 'env.edit', 'master', 'settings', 'audit'];
+const ROLE_SEED = [
+  { id: 'mmo', name: 'MMO 填報人員', perms: ['dashboard', 'shifts', 'sightings', 'summary', 'tracks', 'shift.edit'] },
+  { id: 'viewer', name: '訪客（唯讀）', perms: ['dashboard', 'shifts', 'sightings', 'summary', 'tracks'] }
+];
+// 動作 → 需要的功能；沒列的動作登入就能用（讀取、登出、改密碼）
+const ACTION_PERM = {
+  'shift.save': 'shift.edit', 'shift.close': 'shift.edit', 'sv.save': 'shift.edit', 'pause.save': 'shift.edit', 'pause.delete': 'shift.edit',
+  'sighting.save': 'shift.edit', 'sighting.delete': 'shift.edit', 'file.upload': 'shift.edit', 'file.delete': 'shift.edit',
+  'pos.fetch': 'shift.edit', 'pos.refresh': 'shift.edit', 'track.start': 'shift.edit', 'track.stop': 'shift.edit',
+  'shift.reopen': 'shift.manage', 'shift.delete': 'shift.manage',
+  'vessel.save': 'master', 'vessel.delete': 'master', 'observer.save': 'master', 'observer.delete': 'master', 'item.save': 'master', 'item.delete': 'master',
+  'settings.save': 'settings', 'pos.test': 'settings', 'summary.rebuild': 'settings',
+  'audit.list': 'audit',
+  'env.file': 'env',
+  'env.daily.save': 'env.edit', 'env.daily.delete': 'env.edit', 'env.waste.save': 'env.edit', 'env.waste.delete': 'env.edit',
+  'env.incident.save': 'env.edit', 'env.incident.delete': 'env.edit',
+  'user.save': 'admin', 'user.delete': 'admin', 'role.save': 'admin', 'role.delete': 'admin', 'reset.request': 'admin', 'reset.confirm': 'admin'
+};
 const SESSION_DAYS = 14;
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
 const MAX_THUMB_CHARS = 40000;
@@ -123,7 +142,7 @@ function handle_(req) {
   try {
     ensureSchema_();
     if (!PUBLIC[action]) user = verifySession_(req.token);
-    if (user && user.role === 'viewer' && !VIEWER_OK[action]) fail_('Guest account is read-only', 'FORBIDDEN');
+    if (user && ACTION_PERM[action] && !can_(user, ACTION_PERM[action])) fail_('Permission denied', 'FORBIDDEN');
     const data = fn(user, payload);
     if (!NO_REV[action]) bumpRev_();
     // 重建總表要好幾秒，不拖慢存檔：先記下來，由 positionTick 排程補做
@@ -153,8 +172,8 @@ const ROUTES = {
 
   'shift.save': (u, p) => saveShift_(u, p),
   'shift.close': (u, p) => setShiftStatus_(u, p.id, 'closed'),
-  'shift.reopen': (u, p) => { requireRole_(u, ['admin']); return setShiftStatus_(u, p.id, 'open'); },
-  'shift.delete': (u, p) => { requireRole_(u, ['admin']); const ids = shiftVesselIds_(p.id), r = deleteShift_(p.id); syncAutoTrack_(u, ids); return r; },
+  'shift.reopen': (u, p) => setShiftStatus_(u, p.id, 'open'),
+  'shift.delete': (u, p) => { const ids = shiftVesselIds_(p.id), r = deleteShift_(p.id); syncAutoTrack_(u, ids); return r; },
   'shift.files': (u, p) => ({ files: Repo.all('Files').filter(f => f.shift_id === p.id) }),
   'sv.save': (u, p) => saveShiftVessel_(u, p),
   'pause.save': (u, p) => savePause_(u, p),
@@ -165,33 +184,35 @@ const ROUTES = {
   'file.delete': (u, p) => deleteFile_(u, p.id),
   'file.get': (u, p) => getFile_(p.id),
   'pos.fetch': (u, p) => fetchPosition_(p),
-  'pos.test': (u) => { requireRole_(u, ['admin']); return testPositionApi_(); },
+  'pos.test': (u) => testPositionApi_(),
   'pos.refresh': (u, p) => refreshPositions_(p.vessel_id ? [p.vessel_id] : null, true),
   'pos.list': (u, p) => listPositions_(p),
   'track.start': (u, p) => startTrack_(u, p),
   'track.stop': (u, p) => stopTrack_(u, p),
 
-  'vessel.save': (u, p) => { requireRole_(u, ['admin']); return saveMaster_('Vessels', p, ['name','kind','mmsi','imo','type','operator','remark','active','sort',
-    'charter_start','charter_end','fuel_type','env_report'], ['name','kind']); },
-  'vessel.delete': (u, p) => { requireRole_(u, ['admin']); return deleteMaster_('Vessels', p.id); },
-  'observer.save': (u, p) => { requireRole_(u, ['admin']); return saveMaster_('Observers', p, ['name','role','company','phone','cert_no','remark','active'], ['name']); },
-  'observer.delete': (u, p) => { requireRole_(u, ['admin']); return deleteMaster_('Observers', p.id); },
-  'item.save': (u, p) => { requireRole_(u, ['admin']); return saveMaster_('UploadItems', p, ['kind','name_zh','name_en','required','cond','active','sort','note'], ['kind','name_zh']); },
-  'item.delete': (u, p) => { requireRole_(u, ['admin']); return deleteItem_(p.id); },
-  'settings.save': (u, p) => { requireRole_(u, ['admin']); return saveSettings_(p); },
-  'user.save': (u, p) => { requireRole_(u, ['admin']); return saveUser_(u, p); },
-  'user.delete': (u, p) => { requireRole_(u, ['admin']); return deleteUser_(u, p.id); },
-  'audit.list': (u, p) => { requireRole_(u, ['admin']); return auditList_(p); },
-  'reset.request': (u, p) => { requireRole_(u, ['admin']); return resetRequest_(u, p); },
-  'reset.confirm': (u, p) => { requireRole_(u, ['admin']); return resetConfirm_(u, p); },
-  'env.daily.save': (u, p) => { requireRole_(u, ['admin']); return envDailySave_(u, p); },
-  'env.daily.delete': (u, p) => { requireRole_(u, ['admin']); return withLock_(() => ({ id: p.id, ok: Repo.remove('EnvDaily', p.id) })); },
-  'env.waste.save': (u, p) => { requireRole_(u, ['admin']); return envWasteSave_(u, p); },
-  'env.waste.delete': (u, p) => { requireRole_(u, ['admin']); return envWasteDelete_(p.id); },
-  'env.file': (u, p) => { requireRole_(u, ['admin']); return envFile_(p.id); },
-  'env.incident.save': (u, p) => { requireRole_(u, ['admin']); return envIncidentSave_(u, p); },
-  'env.incident.delete': (u, p) => { requireRole_(u, ['admin']); return withLock_(() => ({ id: p.id, ok: Repo.remove('EnvIncidents', p.id) })); },
-  'summary.rebuild': (u) => { requireRole_(u, ['admin']); rebuildSummary_(); return { url: ss_().getUrl() }; }
+  'vessel.save': (u, p) => saveMaster_('Vessels', p, ['name','kind','mmsi','imo','type','operator','remark','active','sort',
+    'charter_start','charter_end','fuel_type','env_report'], ['name','kind']),
+  'vessel.delete': (u, p) => deleteMaster_('Vessels', p.id),
+  'observer.save': (u, p) => saveMaster_('Observers', p, ['name','role','company','phone','cert_no','remark','active'], ['name']),
+  'observer.delete': (u, p) => deleteMaster_('Observers', p.id),
+  'item.save': (u, p) => saveMaster_('UploadItems', p, ['kind','name_zh','name_en','required','cond','active','sort','note'], ['kind','name_zh']),
+  'item.delete': (u, p) => deleteItem_(p.id),
+  'settings.save': (u, p) => saveSettings_(p),
+  'user.save': (u, p) => saveUser_(u, p),
+  'user.delete': (u, p) => deleteUser_(u, p.id),
+  'role.save': (u, p) => saveRole_(p),
+  'role.delete': (u, p) => deleteRole_(p.id),
+  'audit.list': (u, p) => auditList_(p),
+  'reset.request': (u, p) => resetRequest_(u, p),
+  'reset.confirm': (u, p) => resetConfirm_(u, p),
+  'env.daily.save': (u, p) => envDailySave_(u, p),
+  'env.daily.delete': (u, p) => withLock_(() => ({ id: p.id, ok: Repo.remove('EnvDaily', p.id) })),
+  'env.waste.save': (u, p) => envWasteSave_(u, p),
+  'env.waste.delete': (u, p) => envWasteDelete_(p.id),
+  'env.file': (u, p) => envFile_(p.id),
+  'env.incident.save': (u, p) => envIncidentSave_(u, p),
+  'env.incident.delete': (u, p) => withLock_(() => ({ id: p.id, ok: Repo.remove('EnvIncidents', p.id) })),
+  'summary.rebuild': (u) => { rebuildSummary_(); return { url: ss_().getUrl() }; }
 };
 
 // ============ Spreadsheet / Repo ============
@@ -417,7 +438,24 @@ function settings_() {
   return o;
 }
 function lines_(v) { return String(v || '').split('\n').map(x => x.trim()).filter(Boolean); }
-function requireRole_(u, roles) { if (!u || roles.indexOf(u.role) < 0) fail_('Permission denied', 'FORBIDDEN'); }
+/** 角色清單（Roles 表；還沒存過就用預設） */
+function roles_() {
+  const rows = Repo.all('Roles');
+  const list = rows.length ? rows.map(r => ({ id: r.id, name: r.name, perms: String(r.perms).split(',').map(x => x.trim()).filter(Boolean), sort: Number(r.sort) || 0 }))
+    : ROLE_SEED.map((r, i) => ({ id: r.id, name: r.name, perms: r.perms.slice(), sort: i + 1 }));
+  return list.sort((a, b) => a.sort - b.sort || a.name.localeCompare(b.name));
+}
+function permsOf_(u) {
+  if (!u) return [];
+  if (u.role === 'admin') return PERMS.concat(['admin']);
+  const r = roles_().find(x => x.id === u.role);
+  return r ? r.perms.filter(p => PERMS.indexOf(p) >= 0) : [];
+}
+function can_(u, perm) { return permsOf_(u).indexOf(perm) >= 0; }
+/** 第一次改角色前，先把預設角色寫進 Roles 表 */
+function seedRoles_() {
+  if (!Repo.all('Roles').length) Repo.insertMany('Roles', roles_().map(r => ({ id: r.id, name: r.name, perms: r.perms.join(','), sort: String(r.sort), updated_at: nowIso_() })));
+}
 function parseJson_(v, def) { try { return v ? JSON.parse(v) : def; } catch (e) { return def; } }
 /** 'yyyy-MM-ddTHH:mm' 台北時間 → 毫秒 */
 function tms_(s) {
@@ -532,7 +570,8 @@ function saveUser_(u, p) {
   return withLock_(() => {
     const username = str_(p.username).toLowerCase();
     if (!username) fail_('Username required');
-    const role = ROLES.indexOf(p.role) >= 0 ? p.role : 'mmo';
+    const role = str_(p.role);
+    if (role !== 'admin' && !roles_().some(r => r.id === role)) fail_('Unknown role');
     if (Repo.all('Users').find(x => str_(x.username).toLowerCase() === username && x.id !== p.id)) fail_('Username already exists');
     const patch = { username: username, name: str_(p.name), email: str_(p.email), role: role, active: bool_(p.active) ? 'TRUE' : 'FALSE', updated_at: nowIso_() };
     if (p.id) {
@@ -553,6 +592,36 @@ function saveUser_(u, p) {
       last_login: '', created_at: nowIso_() }, patch);
     Repo.insert('Users', rec);
     return publicUser_(rec);
+  });
+}
+function saveRole_(p) {
+  return withLock_(() => {
+    const name = str_(p.name);
+    if (!name) fail_('Role name required');
+    if (p.id === 'admin') fail_('The Administrator role cannot be changed');
+    const perms = (Array.isArray(p.perms) ? p.perms : []).map(String).filter(x => PERMS.indexOf(x) >= 0);
+    seedRoles_();
+    const all = Repo.all('Roles');
+    if (all.find(r => r.name === name && r.id !== p.id)) fail_('Role name already exists');
+    const rec = { name: name, perms: perms.join(','), updated_at: nowIso_() };
+    if (p.id) {
+      if (!Repo.get('Roles', p.id)) fail_('Role not found', 'NOT_FOUND');
+      Repo.update('Roles', p.id, rec);
+      return { id: p.id, name: name };
+    }
+    const out = Object.assign({ id: 'r' + genId_(), sort: String(all.reduce((m, r) => Math.max(m, Number(r.sort) || 0), 0) + 1) }, rec);
+    Repo.insert('Roles', out);
+    return { id: out.id, name: name };
+  });
+}
+function deleteRole_(id) {
+  return withLock_(() => {
+    if (id === 'admin') fail_('The Administrator role cannot be deleted');
+    const n = Repo.all('Users').filter(u => u.role === id).length;
+    if (n) fail_('This role is still assigned to ' + n + ' account(s)');
+    seedRoles_();
+    Repo.remove('Roles', id);
+    return { id: id };
   });
 }
 function deleteUser_(u, id) {
@@ -594,11 +663,11 @@ function auditList_(p) {
 function loadData_(u) {
   const out = Object.assign({}, sharedState_());
   out.user = publicUser_(u);
+  out.user.perms = permsOf_(u);
+  out.roles = roles_();
   out.posTick = PropertiesService.getScriptProperties().getProperty('pos_tick') || '';
-  if (u.role === 'admin') {
-    out.users = Repo.all('Users').map(publicUser_);
-    out.env = { daily: Repo.all('EnvDaily'), waste: Repo.all('EnvWaste'), incidents: Repo.all('EnvIncidents') };
-  }
+  if (u.role === 'admin') out.users = Repo.all('Users').map(publicUser_);
+  if (can_(u, 'env')) out.env = { daily: Repo.all('EnvDaily'), waste: Repo.all('EnvWaste'), incidents: Repo.all('EnvIncidents') };
   return out;
 }
 function sharedState_() {
@@ -781,7 +850,7 @@ function checks_(sv, pauses, sightings, files, items, st, pos, svs) {
 function shiftEditable_(u, shiftId) {
   const s = Repo.get('Shifts', shiftId);
   if (!s) fail_('Batch not found', 'NOT_FOUND');
-  if (s.status === 'closed' && u.role !== 'admin') fail_('This batch is closed — ask an Admin to reopen it', 'FORBIDDEN');
+  if (s.status === 'closed' && !can_(u, 'shift.manage')) fail_('This batch is closed — ask an Admin to reopen it', 'FORBIDDEN');
   return s;
 }
 function saveShift_(u, p) {
@@ -1402,13 +1471,14 @@ function envFile_(id) {
   if (blob.getBytes().length > 25 * 1024 * 1024) fail_('File too large to preview — open it in Drive');
   return { name: r.file_name, mime: blob.getContentType(), data: Utilities.base64Encode(blob.getBytes()) };
 }
-const ENV_INC_FIELDS = ['type','severity','substance','quantity','lat','lon','description','action','reported_to','status'];
+const ENV_INC_FIELDS = ['type','severity','substance','quantity','lat','lon','description','action','reported_to','status','drive_url'];
 function envIncidentSave_(u, p) {
   const v = envVessel_(p.vessel_id), time = str_(p.time);
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(time)) fail_('Time is required');
   const rec = { vessel_id: v.id, vessel_name: v.name, time: time, updated_by: u.username, updated_at: nowIso_() };
   ENV_INC_FIELDS.forEach(k => { rec[k] = str_(p[k]); });
   if (!rec.type) fail_('Incident type is required');
+  if (rec.drive_url && !/^https:\/\/(drive|docs)\.google\.com\//.test(rec.drive_url)) fail_('Drive folder link must start with https://drive.google.com/');
   if (['near_miss', 'minor', 'major'].indexOf(rec.severity) < 0) rec.severity = 'minor';
   if (rec.status !== 'closed') rec.status = 'open';
   return withLock_(() => {

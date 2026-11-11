@@ -25,6 +25,7 @@ button{font-family:inherit}
 .muted{color:var(--muted)}.small{font-size:12px}
 .hidden{display:none!important}
 body.viewer .w{display:none!important}
+body.no-envedit .ew{display:none!important}
 body.viewer .ro :is(input,select,textarea){pointer-events:none;background:#f4f6f8}
 body:not(.admin) .adm{display:none!important}
 
@@ -471,6 +472,23 @@ function lines(v) { return String(v || '').split('\n').map(x => x.trim()).filter
 function json(v, d) { try { return v ? JSON.parse(v) : d; } catch (e) { return d; } }
 function isViewer() { return S && S.user.role === 'viewer'; }
 function isAdmin() { return S && S.user.role === 'admin'; }
+/** 目前使用者有沒有某個功能（admin 全部都有；功能清單見 PERM_LABELS） */
+function can(perm) { return !!S && (isAdmin() || (S.user.perms || []).indexOf(perm) >= 0); }
+// 後台「角色」可勾選的功能（後端 PERMS 要同步）
+const PERM_LABELS = [
+  ['dashboard', 'Dashboard', '儀表板'], ['shifts', 'Batches (view)', '施工批次（檢視）'], ['sightings', 'Sightings', '目擊紀錄'],
+  ['summary', 'Summary sheet', '總表'], ['tracks', 'Vessel tracks', '船舶軌跡'],
+  ['shift.edit', 'Batch data entry (create, record, upload, close)', '批次填報（新增、觀測紀錄、上傳、結案）'],
+  ['shift.manage', 'Reopen / delete / edit closed batches', '重新開啟／刪除／修改已結案批次'],
+  ['env', 'Environment (view)', '環保統計（檢視）'], ['env.edit', 'Environment data entry', '環保填報（每日、廢棄物、環境事件）'],
+  ['master', 'Back office: vessels, observers, upload items', '後台：船舶、觀察員、上傳項目'],
+  ['settings', 'Back office: rules & lists', '後台：規則與清單'], ['audit', 'Back office: activity log', '後台：操作紀錄']
+];
+function roleName(id) {
+  if (id === 'admin') return L('Administrator', '系統管理員');
+  const r = (S.roles || []).find(x => x.id === id);
+  return r ? r.name : id;
+}
 
 // 時間一律用台北時間字串 'yyyy-MM-ddTHH:mm'
 function nowLocal() {
@@ -581,11 +599,13 @@ function showLoading(t) { $('loadingText').textContent = t || ''; $('loading').c
 function hideLoading() { $('loading').classList.add('hidden'); }
 function openModal(title, body, opt) {
   opt = opt || {};
+  if (opt.perm && !can(opt.perm)) { opt = Object.assign({}, opt, { onSave: null, foot: '', ro: true }); }
+  const wcls = opt.perm ? '' : 'w';
   const bg = document.createElement('div');
   bg.className = 'modal-bg';
   bg.innerHTML = `<div class="modal ${opt.wide ? 'wide' : ''} ${opt.ro ? 'ro' : ''}"><div class="modal-head"><h3>${title}</h3><button class="modal-x">×</button></div>
     <div class="modal-body">${body}</div>
-    ${opt.onSave || opt.foot ? `<div class="modal-foot">${opt.foot || ''}<button class="btn" data-x>${L('Cancel', '取消')}</button>${opt.onSave ? `<button class="btn btn-primary w" data-save>${opt.saveText || L('Save', '儲存')}</button>` : ''}</div>` : ''}</div>`;
+    ${opt.onSave || opt.foot ? `<div class="modal-foot">${opt.foot || ''}<button class="btn" data-x>${L('Cancel', '取消')}</button>${opt.onSave ? `<button class="btn btn-primary ${wcls}" data-save>${opt.saveText || L('Save', '儲存')}</button>` : ''}</div>` : ''}</div>`;
   const close = () => bg.remove();
   bg.querySelector('.modal-x').onclick = close;
   const x = bg.querySelector('[data-x]'); if (x) x.onclick = close;
@@ -636,7 +656,7 @@ function stTag(st) { const s = STATUS[st] || STATUS.idle; return `<span class="t
 function shiftOf(id) { return S.shifts.find(s => s.id === id); }
 function svsOf(shiftId) { return S.svs.filter(x => x.shift_id === shiftId).sort((a, b) => Number(a.sort) - Number(b.sort)); }
 function shiftClosed(s) { return s && s.status === 'closed'; }
-function canEdit(s) { return !isViewer() && (!shiftClosed(s) || isAdmin()); }
+function canEdit(s) { return can('shift.edit') && (!shiftClosed(s) || can('shift.manage')); }
 function shiftLabel(s) { return `${s.date} · ${L('Batch', '批次')} ${s.shift_no}`; }
 function settingsNum(k, d) { const v = parseFloat(S.settings[k]); return isFinite(v) ? v : d; }
 function sites() {
@@ -747,13 +767,17 @@ const PAGES = [
   { id: 'sightings', ico: '🐬', en: 'Sightings', zh: '目擊紀錄' },
   { id: 'summary', ico: '📑', en: 'Summary sheet', zh: '總表' },
   { id: 'tracks', ico: '🗺', en: 'Vessel tracks', zh: '船舶軌跡' },
-  { id: 'env', ico: '🌱', en: 'Environment', zh: '環保統計', admin: true },
-  { id: 'admin', ico: '⚙️', en: 'Back office', zh: '後台管理', admin: true }
+  { id: 'env', ico: '🌱', en: 'Environment', zh: '環保統計' },
+  { id: 'admin', ico: '⚙️', en: 'Back office', zh: '後台管理' }
 ];
+/** 這頁能不能看（施工批次明細跟著「施工批次」；後台只要有任一個後台分頁就能進） */
+function canPage(id) {
+  if (id === 'shift') return can('shifts');
+  if (id === 'admin') return adminTabs().length > 0;
+  return can(id);
+}
 function enterApp() {
   $('auth').classList.add('hidden'); $('app').classList.remove('hidden');
-  document.body.classList.toggle('viewer', isViewer());
-  document.body.classList.toggle('admin', isAdmin());
   const h = location.hash.match(/^#shift=(.+)$/);
   if (h && shiftOf(h[1])) { PAGE = 'shift'; CUR.shift = h[1]; }
   render();
@@ -774,16 +798,20 @@ function render() {
   distAlertCheck();
   $('sideProject').textContent = S.settings.project_name || '';
   const missingCount = S.svs.filter(x => x.checks.missing.length && (x.checks.status === 'done' || shiftClosed(shiftOf(x.shift_id)))).length;
-  $('nav').innerHTML = PAGES.filter(p => !p.admin || isAdmin()).map(p =>
+  document.body.classList.toggle('viewer', !can('shift.edit'));
+  document.body.classList.toggle('no-envedit', !can('env.edit'));
+  document.body.classList.toggle('admin', can('settings'));   // .adm：重建總表（summary.rebuild）
+  $('nav').innerHTML = PAGES.filter(p => canPage(p.id)).map(p =>
     `<div class="nav-item ${PAGE === p.id || (PAGE === 'shift' && p.id === 'shifts') ? 'active' : ''}" onclick="go('${p.id}')"><span class="ico">${p.ico}</span>${L(p.en, p.zh)}
       ${p.id === 'shifts' && missingCount ? `<span class="badge" title="${L('Completed vessels with missing uploads', '已完工但缺件')}">${missingCount}</span>` : ''}</div>`).join('');
   $('sideFoot').innerHTML = `v${esc(S.version)} · ${L('TCO Manual 4th ed.', '作業手冊第四版')}<br>${L('Pre-watch', '預觀測')} ${settingsNum('pre_watch_min', 30)} min · ${L('Alert zone', '警戒區')} ${settingsNum('alert_zone_m', 750)} m`;
-  const role = { admin: 'Admin', mmo: 'MMO', viewer: L('Guest', '訪客') }[S.user.role];
+  const role = S.user.role === 'admin' ? 'Admin' : esc(roleName(S.user.role));
   $('userChip').innerHTML = `👤 <span class="nm">${esc(S.user.name || S.user.username)}</span><span class="role">${role}</span>`;
   if (!/…|離線|Offline/.test($('liveTxt').textContent)) $('liveTxt').textContent = L('Live', '即時');
   const P = { tracks: renderTracks, dashboard: renderDashboard, shifts: renderShifts, shift: renderShift, sightings: renderSightings, summary: renderSummary, admin: renderAdmin, env: renderEnv };
-  if ((PAGE === 'admin' || PAGE === 'env') && !isAdmin()) PAGE = 'dashboard';
   if (PAGE === 'shift' && !shiftOf(CUR.shift)) PAGE = 'shifts';
+  if (!canPage(PAGE)) PAGE = (PAGES.find(p => canPage(p.id)) || {}).id || '';
+  if (!PAGE) { setTitle(''); $('content').innerHTML = `<div class="section"><div class="empty">${L('Your account has no pages enabled. Ask an administrator to set up your role.', '這個帳號沒有開放任何頁面，請管理員到後台設定角色權限。')}</div></div>`; return; }
   (P[PAGE] || renderDashboard)();
 }
 function setSync(on, failed) {
@@ -1052,7 +1080,7 @@ function renderWeather() {
   const c = wxCfg();
   if (!c) {
     WX.built = ''; if (WX.map) { WX.map.remove(); WX.map = null; }
-    el.innerHTML = isAdmin() ? `<div class="wx-empty">🌊 ${L('Sea-state map: add site or forecast-point coordinates under Back office → Rules & lists.', '海象地圖：請到「後台管理 → 規則與清單」填入工區或預報點座標後就會顯示。')}</div>` : '';
+    el.innerHTML = can('settings') ? `<div class="wx-empty">🌊 ${L('Sea-state map: add site or forecast-point coordinates under Back office → Rules & lists.', '海象地圖：請到「後台管理 → 規則與清單」填入工區或預報點座標後就會顯示。')}</div>` : '';
     return;
   }
   const buildKey = c.key + '|' + LANG;
@@ -1084,7 +1112,7 @@ function renderWeather() {
   const $ = id => document.getElementById(id);
   const wins = wxWins(), win = wins.find(w => w[0] === WX.win) || wins[1];
   // 標題（Admin 可按 ✏️ 修改）
-  if (!WX.editing) $('wxTitle').innerHTML = `🌊 ${c.name ? esc(c.name) : L('Sea state at the work site', '工區海象')}${isAdmin() ? ` <button type="button" class="btn btn-secondary btn-sm" style="padding:0 6px;font-size:11px" title="${L('Edit title', '修改標題')}" onclick="wxEditTitle()">✏️</button>` : ''}`;
+  if (!WX.editing) $('wxTitle').innerHTML = `🌊 ${c.name ? esc(c.name) : L('Sea state at the work site', '工區海象')}${can('settings') ? ` <button type="button" class="btn btn-secondary btn-sm" style="padding:0 6px;font-size:11px" title="${L('Edit title', '修改標題')}" onclick="wxEditTitle()">✏️</button>` : ''}`;
   // 收合／展開
   const fold = $('wxFold');
   fold.classList.toggle('closed', WX.collapsed);
@@ -1297,7 +1325,7 @@ function distSection(s, ed) {
 /** 船距超出範圍警告：離開範圍時跳一次，仍在範圍外每 30 分鐘再跳；回到範圍內就重新計算。船位過舊不判定 */
 const DIST_ALERT_REPEAT_MIN = 30;
 function distAlertCheck() {
-  if (isViewer()) return;
+  if (!can('shift.edit')) return;
   let seen = {};
   try { seen = JSON.parse(localStorage.getItem('mmo_dist_alert') || '{}') || {}; } catch (e) {}
   const now = Date.now(), list = [], next = {};
@@ -1466,7 +1494,6 @@ function renderDashboard() {
       <div class="stat ${missing.length ? 'red' : ''}"><div class="v">${missing.length}</div><div class="l">${L('Completed but missing uploads', '已完工但缺件')}</div></div>
     </div>
     ${pauseStatsSection()}
-    ${envKpiRow()}
     <div class="section-header" style="padding:0 0 10px;border:0"><h3>${L('Active MMO vessels', '作業中 MMO 船')}</h3>
       <button class="btn btn-green w" onclick="shiftModal()">＋ ${L('New batch', '新增批次')}</button></div>
     ${active.length ? `<div class="vgrid">${active.map(card).join('')}</div>` : `<div class="section"><div class="empty">${L('No active batches. Create a batch to start recording.', '目前沒有作業中的批次，請先新增批次。')}</div></div>`}
@@ -1652,7 +1679,7 @@ function renderShift() {
   const sv = vs.find(x => x.id === CUR.sv);
   setTitle(shiftLabel(s));
   const ed = canEdit(s);
-  const closedBar = shiftClosed(s) ? `<div class="alert blue">🔒 ${L('This batch is closed', '此批次已結案')} (${esc(s.closed_by)} · ${fmtT(s.closed_at, true)})${isAdmin() ? '' : L(' — read only.', '，僅供檢視。')}</div>` : '';
+  const closedBar = shiftClosed(s) ? `<div class="alert blue">🔒 ${L('This batch is closed', '此批次已結案')} (${esc(s.closed_by)} · ${fmtT(s.closed_at, true)})${can('shift.manage') ? '' : L(' — read only.', '，僅供檢視。')}</div>` : '';
   $('content').innerHTML = `
     <div class="toolbar" style="margin-bottom:12px"><button class="btn btn-sm" onclick="go('shifts')">← ${L('Batches', '批次列表')}</button></div>
     ${closedBar}
@@ -1663,8 +1690,8 @@ function renderShift() {
         ${s.folder_id ? `<a class="btn btn-sm" target="_blank" href="https://drive.google.com/drive/folders/${esc(s.folder_id)}">📁 Drive</a>` : ''}
         ${ed ? `<button class="btn btn-sm w" onclick="shiftModal('${s.id}')">✏️ ${L('Edit', '編輯')}</button>` : ''}
         ${!shiftClosed(s) ? `<button class="btn btn-sm btn-primary w" onclick="closeShift('${s.id}')">🔒 ${L('Close batch', '結案')}</button>` : ''}
-        ${shiftClosed(s) && isAdmin() ? `<button class="btn btn-sm w" onclick="mut('shift.reopen',{id:'${s.id}'},L('Reopened','已重新開啟'))">🔓 ${L('Reopen', '重新開啟')}</button>` : ''}
-        ${isAdmin() ? `<button class="btn btn-sm btn-danger w" onclick="deleteShift('${s.id}')">🗑</button>` : ''}
+        ${shiftClosed(s) && can('shift.manage') ? `<button class="btn btn-sm w" onclick="mut('shift.reopen',{id:'${s.id}'},L('Reopened','已重新開啟'))">🔓 ${L('Reopen', '重新開啟')}</button>` : ''}
+        ${can('shift.manage') ? `<button class="btn btn-sm btn-danger w" onclick="deleteShift('${s.id}')">🗑</button>` : ''}
       </div></div></div>
     <div class="sv-tabs">${vs.map(x => `<div class="sv-tab ${x.id === CUR.sv ? 'active' : ''}" onclick="CUR.sv='${x.id}';renderShift()">🚤 ${esc(x.vessel_name)} ${stTag(x.checks.status)}${x.checks.warnings.length ? ' ⚠' : ''}</div>`).join('')}</div>
     ${distSection(s, ed)}
@@ -2851,13 +2878,12 @@ function envZeroDays() {
   const last = envData().incidents.filter(x => x.severity !== 'near_miss').map(x => x.time.slice(0, 10)).concat(start ? [start] : []).sort().pop();
   return last ? Math.max(0, Math.round((Date.parse(today()) - Date.parse(last)) / 86400000)) : null;
 }
-/** 儀表板上的環保 KPI 列（管理員） */
+/** 環保統計頁最上面的本月 KPI 列（點了跳到對應分頁） */
 function envKpiRow() {
-  if (!isAdmin() || !S.env) return '';
+  if (!S.env) return '';
   const m = today().slice(0, 7), t = envSummary(m).tot, z = envZeroDays();
-  const st = (cls, v, l, tab) => `<div class="stat ${cls}" style="cursor:pointer" onclick="ENV.tab='${tab}';ENV.month='${m}';go('env')"><div class="v">${v}</div><div class="l">${l}</div></div>`;
-  return `<div class="section-header" style="padding:0 0 10px;border:0"><h3>🌱 ${L('Environmental KPIs this month', '本月環保 KPI')}</h3>
-      <button class="btn btn-sm" onclick="ENV.tab='overview';go('env')">${L('Details', '詳細')} →</button></div>
+  const st = (cls, v, l, tab) => `<div class="stat ${cls}" style="cursor:pointer" onclick="ENV.month='${m}';envTab('${tab}')"><div class="v">${v}</div><div class="l">${l}</div></div>`;
+  return `<div class="section-header" style="padding:0 0 10px;border:0"><h3>🌱 ${L('Environmental KPIs this month', '本月環保 KPI')}</h3></div>
     <div class="stat-grid">
       ${st('', fmtN(t.fuel, 2), L('Fuel used (m³)', '用油量 (m³)'), 'overview')}
       ${st('blue', fmtN(t.water, 1), L('Water used (m³)', '用水量 (m³)'), 'overview')}
@@ -2881,7 +2907,9 @@ function renderEnv() {
   if (!ENV.month) ENV.month = today().slice(0, 7);
   if (!ENV.date) ENV.date = addDays(today(), -1);
   if (!S.env) { $('content').innerHTML = `<div class="section"><div class="empty">${L('Reload the page to load environmental data.', '請重新整理頁面以載入環保資料。')}</div></div>`; return; }
-  $('content').innerHTML = `<div class="admin-tabs">${ENV_TABS.map(t => `<div class="${ENV.tab === t[0] ? 'active' : ''}" onclick="envTab('${t[0]}')">${L(t[1], t[2])}</div>`).join('')}</div><div id="envBody"></div>`;
+  const tabs = ENV_TABS.filter(t => t[0] !== 'daily' || can('env.edit'));
+  if (!tabs.some(t => t[0] === ENV.tab)) ENV.tab = 'overview';
+  $('content').innerHTML = envKpiRow() + `<div class="admin-tabs">${tabs.map(t => `<div class="${ENV.tab === t[0] ? 'active' : ''}" onclick="envTab('${t[0]}')">${L(t[1], t[2])}</div>`).join('')}</div><div id="envBody"></div>`;
   ({ overview: envOverview, daily: envDaily, waste: envWaste, incidents: envIncidents }[ENV.tab] || envOverview)();
 }
 function envMonthSel(fn) { return `<select style="width:auto" onchange="ENV.month=this.value;${fn}()">${opts(envMonths(), ENV.month)}</select>`; }
@@ -2972,7 +3000,7 @@ function envWaste() {
   const list = envData().waste.filter(x => x.date.slice(0, 7) === ENV.month).sort((a, b) => b.date.localeCompare(a.date));
   $('envBody').innerHTML = `<div class="section"><div class="section-header"><div class="toolbar">${envMonthSel('envWaste')}
       <span class="muted small">${list.length} ${L('deliveries', '筆')} · ${fmtN(list.reduce((n, w) => n + envNum(w.total_kg), 0), 1)} kg</span></div>
-      <div class="toolbar"><button class="btn btn-sm" onclick="envExportWaste()">⬇ CSV</button><button class="btn btn-green btn-sm" onclick="envWasteModal()">＋ ${L('Add delivery', '新增交運')}</button></div></div>
+      <div class="toolbar"><button class="btn btn-sm" onclick="envExportWaste()">⬇ CSV</button><button class="btn btn-green btn-sm ew" onclick="envWasteModal()">＋ ${L('Add delivery', '新增交運')}</button></div></div>
     ${list.length ? `<div class="table-wrap"><table class="tbl"><tr><th>${L('Date', '日期')}</th><th>${L('Vessel', '船名')}</th><th>${L('Method', '處理方式')}</th><th>${L('Total (kg)', '合計 (kg)')}</th><th>${L('Categories', '類別明細')}</th>
       <th>${L('Receiver', '清運廠商')}</th><th>${L('Receipt no.', '聯單號碼')}</th><th>${L('Receipt', '聯單')}</th></tr>
       ${list.map(w => { const it = envWasteItems(w); return `<tr class="click" onclick="envWasteModal('${w.id}')"><td class="mono">${esc(w.date)}</td><td><b>${esc(w.vessel_name)}</b></td><td>${esc(biName(w.method))}</td>
@@ -2998,6 +3026,7 @@ function envWasteModal(id) {
     <div class="fg full"><label>${L('Remark', '備註')}</label><input id="ewRem" value="${esc(w.remark)}"></div>
     <div class="fg full"><label>${L('Receipt (PDF or photo)', '交運聯單（PDF 或照片）')}${w.drive_id ? ` · <a href="#" onclick="event.preventDefault();envViewFile('${w.id}')">📎 ${esc(w.file_name)}</a> <span class="small muted">${L('(choosing a file replaces it)', '（選新檔會取代）')}</span>` : ''}</label>
       <input id="ewF" type="file" accept=".pdf,image/*"></div></div>`, {
+    perm: 'env.edit',
     foot: id ? `<button class="btn btn-danger" style="margin-right:auto" onclick="envDel('env.waste.delete','${id}',this,true)">🗑</button>` : '',
     onSave: async (bg, btn) => {
       const items = {};
@@ -3052,11 +3081,12 @@ function envIncidents() {
       <div class="stat amber"><div class="v">${list.length}</div><div class="l">${L('Incidents this month', '本月事件')}</div></div>
       <div class="stat blue"><div class="v">${list.filter(x => x.severity === 'near_miss').length}</div><div class="l">${L('Near misses this month', '本月虛驚事件')}</div></div></div>
     <div class="section"><div class="section-header"><div class="toolbar">${envMonthSel('envIncidents')}</div>
-      <div class="toolbar"><button class="btn btn-sm" onclick="envExportIncidents()">⬇ CSV</button><button class="btn btn-green btn-sm" onclick="envIncidentModal()">＋ ${L('Report incident', '新增事件')}</button></div></div>
-    ${list.length || open.length ? `<div class="table-wrap"><table class="tbl"><tr><th>${L('Time', '時間')}</th><th>${L('Vessel', '船名')}</th><th>${L('Type', '類型')}</th><th>${L('Severity', '嚴重度')}</th><th>${L('Substance / quantity', '物質／數量')}</th><th>${L('Description', '說明')}</th><th>${L('Status', '狀態')}</th></tr>
+      <div class="toolbar"><button class="btn btn-sm" onclick="envExportIncidents()">⬇ CSV</button><button class="btn btn-green btn-sm ew" onclick="envIncidentModal()">＋ ${L('Report incident', '新增事件')}</button></div></div>
+    ${list.length || open.length ? `<div class="table-wrap"><table class="tbl"><tr><th>${L('Time', '時間')}</th><th>${L('Vessel', '船名')}</th><th>${L('Type', '類型')}</th><th>${L('Severity', '嚴重度')}</th><th>${L('Substance / quantity', '物質／數量')}</th><th>${L('Description', '說明')}</th><th>${L('Folder', '資料夾')}</th><th>${L('Status', '狀態')}</th></tr>
       ${Array.from(new Set(open.concat(list))).sort((a, b) => b.time.localeCompare(a.time)).map(x => `<tr class="click" onclick="envIncidentModal('${x.id}')"><td class="mono" style="white-space:nowrap">${fmtT(x.time, true)}${x.time.slice(0, 7) !== ENV.month ? ' <span class="small muted">' + x.time.slice(0, 4) + '</span>' : ''}</td><td><b>${esc(x.vessel_name)}</b></td>
         <td>${esc(biName(x.type))}</td><td><span class="tag ${(ENV_SEV[x.severity] || ENV_SEV.minor)[2]}">${L((ENV_SEV[x.severity] || ENV_SEV.minor)[0], (ENV_SEV[x.severity] || ENV_SEV.minor)[1])}</span></td>
         <td>${esc([x.substance, x.quantity].filter(Boolean).join(' · '))}</td><td class="small">${esc(x.description)}</td>
+        <td>${x.drive_url ? `<a class="btn btn-sm" href="${esc(x.drive_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">📁</a>` : '—'}</td>
         <td>${x.status === 'closed' ? `<span class="tag green">${L('Closed', '已結案')}</span>` : `<span class="tag red">${L('Open', '處理中')}</span>`}</td></tr>`).join('')}</table></div>`
       : `<div class="empty">✅ ${L('No incidents this month', '本月沒有環境事件')}</div>`}</div>`;
 }
@@ -3076,17 +3106,20 @@ function envIncidentModal(id) {
     <div class="fg full"><label>${L('Description', '事件說明')}</label><textarea id="eiDesc" rows="3">${esc(x.description)}</textarea></div>
     <div class="fg full"><label>${L('Action taken', '處置措施')}</label><textarea id="eiAct" rows="2">${esc(x.action)}</textarea></div>
     <div class="fg"><label>${L('Reported to', '通報對象')}</label><input id="eiRep" value="${esc(x.reported_to)}" placeholder="${L('e.g. client, coast guard', '例：業主、海巡署')}"></div>
-    <div class="fg"><label>${L('Status', '狀態')}</label><select id="eiSt">${opts([{ v: 'open', t: L('Open', '處理中') }, { v: 'closed', t: L('Closed', '已結案') }], x.status)}</select></div></div>`, {
+    <div class="fg"><label>${L('Status', '狀態')}</label><select id="eiSt">${opts([{ v: 'open', t: L('Open', '處理中') }, { v: 'closed', t: L('Closed', '已結案') }], x.status)}</select></div>
+    <div class="fg full"><label>${L('Google Drive folder link (photos, reports)', 'Google Drive 資料夾連結（照片、報告）')}${x.drive_url ? ` · <a href="${esc(x.drive_url)}" target="_blank" rel="noopener">${L('Open', '開啟')} ↗</a>` : ''}</label>
+      <input id="eiUrl" type="url" value="${esc(x.drive_url)}" placeholder="https://drive.google.com/drive/folders/..."></div></div>`, {
+    perm: 'env.edit',
     foot: id ? `<button class="btn btn-danger" style="margin-right:auto" onclick="envDel('env.incident.delete','${id}',this)">🗑</button>` : '',
     onSave: async (bg, btn) => mut('env.incident.save', { id: id || '', vessel_id: val(bg, 'eiV'), time: val(bg, 'eiT'), type: val(bg, 'eiTy'), severity: val(bg, 'eiS'),
       substance: val(bg, 'eiSub'), quantity: val(bg, 'eiQ'), lat: val(bg, 'eiLat'), lon: val(bg, 'eiLon'), description: val(bg, 'eiDesc'), action: val(bg, 'eiAct'),
-      reported_to: val(bg, 'eiRep'), status: val(bg, 'eiSt') }, L('Saved', '已儲存'), btn) });
+      reported_to: val(bg, 'eiRep'), status: val(bg, 'eiSt'), drive_url: val(bg, 'eiUrl') }, L('Saved', '已儲存'), btn) });
 }
 function envExportIncidents() {
   const sev = { near_miss: '虛驚', minor: '輕微', major: '重大' };
-  const rows = [['時間', '船名', '類型', '嚴重度', '物質／物品', '數量', '緯度', '經度', '事件說明', '處置措施', '通報對象', '狀態', '結案時間', '登錄者']];
+  const rows = [['時間', '船名', '類型', '嚴重度', '物質／物品', '數量', '緯度', '經度', '事件說明', '處置措施', '通報對象', '狀態', '結案時間', '登錄者', 'Drive 資料夾']];
   envData().incidents.filter(x => x.time.slice(0, 7) === ENV.month).sort((a, b) => a.time.localeCompare(b.time)).forEach(x => rows.push([x.time.replace('T', ' '), x.vessel_name, x.type, sev[x.severity] || x.severity,
-    x.substance, x.quantity, x.lat, x.lon, x.description, x.action, x.reported_to, x.status === 'closed' ? '已結案' : '處理中', (x.closed_at || '').replace('T', ' '), x.created_by]));
+    x.substance, x.quantity, x.lat, x.lon, x.description, x.action, x.reported_to, x.status === 'closed' ? '已結案' : '處理中', (x.closed_at || '').replace('T', ' '), x.created_by, x.drive_url]));
   downloadCsv('ENV_incidents_' + ENV.month + '.csv', rows);
 }
 /** 月報：每船一列＋合計列，廢棄物依類別展開 */
@@ -3108,10 +3141,14 @@ function envExportMonth() {
 }
 
 // ==================== Admin ====================
-const ADMIN_TABS = [['vessels', 'Vessels', '船舶'], ['observers', 'Observers', '觀察員'], ['items', 'Upload items', '上傳項目'], ['settings', 'Rules & lists', '規則與清單'], ['users', 'Accounts', '帳號'], ['audit', 'Activity log', '操作紀錄'], ['reset', 'Reset data', '清空資料']];
+const ADMIN_TABS = [['vessels', 'Vessels', '船舶', 'master'], ['observers', 'Observers', '觀察員', 'master'], ['items', 'Upload items', '上傳項目', 'master'],
+  ['settings', 'Rules & lists', '規則與清單', 'settings'], ['users', 'Accounts & roles', '帳號與角色', 'admin'], ['audit', 'Activity log', '操作紀錄', 'audit'], ['reset', 'Reset data', '清空資料', 'admin']];
+function adminTabs() { return ADMIN_TABS.filter(t => t[3] === 'admin' ? isAdmin() : can(t[3])); }
 function renderAdmin() {
   setTitle(L('Back office', '後台管理'));
-  const tabs = `<div class="admin-tabs">${ADMIN_TABS.map(t => `<div class="${ADMIN_TAB === t[0] ? 'active' : ''}" onclick="ADMIN_TAB='${t[0]}';renderAdmin()">${L(t[1], t[2])}</div>`).join('')}</div>`;
+  const list = adminTabs();
+  if (!list.some(t => t[0] === ADMIN_TAB)) ADMIN_TAB = list[0][0];
+  const tabs = `<div class="admin-tabs">${list.map(t => `<div class="${ADMIN_TAB === t[0] ? 'active' : ''}" onclick="ADMIN_TAB='${t[0]}';renderAdmin()">${L(t[1], t[2])}</div>`).join('')}</div>`;
   const T = { vessels: adminVessels, observers: adminObservers, items: adminItems, settings: adminSettings, users: adminUsers, audit: adminAudit, reset: adminReset };
   $('content').innerHTML = tabs + '<div id="adminBody"></div>';
   T[ADMIN_TAB]();
@@ -3146,6 +3183,7 @@ function vesselModal(id) {
     <div class="fg"><label>${L('Fuel type (for CO₂)', '燃料種類（算 CO₂）')}</label><select id="vFuel">${opts(fuels, v.fuel_type || fuels[0])}</select></div>
     <div class="fg"><label>&nbsp;</label><label class="chk"><input type="checkbox" id="vEnv" ${envOn(v) ? 'checked' : ''}> ${L('Daily environmental report required', '需填每日環保資料')}</label></div>
     <div class="fg full"><span class="small muted">${L('Days between charter start and end (or yesterday) count as required reporting days.', '起租日到退租日（或昨天）之間的每一天都算應填報日。')}</span></div></div>`, {
+    perm: 'master',
     foot: id ? `<button class="btn btn-danger" style="margin-right:auto" onclick="delMaster('vessel.delete','${id}',this)">🗑</button>` : '',
     onSave: async (bg, btn) => {
       if (val(bg, 'vCs') && val(bg, 'vCe') && val(bg, 'vCe') < val(bg, 'vCs')) { toast(L('Charter end is before charter start', '退租日早於起租日'), 'error'); return false; }
@@ -3178,13 +3216,14 @@ function observerModal(id) {
     <div class="fg"><label>${L('MMO certificate no.', '鯨豚觀察員證號')}</label><input id="oCert" value="${esc(o.cert_no)}"></div>
     <div class="fg"><label>&nbsp;</label><label class="chk"><input type="checkbox" id="oAct" ${bool(o.active) ? 'checked' : ''}> ${L('Active', '啟用')}</label></div>
     <div class="fg full"><label>${L('Remark', '備註')}</label><input id="oRem" value="${esc(o.remark)}"></div></div>`, {
+    perm: 'master',
     foot: id ? `<button class="btn btn-danger" style="margin-right:auto" onclick="delMaster('observer.delete','${id}',this)">🗑</button>` : '',
     onSave: async (bg, btn) => mut('observer.save', { id: id || '', name: val(bg, 'oName'), role: val(bg, 'oRole'), company: val(bg, 'oCo'), phone: val(bg, 'oPh'),
       cert_no: val(bg, 'oCert'), active: val(bg, 'oAct'), remark: val(bg, 'oRem') }, L('Saved', '已儲存'), btn) });
 }
 function bulkObservers() {
   openModal(L('Bulk add observers', '批次新增觀察員'), `<div class="fg"><label>${L('One per line: name, role (TCO/PAMO), company', '每行一位：姓名, 職務(TCO/PAMO), 公司')}</label>
-    <textarea id="boText" rows="10" placeholder="莊子毅, TCO, ABC&#10;潘昀展, PAMO, ABC"></textarea></div>`, { onSave: async (bg, btn) => {
+    <textarea id="boText" rows="10" placeholder="莊子毅, TCO, ABC&#10;潘昀展, PAMO, ABC"></textarea></div>`, { perm: 'master', onSave: async (bg, btn) => {
     const rows = lines(val(bg, 'boText')).map(l => l.split(/[,，\t]/).map(x => x.trim()));
     btn.disabled = true; showLoading(L('Saving…', '儲存中…'));
     let n = 0;
@@ -3218,6 +3257,7 @@ function itemModal(id) {
     <div class="fg"><label>${L('Sort order', '排序')}</label><input id="iSort" inputmode="numeric" value="${esc(i.sort)}"></div>
     <div class="fg"><label>&nbsp;</label><div class="toolbar"><label class="chk"><input type="checkbox" id="iReq" ${bool(i.required) ? 'checked' : ''}> ${L('Required', '必傳')}</label>
       <label class="chk"><input type="checkbox" id="iAct" ${bool(i.active) ? 'checked' : ''}> ${L('Active', '啟用')}</label></div></div></div>`, {
+    perm: 'master',
     foot: id ? `<button class="btn btn-danger" style="margin-right:auto" onclick="delMaster('item.delete','${id}',this)">🗑</button>` : '',
     onSave: async (bg, btn) => mut('item.save', { id: id || '', name_zh: val(bg, 'iZh'), name_en: val(bg, 'iEn'), kind: val(bg, 'iKind'), cond: val(bg, 'iCond'), sort: val(bg, 'iSort'),
       required: val(bg, 'iReq'), active: val(bg, 'iAct') }, L('Saved', '已儲存'), btn) });
@@ -3296,24 +3336,42 @@ function saveSettings(btn) {
   mut('settings.save', p, L('Settings saved', '設定已儲存'), btn).catch(() => {});
 }
 function adminUsers() {
-  const roles = { admin: L('Administrator', '系統管理員'), mmo: L('MMO (data entry)', 'MMO 填報人員'), viewer: L('Guest (read-only)', '訪客（唯讀）') };
-  $('adminBody').innerHTML = `<div class="section"><div class="section-header"><h3>${L('Accounts', '帳號')}</h3><button class="btn btn-green btn-sm" onclick="userModal()">＋ ${L('Add account', '新增帳號')}</button></div>
+  const count = id => (S.users || []).filter(u => u.role === id).length;
+  const permCell = r => PERM_LABELS.filter(p => r.perms.indexOf(p[0]) >= 0).map(p => `<span class="tag">${L(p[1], p[2])}</span>`).join(' ') || `<span class="muted">${L('Nothing', '無')}</span>`;
+  $('adminBody').innerHTML = `<div class="section"><div class="section-header"><h3>${L('Roles', '角色')}</h3><button class="btn btn-green btn-sm" onclick="roleModal()">＋ ${L('Add role', '新增角色')}</button></div>
+    <div class="table-wrap"><table class="tbl"><tr><th>${L('Role', '角色')}</th><th>${L('Allowed functions', '可使用的功能')}</th><th>${L('Accounts', '帳號數')}</th></tr>
+    <tr><td><b>${roleName('admin')}</b></td><td><span class="muted small">${L('Everything, incl. accounts, roles and data reset (fixed)', '全部功能，含帳號、角色、清空資料（固定，不能改）')}</span></td><td>${count('admin')}</td></tr>
+    ${(S.roles || []).map(r => `<tr class="click" onclick="roleModal('${r.id}')"><td><b>${esc(r.name)}</b></td><td>${permCell(r)}</td><td>${count(r.id)}</td></tr>`).join('')}</table></div></div>
+    <div class="section"><div class="section-header"><h3>${L('Accounts', '帳號')}</h3><button class="btn btn-green btn-sm" onclick="userModal()">＋ ${L('Add account', '新增帳號')}</button></div>
     <div class="table-wrap"><table class="tbl"><tr><th>${L('Username', '帳號')}</th><th>${L('Name', '姓名')}</th><th>Email</th><th>${L('Role', '角色')}</th><th>${L('Last login', '最後登入')}</th><th>${L('Status', '狀態')}</th></tr>
-    ${(S.users || []).map(u => `<tr class="click" onclick="userModal('${u.id}')"><td class="mono">${esc(u.username)}</td><td>${esc(u.name)}</td><td>${esc(u.email)}</td><td>${roles[u.role] || esc(u.role)}</td><td class="mono">${fmtT(u.last_login, true)}</td><td>${yes(u.active)}</td></tr>`).join('')}</table></div></div>`;
+    ${(S.users || []).map(u => `<tr class="click" onclick="userModal('${u.id}')"><td class="mono">${esc(u.username)}</td><td>${esc(u.name)}</td><td>${esc(u.email)}</td><td>${esc(roleName(u.role))}</td><td class="mono">${fmtT(u.last_login, true)}</td><td>${yes(u.active)}</td></tr>`).join('')}</table></div></div>`;
 }
 function userModal(id) {
-  const u = id ? S.users.find(x => x.id === id) : { role: 'mmo', active: true };
+  const u = id ? S.users.find(x => x.id === id) : { role: ((S.roles || [])[0] || { id: 'admin' }).id, active: true };
+  const roleOpts = [{ v: 'admin', t: roleName('admin') }].concat((S.roles || []).map(r => ({ v: r.id, t: r.name })));
+  if (u.role && !roleOpts.some(o => o.v === u.role)) roleOpts.push({ v: u.role, t: u.role });
   openModal(id ? L('Edit account', '編輯帳號') : L('Add account', '新增帳號'), `<div class="form-grid">
     <div class="fg"><label>${L('Username', '帳號')} *</label><input id="uUser" value="${esc(u.username)}"></div>
     <div class="fg"><label>${L('Name', '姓名')}</label><input id="uName" value="${esc(u.name)}"></div>
     <div class="fg"><label>Email</label><input id="uEmail" type="email" value="${esc(u.email)}"></div>
-    <div class="fg"><label>${L('Role', '角色')}</label><select id="uRole">${opts([{ v: 'admin', t: L('Administrator', '系統管理員') }, { v: 'mmo', t: L('MMO (data entry)', 'MMO 填報人員') }, { v: 'viewer', t: L('Guest (read-only)', '訪客（唯讀）') }], u.role)}</select></div>
+    <div class="fg"><label>${L('Role', '角色')}</label><select id="uRole">${opts(roleOpts, u.role)}</select></div>
     <div class="fg"><label>${id ? L('Reset password (blank = keep)', '重設密碼（空白＝不變）') : L('Temporary password *', '臨時密碼 *')}</label><input id="uPass" type="text" autocomplete="off"></div>
     <div class="fg"><label>&nbsp;</label><label class="chk"><input type="checkbox" id="uAct" ${u.active === true || bool(u.active) ? 'checked' : ''}> ${L('Active', '啟用')}</label></div></div>
     <div class="small muted" style="margin-top:10px">${L('The user must change the temporary password at first sign-in.', '使用者首次登入時須更改臨時密碼。')}</div>`, {
+    perm: 'admin',
     foot: id && id !== S.user.id ? `<button class="btn btn-danger" style="margin-right:auto" onclick="delMaster('user.delete','${id}',this)">🗑</button>` : '',
     onSave: async (bg, btn) => mut('user.save', { id: id || '', username: val(bg, 'uUser'), name: val(bg, 'uName'), email: val(bg, 'uEmail'), role: val(bg, 'uRole'),
       password: val(bg, 'uPass'), active: val(bg, 'uAct') }, L('Saved', '已儲存'), btn) });
+}
+function roleModal(id) {
+  const r = id ? S.roles.find(x => x.id === id) : { name: '', perms: ['dashboard', 'shifts', 'sightings', 'summary', 'tracks'] };
+  const used = id ? (S.users || []).filter(u => u.role === id).length : 0;
+  openModal(id ? L('Edit role', '編輯角色') : L('Add role', '新增角色'), `<div class="fg"><label>${L('Role name', '角色名稱')} *</label><input id="rlName" value="${esc(r.name)}" placeholder="${L('e.g. NMDC environmental staff', '例：NMDC 環保人員')}"></div>
+    <div style="display:flex;flex-direction:column;gap:8px;margin-top:14px">${PERM_LABELS.map(p => `<label class="chk"><input type="checkbox" class="rl_perm" value="${p[0]}" ${r.perms.indexOf(p[0]) >= 0 ? 'checked' : ''}> ${L(p[1], p[2])}</label>`).join('')}</div>
+    <div class="small muted" style="margin-top:12px">${L('Accounts, roles and data reset are always administrator-only. Changes apply the next time the user reloads.', '帳號、角色、清空資料一律只有系統管理員能用。修改後，使用者重新整理頁面就會套用。')}</div>`, {
+    perm: 'admin',
+    foot: id ? `<button class="btn btn-danger" style="margin-right:auto" ${used ? `disabled title="${L('Still assigned to ' + used + ' account(s)', '還有 ' + used + ' 個帳號使用中')}"` : ''} onclick="delMaster('role.delete','${id}',this)">🗑</button>` : '',
+    onSave: async (bg, btn) => mut('role.save', { id: id || '', name: val(bg, 'rlName'), perms: [...bg.querySelectorAll('.rl_perm')].filter(c => c.checked).map(c => c.value) }, L('Saved', '已儲存'), btn) });
 }
 const RESET_GROUPS = [
   ['shifts', 'Batches (incl. pauses, sightings and uploaded files)', '施工批次（含暫停施工、目擊紀錄與上傳檔案）', () => S.shifts.length, true],
@@ -3343,7 +3401,7 @@ async function resetRequest(btn) {
   finally { hideLoading(); btn.disabled = false; }
   openModal(L('Reset data', '清空資料'), `<div class="alert red" style="margin-bottom:12px">${L('This cannot be undone.', '此動作無法復原。')}<br><b>${names.map(esc).join('<br>')}</b></div>
     <div class="fg"><label>${L('Enter the 6-digit code sent to ', '請輸入寄到以下信箱的 6 位數驗證碼：')}${esc(r.to)}</label><input id="rsCode" class="mono" inputmode="numeric" maxlength="6" autocomplete="one-time-code"></div>`, {
-    saveText: L('Delete permanently', '確認刪除'),
+    saveText: L('Delete permanently', '確認刪除'), perm: 'admin',
     onSave: async (bg, b) => {
       await mut('reset.confirm', { code: val(bg, 'rsCode') }, '', b).then(d => toast(L(`Data cleared (${d.rows} records, ${d.folders} folders). Backup: ${d.backup}`, `已清空資料（${d.rows} 筆資料、${d.folders} 個資料夾）。備份：${d.backup}`)));
     } });
