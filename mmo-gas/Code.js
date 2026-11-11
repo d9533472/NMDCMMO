@@ -10,7 +10,7 @@
 // 角色：admin（全部，固定）＋後台自訂角色（Roles 表，勾選 PERMS 裡的功能）；預設 mmo（填報批次）、viewer（唯讀共用帳號）
 // ============================================================
 
-const VERSION = '1.8.0';
+const VERSION = '1.8.1';
 const ROOT_FOLDER_ID = '1uVkbv4tndRVERhrHmHUzaTvPlHaFV4em';
 const SS_NAME = 'MMO 鯨豚觀察總表';
 const TZ = 'Asia/Taipei';
@@ -124,12 +124,24 @@ function doPost(e) {
   catch (err) { return json_({ ok: false, error: 'Bad JSON' }); }
   return json_(handle_(req));
 }
+// 瀏覽次數：每個分頁開一次 +1（peek 只讀不加），從 56 起算
+function visitHit_(p) {
+  const props = PropertiesService.getScriptProperties();
+  if (p && p.peek) return { count: Number(props.getProperty('visit_count') || 55) };
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    const n = Number(props.getProperty('visit_count') || 55) + 1;
+    props.setProperty('visit_count', String(n));
+    return { count: n };
+  } finally { lock.releaseLock(); }
+}
 function json_(o) { return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON); }
 
-const PUBLIC = { 'ping': 1, 'auth.status': 1, 'auth.setup': 1, 'auth.login': 1, 'data.rev': 1 };
-const NO_REV = { 'env.file': 1, 'ping': 1, 'auth.status': 1, 'auth.login': 1, 'auth.logout': 1, 'auth.changePassword': 1, 'data.load': 1, 'data.rev': 1,
+const PUBLIC = { 'ping': 1, 'visit.hit': 1, 'auth.status': 1, 'auth.setup': 1, 'auth.login': 1, 'data.rev': 1 };
+const NO_REV = { 'env.file': 1, 'ping': 1, 'visit.hit': 1, 'auth.status': 1, 'auth.login': 1, 'auth.logout': 1, 'auth.changePassword': 1, 'data.load': 1, 'data.rev': 1,
   'audit.list': 1, 'file.get': 1, 'shift.files': 1, 'pos.fetch': 1, 'pos.test': 1, 'pos.list': 1, 'reset.request': 1 };
-const AUDIT_SKIP = { 'env.file': 1, 'ping': 1, 'auth.status': 1, 'data.load': 1, 'data.rev': 1, 'audit.list': 1, 'file.get': 1, 'shift.files': 1, 'pos.list': 1 };
+const AUDIT_SKIP = { 'env.file': 1, 'ping': 1, 'visit.hit': 1, 'auth.status': 1, 'data.load': 1, 'data.rev': 1, 'audit.list': 1, 'file.get': 1, 'shift.files': 1, 'pos.list': 1 };
 // 這些寫入會改到批次資料 → 重建試算表「總表」
 const SUMMARY_ACTIONS = /^((shift|sv|pause|sighting|file)\.(save|delete|close|reopen|upload)|reset\.confirm)$/;
 
@@ -162,6 +174,7 @@ function handle_(req) {
 
 const ROUTES = {
   'ping': () => ({ version: VERSION, time: nowIso_() }),
+  'visit.hit': (u, p) => visitHit_(p),
   'auth.status': () => ({ needsSetup: Repo.all('Users').length === 0, project: settings_().project_name }),
   'auth.setup': (u, p) => authSetup_(p),
   'auth.login': (u, p) => authLogin_(p),

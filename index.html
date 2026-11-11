@@ -698,8 +698,24 @@ function authView(which, msg) {
       <button class="btn btn-primary" onclick="doChange(this, true)">${L('Save', '儲存')}</button><div class="auth-err" id="liErr"></div>`;
   }
 }
+// 瀏覽次數：同一分頁重新整理不重複計算
+let VISITS = null;
+function countVisit() {
+  let seen = false;
+  try { seen = sessionStorage.getItem('mmo_visited') === '1'; } catch (e) {}
+  api('visit.hit', seen ? { peek: true } : {}).then(d => {
+    VISITS = d.count;
+    try { sessionStorage.setItem('mmo_visited', '1'); } catch (e) {}
+    showVisits();
+  }).catch(() => {});
+}
+function showVisits() {
+  const x = $('visitCnt');
+  if (x && VISITS != null) x.textContent = `👁 ${L('Visits', '瀏覽次數')} ${Number(VISITS).toLocaleString()}`;
+}
 async function boot() {
   applyLangButtons();
+  countVisit();
   authView('loading');
   if (TOKEN) {
     // 有上次的資料就先顯示（秒開），伺服器資料回來再更新畫面
@@ -804,7 +820,8 @@ function render() {
   $('nav').innerHTML = PAGES.filter(p => canPage(p.id)).map(p =>
     `<div class="nav-item ${PAGE === p.id || (PAGE === 'shift' && p.id === 'shifts') ? 'active' : ''}" onclick="go('${p.id}')"><span class="ico">${p.ico}</span>${L(p.en, p.zh)}
       ${p.id === 'shifts' && missingCount ? `<span class="badge" title="${L('Completed vessels with missing uploads', '已完工但缺件')}">${missingCount}</span>` : ''}</div>`).join('');
-  $('sideFoot').innerHTML = `v${esc(S.version)} · ${L('TCO Manual 4th ed.', '作業手冊第四版')}<br>${L('Pre-watch', '預觀測')} ${settingsNum('pre_watch_min', 30)} min · ${L('Alert zone', '警戒區')} ${settingsNum('alert_zone_m', 750)} m`;
+  $('sideFoot').innerHTML = `v${esc(S.version)} · ${L('TCO Manual 4th ed.', '作業手冊第四版')}<br>${L('Pre-watch', '預觀測')} ${settingsNum('pre_watch_min', 30)} min · ${L('Alert zone', '警戒區')} ${settingsNum('alert_zone_m', 750)} m<br><span id="visitCnt"></span>`;
+  showVisits();
   const role = S.user.role === 'admin' ? 'Admin' : esc(roleName(S.user.role));
   $('userChip').innerHTML = `👤 <span class="nm">${esc(S.user.name || S.user.username)}</span><span class="role">${role}</span>`;
   if (!/…|離線|Offline/.test($('liveTxt').textContent)) $('liveTxt').textContent = L('Live', '即時');
