@@ -3333,7 +3333,11 @@ function adminSettings() {
       ${ta('env_waste_cats', 'Waste categories', '廢棄物類別', '', 6)}
       ${ta('env_waste_methods', 'Waste disposal methods', '廢棄物處理方式', '', 4)}
       ${ta('env_incident_types', 'Environmental incident types', '環境事件類型', '', 4)}
-      ${ta('env_incident_places', 'Incident locations besides vessels (one per line)', '環境事件地點（船舶以外，每行一個）', L('Shown with the vessels in the incident form; “Other” lets you type any location.', '會和船舶一起出現在事件表單的地點選單；另有「其他」可自行填寫。'), 3)}
+      <div class="fg full"><label>${L('Incident locations — vessels (click to edit)', '環境事件地點 — 船舶（點一下可編輯）')}</label>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">${S.vessels.filter(v => bool(v.active)).map(v => `<button type="button" class="btn btn-sm" onclick="vesselModal('${v.id}')">🚢 ${esc(v.name)}</button>`).join('')
+          || `<span class="small muted">${L('No active vessels', '沒有啟用中的船舶')}</span>`}<button type="button" class="btn btn-green btn-sm" onclick="vesselModal()">＋ ${L('Add vessel', '新增船舶')}</button></div>
+        <span class="small muted">${L('Active vessels appear in the incident form automatically; inactive ones are hidden.', '啟用中的船舶會自動出現在事件表單；停用的不會顯示。')}</span></div>
+      ${ta('env_incident_places', 'Incident locations — sites (one per line, add or edit freely)', '環境事件地點 — 工地（每行一個，可直接修改或新增）', L('Together with the vessels above, these make up the location menu; “Other” lets you type any location.', '和上面的船舶一起組成事件表單的地點選單；另有「其他」可自行填寫。'), 3)}
       <div class="fg"><label>${L('Days-without-incident counted from', '連續零事件天數起算日')}</label><input id="st_env_zero_start" type="date" value="${esc(st.env_zero_start)}">
         <span class="small muted">${L('Counts from this date, or from the latest incident after it (near misses excluded).', '從這天起算；之後若有事件（不含虛驚）就從最近一次事件重新算。')}</span></div>
     </div></div></div>
