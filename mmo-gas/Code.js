@@ -10,7 +10,7 @@
 // 角色：admin（全部，固定）＋後台自訂角色（Roles 表，勾選 PERMS 裡的功能）；預設 mmo（填報批次）、viewer（唯讀共用帳號）
 // ============================================================
 
-const VERSION = '1.8.1';
+const VERSION = '1.8.2';
 const ROOT_FOLDER_ID = '1uVkbv4tndRVERhrHmHUzaTvPlHaFV4em';
 const SS_NAME = 'MMO 鯨豚觀察總表';
 const TZ = 'Asia/Taipei';
@@ -71,7 +71,8 @@ const DEFAULT_SETTINGS = {
   env_waste_cats: '塑膠 Plastics\n食物廢棄物 Food waste\n生活廢棄物 Domestic waste\n廢食用油 Cooking oil\n焚化爐灰燼 Incinerator ash\n作業廢棄物 Operational waste\n電子廢棄物 E-waste\n有害廢棄物 Hazardous waste\n油泥 Oil sludge\n艙底油水 Oily bilge water\n污水 Sewage\n資源回收 Recyclables',
   env_waste_methods: '上岸交運 Landed ashore\n船上焚化 Incinerated on board\n依 MARPOL 排放 Discharged per MARPOL\n資源回收 Recycled',
   env_incident_types: '漏油／溢油 Oil spill\n化學品洩漏 Chemical spill\n物品落海 Object overboard\n廢棄物不當排放 Improper discharge\n其他 Other',
-  env_zero_start: '2025-01-02'   // 連續零事件天數起算日（之後若有事件就從最近一次事件算）
+  env_incident_places: '工地 A Site A\n工地 B Site B',   // 環境事件地點（船舶以外）
+  env_zero_start: '2025-01-02'  // 連續零事件天數起算日（之後若有事件就從最近一次事件算）
 };
 const SECRET_SETTINGS = { ais_api_key: 1 };
 
@@ -1486,7 +1487,9 @@ function envFile_(id) {
 }
 const ENV_INC_FIELDS = ['type','severity','substance','quantity','lat','lon','description','action','reported_to','status','drive_url'];
 function envIncidentSave_(u, p) {
-  const v = envVessel_(p.vessel_id), time = str_(p.time);
+  // 地點：選船就存 vessel_id；工地或自填地點則 vessel_id 留空，名稱存在 vessel_name
+  const v = p.vessel_id ? envVessel_(p.vessel_id) : { id: '', name: str_(p.place) }, time = str_(p.time);
+  if (!v.name) fail_('Location is required');
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(time)) fail_('Time is required');
   const rec = { vessel_id: v.id, vessel_name: v.name, time: time, updated_by: u.username, updated_at: nowIso_() };
   ENV_INC_FIELDS.forEach(k => { rec[k] = str_(p[k]); });

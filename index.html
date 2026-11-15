@@ -572,7 +572,7 @@ const ERR_ZH = {
   'Could not find a position in the API response': 'API 回應中沒有船位資料',
   'This vessel has environmental records — set it inactive instead': '這艘船已有環保紀錄，請改為停用',
   'Enter the weight of at least one waste category': '請至少填一個廢棄物類別的重量', 'Time is required': '請填時間',
-  'Incident type is required': '請選事件類型', 'An observer can only be on one MMO vessel in a batch': '同一批次中，一位觀察人員只能在一艘 MMO 船', 'Vessel not found': '找不到船舶', 'You cannot demote or disable your own account': '不能降級或停用自己的帳號'
+  'Incident type is required': '請選事件類型', 'Location is required': '請選擇或填寫地點', 'An observer can only be on one MMO vessel in a batch': '同一批次中，一位觀察人員只能在一艘 MMO 船', 'Vessel not found': '找不到船舶', 'You cannot demote or disable your own account': '不能降級或停用自己的帳號'
 };
 function trErr(m) {
   if (LANG !== 'zh') return m;
@@ -2886,6 +2886,7 @@ function envSummary(month) {
     tot.missing += r.missing.length;
     Object.keys(r.byCat).forEach(k => { tot.byCat[k] = (tot.byCat[k] || 0) + r.byCat[k]; });
   });
+  tot.inc = E.incidents.filter(x => x.time.slice(0, 7) === month).length;   // 含工地／自填地點（不屬於任何船）
   return { rows, tot };
 }
 /** 最近一次非虛驚的環境事件到今天幾天；沒有事件回傳 null */
@@ -3099,8 +3100,8 @@ function envIncidents() {
       <div class="stat blue"><div class="v">${list.filter(x => x.severity === 'near_miss').length}</div><div class="l">${L('Near misses this month', '本月虛驚事件')}</div></div></div>
     <div class="section"><div class="section-header"><div class="toolbar">${envMonthSel('envIncidents')}</div>
       <div class="toolbar"><button class="btn btn-sm" onclick="envExportIncidents()">⬇ CSV</button><button class="btn btn-green btn-sm ew" onclick="envIncidentModal()">＋ ${L('Report incident', '新增事件')}</button></div></div>
-    ${list.length || open.length ? `<div class="table-wrap"><table class="tbl"><tr><th>${L('Time', '時間')}</th><th>${L('Vessel', '船名')}</th><th>${L('Type', '類型')}</th><th>${L('Severity', '嚴重度')}</th><th>${L('Substance / quantity', '物質／數量')}</th><th>${L('Description', '說明')}</th><th>${L('Folder', '資料夾')}</th><th>${L('Status', '狀態')}</th></tr>
-      ${Array.from(new Set(open.concat(list))).sort((a, b) => b.time.localeCompare(a.time)).map(x => `<tr class="click" onclick="envIncidentModal('${x.id}')"><td class="mono" style="white-space:nowrap">${fmtT(x.time, true)}${x.time.slice(0, 7) !== ENV.month ? ' <span class="small muted">' + x.time.slice(0, 4) + '</span>' : ''}</td><td><b>${esc(x.vessel_name)}</b></td>
+    ${list.length || open.length ? `<div class="table-wrap"><table class="tbl"><tr><th>${L('Time', '時間')}</th><th>${L('Location', '地點')}</th><th>${L('Type', '類型')}</th><th>${L('Severity', '嚴重度')}</th><th>${L('Substance / quantity', '物質／數量')}</th><th>${L('Description', '說明')}</th><th>${L('Folder', '資料夾')}</th><th>${L('Status', '狀態')}</th></tr>
+      ${Array.from(new Set(open.concat(list))).sort((a, b) => b.time.localeCompare(a.time)).map(x => `<tr class="click" onclick="envIncidentModal('${x.id}')"><td class="mono" style="white-space:nowrap">${fmtT(x.time, true)}${x.time.slice(0, 7) !== ENV.month ? ' <span class="small muted">' + x.time.slice(0, 4) + '</span>' : ''}</td><td><b>${esc(x.vessel_id ? x.vessel_name : biName(x.vessel_name))}</b></td>
         <td>${esc(biName(x.type))}</td><td><span class="tag ${(ENV_SEV[x.severity] || ENV_SEV.minor)[2]}">${L((ENV_SEV[x.severity] || ENV_SEV.minor)[0], (ENV_SEV[x.severity] || ENV_SEV.minor)[1])}</span></td>
         <td>${esc([x.substance, x.quantity].filter(Boolean).join(' · '))}</td><td class="small">${esc(x.description)}</td>
         <td>${x.drive_url ? `<a class="btn btn-sm" href="${esc(x.drive_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">📁</a>` : '—'}</td>
@@ -3111,8 +3112,17 @@ function envIncidentModal(id) {
   const x = id ? envData().incidents.find(i => i.id === id) : { time: nowLocal(), severity: 'minor', status: 'open' };
   const types = lines(S.settings.env_incident_types); if (x.type && types.indexOf(x.type) < 0) types.push(x.type);
   const vs = S.vessels.filter(v => bool(v.active) || v.id === x.vessel_id);
+  // 地點：船舶、工地（後台設定），或自行填寫；船以外的地點 vessel_id 留空、名稱存在 vessel_name
+  const places = lines(S.settings.env_incident_places != null ? S.settings.env_incident_places : '工地 A Site A\n工地 B Site B');
+  const cur = x.vessel_id || (!id ? '' : places.indexOf(x.vessel_name) >= 0 ? 'place:' + x.vessel_name : '__other');
   openModal(id ? L('Edit incident', '編輯環境事件') : L('Report incident', '新增環境事件'), `<div class="form-grid">
-    <div class="fg"><label>${L('Vessel', '船名')} *</label><select id="eiV">${opts(vs.map(v => ({ v: v.id, t: v.name })), x.vessel_id, '—')}</select></div>
+    <div class="fg"><label>${L('Location', '地點')} *</label><select id="eiV" onchange="this.closest('.form-grid').querySelector('#eiPlaceFg').style.display = this.value === '__other' ? '' : 'none'">
+      <option value="">—</option>
+      <optgroup label="${L('Vessels', '船舶')}">${opts(vs.map(v => ({ v: v.id, t: v.name })), cur)}</optgroup>
+      ${places.length ? `<optgroup label="${L('Sites', '工地')}">${opts(places.map(p => ({ v: 'place:' + p, t: biName(p) })), cur)}</optgroup>` : ''}
+      <option value="__other" ${cur === '__other' ? 'selected' : ''}>${L('Other (type below)', '其他（自行填寫）')}</option></select></div>
+    <div class="fg" id="eiPlaceFg" style="${cur === '__other' ? '' : 'display:none'}"><label>${L('Location name', '地點名稱')} *</label>
+      <input id="eiPlace" value="${esc(cur === '__other' ? x.vessel_name : '')}" placeholder="${L('e.g. Taichung Port pier 2', '例：台中港 2 號碼頭')}"></div>
     <div class="fg"><label>${L('Time', '時間')} *</label><input id="eiT" type="datetime-local" value="${esc(String(x.time).slice(0, 16))}"></div>
     <div class="fg"><label>${L('Type', '類型')} *</label><select id="eiTy">${opts(types.map(t => ({ v: t, t: biName(t) })), x.type, '—')}</select></div>
     <div class="fg"><label>${L('Severity', '嚴重度')}</label><select id="eiS">${opts(Object.keys(ENV_SEV).map(k => ({ v: k, t: L(ENV_SEV[k][0], ENV_SEV[k][1]) })), x.severity)}</select></div>
@@ -3128,13 +3138,14 @@ function envIncidentModal(id) {
       <input id="eiUrl" type="url" value="${esc(x.drive_url)}" placeholder="https://drive.google.com/drive/folders/..."></div></div>`, {
     perm: 'env.edit',
     foot: id ? `<button class="btn btn-danger" style="margin-right:auto" onclick="envDel('env.incident.delete','${id}',this)">🗑</button>` : '',
-    onSave: async (bg, btn) => mut('env.incident.save', { id: id || '', vessel_id: val(bg, 'eiV'), time: val(bg, 'eiT'), type: val(bg, 'eiTy'), severity: val(bg, 'eiS'),
+    onSave: async (bg, btn) => { const loc = val(bg, 'eiV'), isV = loc && loc !== '__other' && loc.indexOf('place:') !== 0; return mut('env.incident.save', { id: id || '',
+      vessel_id: isV ? loc : '', place: isV ? '' : loc === '__other' ? val(bg, 'eiPlace') : loc.slice(6), time: val(bg, 'eiT'), type: val(bg, 'eiTy'), severity: val(bg, 'eiS'),
       substance: val(bg, 'eiSub'), quantity: val(bg, 'eiQ'), lat: val(bg, 'eiLat'), lon: val(bg, 'eiLon'), description: val(bg, 'eiDesc'), action: val(bg, 'eiAct'),
-      reported_to: val(bg, 'eiRep'), status: val(bg, 'eiSt'), drive_url: val(bg, 'eiUrl') }, L('Saved', '已儲存'), btn) });
+      reported_to: val(bg, 'eiRep'), status: val(bg, 'eiSt'), drive_url: val(bg, 'eiUrl') }, L('Saved', '已儲存'), btn); } });
 }
 function envExportIncidents() {
   const sev = { near_miss: '虛驚', minor: '輕微', major: '重大' };
-  const rows = [['時間', '船名', '類型', '嚴重度', '物質／物品', '數量', '緯度', '經度', '事件說明', '處置措施', '通報對象', '狀態', '結案時間', '登錄者', 'Drive 資料夾']];
+  const rows = [['時間', '地點', '類型', '嚴重度', '物質／物品', '數量', '緯度', '經度', '事件說明', '處置措施', '通報對象', '狀態', '結案時間', '登錄者', 'Drive 資料夾']];
   envData().incidents.filter(x => x.time.slice(0, 7) === ENV.month).sort((a, b) => a.time.localeCompare(b.time)).forEach(x => rows.push([x.time.replace('T', ' '), x.vessel_name, x.type, sev[x.severity] || x.severity,
     x.substance, x.quantity, x.lat, x.lon, x.description, x.action, x.reported_to, x.status === 'closed' ? '已結案' : '處理中', (x.closed_at || '').replace('T', ' '), x.created_by, x.drive_url]));
   downloadCsv('ENV_incidents_' + ENV.month + '.csv', rows);
@@ -3322,6 +3333,7 @@ function adminSettings() {
       ${ta('env_waste_cats', 'Waste categories', '廢棄物類別', '', 6)}
       ${ta('env_waste_methods', 'Waste disposal methods', '廢棄物處理方式', '', 4)}
       ${ta('env_incident_types', 'Environmental incident types', '環境事件類型', '', 4)}
+      ${ta('env_incident_places', 'Incident locations besides vessels (one per line)', '環境事件地點（船舶以外，每行一個）', L('Shown with the vessels in the incident form; “Other” lets you type any location.', '會和船舶一起出現在事件表單的地點選單；另有「其他」可自行填寫。'), 3)}
       <div class="fg"><label>${L('Days-without-incident counted from', '連續零事件天數起算日')}</label><input id="st_env_zero_start" type="date" value="${esc(st.env_zero_start)}">
         <span class="small muted">${L('Counts from this date, or from the latest incident after it (near misses excluded).', '從這天起算；之後若有事件（不含虛驚）就從最近一次事件重新算。')}</span></div>
     </div></div></div>
@@ -3349,7 +3361,7 @@ async function testAis(btn) {
 }
 function saveSettings(btn) {
   const p = {};
-  ['project_name', 'pre_watch_min', 'alert_zone_m', 'watch_zone_m', 'response_min', 'repre_pause_min', 'mmo_dist_tol_m', 'sites', 'crew_slots', 'scopes', 'species', 'pause_reasons', 'ais_api_url', 'ais_api_key', 'weather_name', 'weather_points', 'weather_wave_limit', 'weather_wind_limit', 'pos_interval_min', 'track_interval_min', 'env_fuels', 'env_waste_cats', 'env_waste_methods', 'env_incident_types', 'env_zero_start'].forEach(k => { p[k] = $('st_' + k).value.trim(); });
+  ['project_name', 'pre_watch_min', 'alert_zone_m', 'watch_zone_m', 'response_min', 'repre_pause_min', 'mmo_dist_tol_m', 'sites', 'crew_slots', 'scopes', 'species', 'pause_reasons', 'ais_api_url', 'ais_api_key', 'weather_name', 'weather_points', 'weather_wave_limit', 'weather_wind_limit', 'pos_interval_min', 'track_interval_min', 'env_fuels', 'env_waste_cats', 'env_waste_methods', 'env_incident_types', 'env_incident_places', 'env_zero_start'].forEach(k => { p[k] = $('st_' + k).value.trim(); });
   mut('settings.save', p, L('Settings saved', '設定已儲存'), btn).catch(() => {});
 }
 function adminUsers() {
