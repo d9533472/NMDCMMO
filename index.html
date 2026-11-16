@@ -249,6 +249,16 @@ textarea{resize:vertical;min-height:64px}
 .wxc-legend{position:absolute;left:10px;bottom:10px;z-index:500;background:rgba(255,255,255,.93);border-radius:8px;padding:6px 10px;font-size:12px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;max-width:calc(100% - 20px)}
 .wxc-legend span{display:inline-flex;align-items:center;gap:4px}.wxc-legend i{width:10px;height:10px;border-radius:50%}
 .wxc-legend i.ok{background:#0a8a43}.wxc-legend i.warn{background:#d98a00}.wxc-legend i.bad{background:#c62828}
+.wxc-ships{position:relative;display:flex;align-items:center;gap:6px 14px;flex-wrap:wrap;padding:8px 14px 0;font-size:13px}
+.wxc-ships .warn{flex-basis:100%;font-size:12px;color:#a11d1d}
+.wxsp-dd{position:relative}
+.wxsp-btn{border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer;padding:0 8px;height:28px;display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:700}
+.wxsp-btn .cnt{font-weight:400;color:var(--muted)}
+.wxsp-btn svg{transition:transform .2s}.wxsp-btn.open svg{transform:rotate(180deg)}
+.wxsp-panel{position:absolute;left:0;bottom:calc(100% + 6px);z-index:1100;min-width:220px;max-width:min(360px,calc(100vw - 40px));max-height:300px;overflow:auto;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 6px 20px rgba(0,32,56,.18);padding:6px 0}
+.wxsp-panel[hidden]{display:none}
+.wxsp-panel .chk{display:flex;align-items:center;gap:6px;padding:5px 12px;cursor:pointer;white-space:nowrap}
+.wxsp-panel .chk:hover{background:#f1f6fa}
 .wxc-foot{display:flex;align-items:center;gap:8px 14px;flex-wrap:wrap;padding:10px 14px}
 .wxs{display:flex;align-items:center;gap:10px;padding:10px 14px 0}
 .wxs-play{flex:0 0 auto;width:38px;height:38px;border-radius:50%;border:0;background:var(--navy);color:#fff;font-size:14px;cursor:pointer}
@@ -1108,6 +1118,7 @@ function renderWeather() {
       <div id="wxCollapsed" class="wxc-chips"></div>
       <div id="wxExpanded"><div class="wxc-map"><div id="wxMap"></div><div class="wxc-legend" id="wxLegend"></div></div>
         <div class="wxs" id="wxSlider"></div>
+        <div class="wxc-ships" id="wxShipPick"></div>
         <div class="wxc-foot"><span id="wxTabs"></span><span class="wxc-hint" id="wxHint"></span></div></div></div>`;
     WX.built = buildKey;
     WX.editing = false;
@@ -1138,6 +1149,7 @@ function renderWeather() {
   $('wxCollapsed').hidden = !WX.collapsed;
   if (!WX.collapsed && WX.map) setTimeout(() => { if (WX.map) { const z = WX.map.getZoom(); WX.map.invalidateSize(); if (!z) WX.map.fitBounds(WX.bounds, { maxZoom: 11 }); } }, 0);
   $('wxTabs').innerHTML = wxTabsHtml(true);
+  wxRenderShipPick();
   if (!WX.data || WX.key !== c.key) {
     $('wxStatus').innerHTML = ''; $('wxUpd').textContent = '';
     $('wxHint').textContent = WX.err ? '⚠ ' + L('Could not load weather: ', '無法取得天氣資料：') + WX.err : L('Loading weather…', '天氣資料載入中…');
@@ -1567,8 +1579,7 @@ function vesselPosSection() {
     return `<div class="vp">
       <div class="vp-name">${v.kind === 'construction' ? '🏗' : '⛴'} ${esc(v.name)} <span class="mono small muted" style="font-weight:400">${esc(v.mmsi)}</span>
 </div>
-      <div class="vp-act">${apiOn ? `<label class="chk small" title="${L('Include this vessel in the scheduled position update (uses API credits)', '排程自動更新這艘船的船位（會消耗 API 點數）')}"><input type="checkbox" ${sel.includes(v.id) ? 'checked' : ''} ${can('settings') ? `onchange="posVesselToggle('${v.id}', this)"` : 'disabled'}>${L('Auto', '自動更新')}</label>
-        ${sel.includes(v.id) || bool(v.tracking) ? '' : `<button class="btn btn-sm" onclick="refreshPos('${v.id}', this)" title="${L('Update this vessel once', '只更新這艘船一次')}">📡</button>`}` : ''}${apiOn ? (bool(v.tracking)
+      <div class="vp-act">${apiOn && !sel.includes(v.id) && !bool(v.tracking) ? `<button class="btn btn-sm" onclick="refreshPos('${v.id}', this)" title="${L('Not auto-updated — update this vessel once', '未自動更新 — 只更新這艘船一次')}">📡</button>` : ''}${apiOn ? (bool(v.tracking)
         ? `<button class="btn btn-sm btn-danger w" onclick="trackStop('${v.id}', this)">■ ${L('Stop', '停止記錄')}</button>`
         : `<button class="btn btn-sm btn-green w" onclick="trackStart('${v.id}', this)">▶ ${L('Track', '記錄軌跡')}</button>`) : ''}
         <a class="btn btn-sm" target="_blank" href="${vfUrl(v.mmsi)}" title="VesselFinder">↗</a></div>
@@ -1593,11 +1604,40 @@ function vesselPosSection() {
 }
 /** 勾選自動更新船位的船（設定 pos_vessels） */
 function posVesselIds() { return String(S.settings.pos_vessels || '').split(',').filter(Boolean); }
-async function posVesselToggle(id, box) {
+/** 海象地圖下方：勾選要自動更新船位的船（會消耗 API 點數）＋立即更新船位 */
+function wxRenderShipPick() {
+  const box = document.getElementById('wxShipPick');
+  if (!box) return;
+  const apiOn = !!S.settings.ais_api_url && !!S.settings.ais_api_key;
+  const list = S.vessels.filter(v => bool(v.active)).sort((a, b) => (a.kind + a.name).localeCompare(b.kind + b.name));
+  if (!can('settings') || !list.length) { box.style.display = 'none'; return; }
+  box.style.display = '';
+  const ids = posVesselIds(), open = !!WX.shipPickOpen, on = list.filter(v => ids.includes(v.id)).length;
+  box.innerHTML = `<div class="wxsp-dd" id="wxspDd"><button type="button" class="wxsp-btn${open ? ' open' : ''}" onclick="wxShipPickToggle()" aria-expanded="${open}">🚢 ${L('Auto-update positions', '自動更新船位')} <span class="cnt">(${on}/${list.length})</span><svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 7.5 L6 4 L9.5 7.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+    <div class="wxsp-panel" ${open ? '' : 'hidden'}>${list.map(v => `<label class="chk" ${v.mmsi ? '' : `title="${L('No MMSI', '未填 MMSI')}"`}><input type="checkbox" value="${v.id}" onchange="posVesselToggle(this)" ${ids.includes(v.id) ? 'checked' : ''} ${v.mmsi ? '' : 'disabled'}> <span class="notr">${v.kind === 'construction' ? '🏗' : '⛴'} ${esc(v.name)}</span>${v.mmsi ? '' : ' <span class="hint">⚠ MMSI</span>'}</label>`).join('')}</div></div>
+    <button type="button" class="btn btn-secondary btn-sm" onclick="refreshPos('', this)" ${apiOn && on ? '' : 'disabled'} title="${apiOn ? '' : L('Position API not set up', '尚未設定船位 API')}">🔄 ${L('Update positions', '更新船位')}</button>
+    <span class="warn">⚠ ${L(`Ticked vessels are updated every ${Number(S.settings.pos_interval_min) || 0} min and each update uses API credits (1 per vessel). Only tick vessels that are actually working offshore. Vessels recording a track are always updated.`, `勾選的船每 ${Number(S.settings.pos_interval_min) || 0} 分鐘自動更新，每艘船每次更新扣 1 點，請確認該船有在海上作業再勾選。記錄軌跡中的船不論是否勾選都會更新。`)}</span>`;
+}
+function wxShipPickToggle(force) {
+  const open = force === undefined ? !WX.shipPickOpen : force;
+  if (open === !!WX.shipPickOpen) return;
+  WX.shipPickOpen = open; wxRenderShipPick();
+}
+// 點選單外面或按 Esc 收起下拉選單
+document.addEventListener('mousedown', e => { if (WX.shipPickOpen && !e.target.closest('#wxspDd')) wxShipPickToggle(false); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && WX.shipPickOpen) wxShipPickToggle(false); });
+async function posVesselToggle(cb) {
+  const id = cb.value, on = cb.checked;
   const ids = posVesselIds().filter(x => x !== id && S.vessels.some(v => v.id === x));
-  if (box.checked) ids.push(id);
-  try { await mut('settings.save', { pos_vessels: ids.join(',') }, box.checked ? L('Auto update on', '已開啟自動更新') : L('Auto update off for this vessel', '已關閉這艘船的自動更新')); }
-  catch (e) { box.checked = !box.checked; }
+  if (on) ids.push(id);
+  cb.disabled = true;
+  try {
+    await api('settings.save', { pos_vessels: ids.join(',') }, { reload: true });
+    // 新勾選的船立刻抓一次船位
+    if (on && S.settings.ais_api_url && S.settings.ais_api_key) { const r = await api('pos.refresh', { vessel_id: id }, { reload: true }); const bad = (r.done || []).filter(x => x.error); if (bad.length) toast('⚠ ' + bad.map(x => x.error).join('；'), 'error'); }
+    toast(on ? L('Auto update on', '已開啟自動更新') : L('Auto update off for this vessel', '已關閉這艘船的自動更新'));
+  } catch (e) { toast(e.message, 'error'); }
+  render();
 }
 async function refreshPos(id, btn) {
   try { const r = await mut('pos.refresh', { vessel_id: id || '' }, '', btn); const bad = (r.done || []).filter(x => x.error); toast(bad.length ? '⚠ ' + bad.map(x => x.error).join('；') : L('Positions updated', '船位已更新'), bad.length ? 'error' : ''); } catch (e) {}
@@ -3348,7 +3388,7 @@ function adminSettings() {
       <div class="fg"><label>${L('Wind limit (kn)', '風速限制（kn）')}</label><input id="st_weather_wind_limit" inputmode="decimal" value="${esc(st.weather_wind_limit)}"></div>
     </div></div></div>
     <div class="section"><div class="section-header"><h3>📡 ${L('Vessel position API (paid AIS)', '船位 API（付費 AIS）')}</h3></div><div class="section-body"><div class="form-grid">
-      <div class="fg"><label>${L('Dashboard auto update (vessels ticked “Auto” on the dashboard)', '儀表板自動更新船位（儀表板勾選「自動更新」的船）')}</label>
+      <div class="fg"><label>${L('Auto update (vessels ticked under the sea-state map on the dashboard)', '自動更新船位（儀表板海象地圖下方勾選的船）')}</label>
         <select id="st_pos_interval_min">${opts([{ v: '0', t: L('Off', '關閉') }, { v: '30', t: L('Every 30 min', '每 30 分鐘') }, { v: '60', t: L('Every hour', '每小時') }, { v: '120', t: L('Every 2 hours', '每 2 小時') }], st.pos_interval_min)}</select></div>
       <div class="fg"><label>${L('While recording a track', '記錄軌跡時')}</label>
         <select id="st_track_interval_min">${opts([5, 10, 15, 30, 60].map(n => ({ v: String(n), t: L('Every ' + n + ' min', '每 ' + n + ' 分鐘') })), st.track_interval_min)}</select></div>
