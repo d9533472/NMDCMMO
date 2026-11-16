@@ -3234,10 +3234,26 @@ function adminObservers() {
   const list = S.observers.slice().sort((a, b) => a.name.localeCompare(b.name));
   const roles = { TCO: 'TCO', PAMO: 'PAMO', both: 'TCO / PAMO' };
   $('adminBody').innerHTML = `<div class="section"><div class="section-header"><h3>${L('Observers (TCO / PAMO)', '觀察員（TCO／PAMO）')}</h3>
-    <div class="toolbar"><button class="btn btn-sm" onclick="bulkObservers()">📋 ${L('Bulk add', '批次新增')}</button><button class="btn btn-green btn-sm" onclick="observerModal()">＋ ${L('Add', '新增')}</button></div></div>
-    ${list.length ? `<div class="table-wrap"><table class="tbl"><tr><th>${L('Name', '姓名')}</th><th>${L('Role', '職務')}</th><th>${L('Company', '公司')}</th><th>${L('Phone', '電話')}</th><th>${L('Cert no.', '證號')}</th><th>${L('Status', '狀態')}</th></tr>
-      ${list.map(o => `<tr class="click" onclick="observerModal('${o.id}')"><td><b>${esc(o.name)}</b></td><td>${esc(roles[o.role] || o.role || '—')}</td><td>${esc(o.company)}</td><td>${esc(o.phone)}</td><td class="mono">${esc(o.cert_no)}</td><td>${yes(o.active)}</td></tr>`).join('')}</table></div>`
+    <div class="toolbar"><button class="btn btn-danger btn-sm" id="obsDelBtn" disabled onclick="bulkDeleteObservers(this)">🗑 ${L('Delete selected', '刪除勾選')}</button><button class="btn btn-sm" onclick="bulkObservers()">📋 ${L('Bulk add', '批次新增')}</button><button class="btn btn-green btn-sm" onclick="observerModal()">＋ ${L('Add', '新增')}</button></div></div>
+    ${list.length ? `<div class="table-wrap"><table class="tbl"><tr><th style="width:32px"><input type="checkbox" title="${L('Select all', '全選')}" onchange="document.querySelectorAll('.obs-chk').forEach(c => c.checked = this.checked); obsSelChanged()"></th><th>${L('Name', '姓名')}</th><th>${L('Role', '職務')}</th><th>${L('Company', '公司')}</th><th>${L('Phone', '電話')}</th><th>${L('Cert no.', '證號')}</th><th>${L('Status', '狀態')}</th></tr>
+      ${list.map(o => `<tr class="click" onclick="observerModal('${o.id}')"><td onclick="event.stopPropagation()"><input type="checkbox" class="obs-chk" value="${o.id}" onchange="obsSelChanged()"></td><td><b>${esc(o.name)}</b></td><td>${esc(roles[o.role] || o.role || '—')}</td><td>${esc(o.company)}</td><td>${esc(o.phone)}</td><td class="mono">${esc(o.cert_no)}</td><td>${yes(o.active)}</td></tr>`).join('')}</table></div>`
       : `<div class="empty">${L('No observers yet', '尚無觀察員')}</div>`}</div>`;
+}
+/** 觀察員清單勾選數變動時更新「刪除勾選」按鈕 */
+function obsSelChanged() {
+  const n = document.querySelectorAll('.obs-chk:checked').length, b = $('obsDelBtn');
+  b.disabled = !n; b.textContent = '🗑 ' + L('Delete selected', '刪除勾選') + (n ? ` (${n})` : '');
+}
+async function bulkDeleteObservers(btn) {
+  const ids = Array.from(document.querySelectorAll('.obs-chk:checked')).map(c => c.value);
+  if (!ids.length || !(await confirmBox(L(`Delete ${ids.length} observers?`, `確定刪除 ${ids.length} 位觀察員？`), L('Delete', '刪除'), true))) return;
+  btn.disabled = true; showLoading(L('Deleting…', '刪除中…'));
+  let n = 0;
+  try {
+    for (const id of ids) { await api('observer.delete', { id }); n++; }
+  } catch (e) { toast(e.message, 'error'); }
+  try { S = await api('data.load'); LAST_REV = S.rev; } catch (e) {}
+  hideLoading(); toast(L(`${n} deleted`, `已刪除 ${n} 位`)); render();
 }
 function observerModal(id) {
   const o = id ? S.observers.find(x => x.id === id) : { role: 'TCO', active: 'TRUE' };
