@@ -10,7 +10,7 @@
 // 角色：admin（全部，固定）＋後台自訂角色（Roles 表，勾選 PERMS 裡的功能）；預設 mmo（填報批次）、viewer（唯讀共用帳號）
 // ============================================================
 
-const VERSION = '1.8.2';
+const VERSION = '1.8.5';
 const ROOT_FOLDER_ID = '1uVkbv4tndRVERhrHmHUzaTvPlHaFV4em';
 const SS_NAME = 'MMO 鯨豚觀察總表';
 const TZ = 'Asia/Taipei';
@@ -60,7 +60,8 @@ const DEFAULT_SETTINGS = {
   pause_reasons: '目擊鯨豚進入警戒區 Cetacean in alert zone\nPAM 偵測到鯨豚 PAM detection\n天氣／能見度不佳 Poor weather / visibility\n設備故障 Equipment failure\n其他 Other',
   ais_api_url: '',              // 之後接付費船位 API（伺服器端呼叫，金鑰不給前端）
   ais_api_key: '',
-  pos_interval_min: '60',       // 儀表板自動更新船位（分鐘；0＝關閉），所有啟用且有 MMSI 的船
+  pos_interval_min: '60',       // 儀表板自動更新船位（分鐘；0＝關閉），只更新 pos_vessels 勾選的船
+  pos_vessels: '',              // 要自動更新船位的船 id（逗號分隔）；記錄軌跡中的船不受限
   track_interval_min: '10',     // 記錄軌跡中的船：每幾分鐘抓一次
   weather_name: '',             // 儀表板海象地圖標題
   weather_points: '',           // 海象預報點：每行「名稱, 緯度, 經度」（空白＝用工區座標）
@@ -1273,7 +1274,9 @@ function refreshPositions_(ids, force) {
   const st = settings_();
   if (!st.ais_api_url || !st.ais_api_key) { if (force) fail_('Vessel position API is not configured yet', 'NOT_CONFIGURED'); return { done: [] }; }
   const posInt = Number(st.pos_interval_min), trkInt = Number(st.track_interval_min) || 10;
-  const nowMs = Date.now();
+  const nowMs = Date.now(), sel = String(st.pos_vessels || '').split(',').filter(Boolean);
+  // 沒指定船時（排程、全部更新）只抓勾選自動更新的船和記錄軌跡中的船
+  const picked = v => ids ? ids.indexOf(v.id) >= 0 : bool_(v.tracking) || sel.indexOf(v.id) >= 0;
   const due = v => {
     if (force) return true;
     const iv = bool_(v.tracking) ? trkInt : posInt;
@@ -1282,7 +1285,7 @@ function refreshPositions_(ids, force) {
     return !last || nowMs - last >= (iv - 2) * 60000;
   };
   return withLock_(() => {
-    const list = Repo.all('Vessels').filter(v => bool_(v.active) && v.mmsi && (!ids || ids.indexOf(v.id) >= 0) && due(v));
+    const list = Repo.all('Vessels').filter(v => bool_(v.active) && v.mmsi && picked(v) && due(v));
     const done = list.map(v => recordPosition_(v, st));
     return { done: done };
   });
