@@ -3163,6 +3163,56 @@ function envIncidents() {
         <td>${x.status === 'closed' ? `<span class="tag green">${L('Closed', '已結案')}</span>` : `<span class="tag red">${L('Open', '處理中')}</span>`}</td></tr>`).join('')}</table></div>`
       : `<div class="empty">✅ ${L('No incidents this month', '本月沒有環境事件')}</div>`}</div>`;
 }
+/** 從文字抓出「緯度, 經度」（Google Maps 複製的格式，或網址裡的 @lat,lon） */
+function parseLatLon(t) {
+  const m = String(t || '').match(/(-?\d{1,2}\.\d+)\s*[,，\s]\s*(-?\d{1,3}\.\d+)/);
+  if (!m) return null;
+  const lat = parseFloat(m[1]), lon = parseFloat(m[2]);
+  return Math.abs(lat) <= 90 && Math.abs(lon) <= 180 ? { lat, lon } : null;
+}
+function latLonPaste(e) {
+  const p = parseLatLon((e.clipboardData || window.clipboardData).getData('text'));
+  if (!p) return;
+  e.preventDefault();
+  const g = e.target.closest('.form-grid');
+  g.querySelector('#eiLat').value = p.lat.toFixed(6); g.querySelector('#eiLon').value = p.lon.toFixed(6);
+}
+/** 表單目前的座標；沒填就用所選船的 AIS 船位、再不然用海象預報點 */
+function latLonStart(g) {
+  const lat = parseFloat(g.querySelector('#eiLat').value), lon = parseFloat(g.querySelector('#eiLon').value);
+  if (isFinite(lat) && isFinite(lon)) return { lat, lon, set: true };
+  const a = aisPos(g.querySelector('#eiV').value); if (a) return { lat: a.lat, lon: a.lon };
+  const c = wxCfg(); if (c) return { lat: c.pts[0].lat, lon: c.pts[0].lon };
+  return { lat: 24.2, lon: 120.3 };
+}
+function latLonGoogle(btn) {
+  const p = latLonStart(btn.closest('.form-grid'));
+  window.open(`https://www.google.com/maps/search/?api=1&query=${p.lat},${p.lon}`, '_blank', 'noopener');
+}
+function latLonPick(btn) {
+  if (!L_) return toast(L('Map could not be loaded.', '地圖無法載入。'), 'error');
+  const g = btn.closest('.form-grid'), p0 = latLonStart(g);
+  let pick = p0.set ? { lat: p0.lat, lon: p0.lon } : null;
+  const bg = openModal('🗺 ' + L('Pick location', '地圖選點'), `<div class="small muted" style="margin-bottom:8px">${L('Click the map to place the pin (drag to adjust).', '在地圖上點一下放置標記（可拖曳微調）。')}</div>
+    <div id="llMap" style="height:min(60vh,460px);border-radius:8px"></div><div class="mono small" id="llOut" style="margin-top:8px"></div>`,
+    { wide: true, noFocus: true, saveText: L('Use this location', '使用這個位置'), onSave: () => {
+      if (!pick) { toast(L('Click the map first', '請先在地圖上點選位置'), 'error'); return false; }
+      g.querySelector('#eiLat').value = pick.lat.toFixed(6); g.querySelector('#eiLon').value = pick.lon.toFixed(6);
+    } });
+  const map = L_.map(bg.querySelector('#llMap')).setView([p0.lat, p0.lon], p0.set ? 13 : 10);
+  const sat = L_.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, attribution: 'Esri' });
+  const street = L_.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
+  L_.control.layers({ [L('Map', '地圖')]: street, [L('Satellite', '衛星')]: sat }).addTo(map);
+  let mk = null;
+  const set = ll => {
+    pick = { lat: ll.lat, lon: ll.lng };
+    if (mk) mk.setLatLng(ll); else { mk = L_.marker(ll, { draggable: true, icon: L_.divIcon({ className: '', iconSize: [30, 30], iconAnchor: [15, 29], html: '<div style="font-size:30px;line-height:30px">📍</div>' }) }).addTo(map); mk.on('dragend', () => set(mk.getLatLng())); }
+    bg.querySelector('#llOut').textContent = `📍 ${pick.lat.toFixed(6)}, ${pick.lon.toFixed(6)}`;
+  };
+  if (pick) set({ lat: pick.lat, lng: pick.lon });
+  map.on('click', e => set(e.latlng));
+  setTimeout(() => map.invalidateSize(), 50);
+}
 function envIncidentModal(id) {
   const x = id ? envData().incidents.find(i => i.id === id) : { time: nowLocal(), severity: 'event', status: 'open' };
   const types = lines(S.settings.env_incident_types); if (x.type && types.indexOf(x.type) < 0) types.push(x.type);
@@ -3183,8 +3233,11 @@ function envIncidentModal(id) {
     <div class="fg"><label>${L('Severity', '嚴重度')}</label><select id="eiS">${opts(Object.keys(ENV_SEV).concat(ENV_SEV_OLD[x.severity] ? [x.severity] : []).map(k => ({ v: k, t: L(envSev(k)[0], envSev(k)[1]) })), x.severity)}</select></div>
     <div class="fg"><label>${L('Substance / item', '物質／物品')}</label><input id="eiSub" value="${esc(x.substance)}" placeholder="${L('e.g. hydraulic oil', '例：液壓油')}"></div>
     <div class="fg"><label>${L('Quantity', '數量')}</label><input id="eiQ" value="${esc(x.quantity)}" placeholder="${L('e.g. about 5 L', '例：約 5 L')}"></div>
-    <div class="fg"><label>${L('Latitude', '緯度')}</label><input id="eiLat" class="mono" inputmode="decimal" value="${esc(x.lat)}"></div>
-    <div class="fg"><label>${L('Longitude', '經度')}</label><input id="eiLon" class="mono" inputmode="decimal" value="${esc(x.lon)}"></div>
+    <div class="fg"><label>${L('Latitude', '緯度')}</label><input id="eiLat" class="mono" inputmode="decimal" value="${esc(x.lat)}" placeholder="${L('or paste “lat, lon” from Google Maps', '可貼上 Google Maps 的「緯度, 經度」')}" onpaste="latLonPaste(event)"></div>
+    <div class="fg"><label>${L('Longitude', '經度')}</label><input id="eiLon" class="mono" inputmode="decimal" value="${esc(x.lon)}" onpaste="latLonPaste(event)"></div>
+    <div class="fg full" style="flex-direction:row;flex-wrap:wrap;gap:8px;align-items:center"><button type="button" class="btn btn-sm" onclick="latLonPick(this)">🗺 ${L('Pick on map', '地圖選點')}</button>
+      <button type="button" class="btn btn-sm" onclick="latLonGoogle(this)">↗ Google Maps</button>
+      <span class="small muted">${L('In Google Maps, right-click a spot and click the coordinates to copy them, then paste into Latitude.', '在 Google Maps 對位置按右鍵、點最上面的座標即可複製，再貼到「緯度」欄會自動拆成緯度和經度。')}</span></div>
     <div class="fg full"><label>${L('Description', '事件說明')}</label><textarea id="eiDesc" rows="3">${esc(x.description)}</textarea></div>
     <div class="fg full"><label>${L('Action taken', '處置措施')}</label><textarea id="eiAct" rows="2">${esc(x.action)}</textarea></div>
     <div class="fg"><label>${L('Reported to', '通報對象')}</label><input id="eiRep" value="${esc(x.reported_to)}" placeholder="${L('e.g. client, coast guard', '例：業主、海巡署')}"></div>
