@@ -1495,7 +1495,7 @@ function envIncidentSave_(u, p) {
   ENV_INC_FIELDS.forEach(k => { rec[k] = str_(p[k]); });
   if (!rec.type) fail_('Incident type is required');
   if (rec.drive_url && !/^https:\/\/(drive|docs)\.google\.com\//.test(rec.drive_url)) fail_('Drive folder link must start with https://drive.google.com/');
-  if (['near_miss', 'minor', 'major'].indexOf(rec.severity) < 0) rec.severity = 'minor';
+  if (['event', 'near_miss', 'cat1', 'cat2', 'cat3', 'cat4', 'cat5', 'minor', 'major'].indexOf(rec.severity) < 0) rec.severity = 'cat1';
   if (rec.status !== 'closed') rec.status = 'open';
   return withLock_(() => {
     const old = p.id ? Repo.get('EnvIncidents', p.id) : null;

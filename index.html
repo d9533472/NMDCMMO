@@ -2831,7 +2831,13 @@ const ENV_LABEL = {
   pob: ['POB (persons on board)', '在船人數 POB'], fuel_used_m3: ['Fuel used (m³)', '用油量 (m³)'], water_used_m3: ['Water used (m³)', '用水量 (m³)']
 };
 const ENV_DAILY_KEYS = Object.keys(ENV_LABEL);
-const ENV_SEV = { near_miss: ['Near miss', '虛驚', 'blue'], minor: ['Minor', '輕微', 'amber'], major: ['Major', '重大', 'red'] };
+const ENV_SEV = { event: ['Event', 'Event', 'green'], near_miss: ['Near miss', 'Near miss', 'blue'], cat1: ['Category 1', 'Category 1', 'amber'], cat2: ['Category 2', 'Category 2', 'amber'],
+  cat3: ['Category 3', 'Category 3', 'red'], cat4: ['Category 4', 'Category 4', 'red'], cat5: ['Category 5', 'Category 5', 'red'] };
+// 舊版嚴重度（輕微／重大），只用來顯示既有紀錄
+const ENV_SEV_OLD = { minor: ['Minor', '輕微', 'amber'], major: ['Major', '重大', 'red'] };
+// 這些嚴重度不會重置零事件天數
+const ENV_SEV_NO_RESET = ['event', 'near_miss'];
+const envSev = k => ENV_SEV[k] || ENV_SEV_OLD[k] || ENV_SEV.cat1;
 const ENV = { tab: 'overview', month: '', date: '', dirty: false };
 function vesselKinds() { return { mmo: L('MMO vessel', 'MMO 觀察船'), construction: L('Construction vessel', '施工船'), support: L('Support vessel (CTV/SOV…)', '支援船（CTV／SOV…）') }; }
 function envOn(v) { return v.env_report !== 'FALSE'; }
@@ -2889,11 +2895,11 @@ function envSummary(month) {
   tot.inc = E.incidents.filter(x => x.time.slice(0, 7) === month).length;   // 含工地／自填地點（不屬於任何船）
   return { rows, tot };
 }
-/** 最近一次非虛驚的環境事件到今天幾天；沒有事件回傳 null */
+/** 最近一次會重置的環境事件（Event、Near miss 不算）到今天幾天；沒有事件回傳 null */
 function envZeroDays() {
   // 從起算日（後台設定）或最近一次事件，取較晚者開始算
   const start = /^\d{4}-\d{2}-\d{2}$/.test(S.settings.env_zero_start || '') ? S.settings.env_zero_start : '';
-  const last = envData().incidents.filter(x => x.severity !== 'near_miss').map(x => x.time.slice(0, 10)).concat(start ? [start] : []).sort().pop();
+  const last = envData().incidents.filter(x => !ENV_SEV_NO_RESET.includes(x.severity)).map(x => x.time.slice(0, 10)).concat(start ? [start] : []).sort().pop();
   return last ? Math.max(0, Math.round((Date.parse(today()) - Date.parse(last)) / 86400000)) : null;
 }
 /** 環保統計頁最上面的本月 KPI 列（點了跳到對應分頁） */
@@ -3094,7 +3100,7 @@ function envIncidents() {
   const all = envData().incidents.slice().sort((a, b) => b.time.localeCompare(a.time)), z = envZeroDays();
   const list = all.filter(x => x.time.slice(0, 7) === ENV.month), open = all.filter(x => x.status !== 'closed');
   $('envBody').innerHTML = `<div class="stat-grid">
-      <div class="stat green"><div class="v">${z === null ? '—' : z}</div><div class="l">${L('Days without incident (near misses excluded)', '連續零事件天數（不含虛驚）')}</div></div>
+      <div class="stat green"><div class="v">${z === null ? '—' : z}</div><div class="l">${L('Days without incident (Event / Near miss excluded)', '連續零事件天數（不含 Event／Near miss）')}</div></div>
       <div class="stat ${open.length ? 'red' : ''}"><div class="v">${open.length}</div><div class="l">${L('Open incidents', '未結案事件')}</div></div>
       <div class="stat amber"><div class="v">${list.length}</div><div class="l">${L('Incidents this month', '本月事件')}</div></div>
       <div class="stat blue"><div class="v">${list.filter(x => x.severity === 'near_miss').length}</div><div class="l">${L('Near misses this month', '本月虛驚事件')}</div></div></div>
@@ -3102,14 +3108,14 @@ function envIncidents() {
       <div class="toolbar"><button class="btn btn-sm" onclick="envExportIncidents()">⬇ CSV</button><button class="btn btn-green btn-sm ew" onclick="envIncidentModal()">＋ ${L('Report incident', '新增事件')}</button></div></div>
     ${list.length || open.length ? `<div class="table-wrap"><table class="tbl"><tr><th>${L('Time', '時間')}</th><th>${L('Location', '地點')}</th><th>${L('Type', '類型')}</th><th>${L('Severity', '嚴重度')}</th><th>${L('Substance / quantity', '物質／數量')}</th><th>${L('Description', '說明')}</th><th>${L('Folder', '資料夾')}</th><th>${L('Status', '狀態')}</th></tr>
       ${Array.from(new Set(open.concat(list))).sort((a, b) => b.time.localeCompare(a.time)).map(x => `<tr class="click" onclick="envIncidentModal('${x.id}')"><td class="mono" style="white-space:nowrap">${fmtT(x.time, true)}${x.time.slice(0, 7) !== ENV.month ? ' <span class="small muted">' + x.time.slice(0, 4) + '</span>' : ''}</td><td><b>${esc(x.vessel_id ? x.vessel_name : biName(x.vessel_name))}</b></td>
-        <td>${esc(biName(x.type))}</td><td><span class="tag ${(ENV_SEV[x.severity] || ENV_SEV.minor)[2]}">${L((ENV_SEV[x.severity] || ENV_SEV.minor)[0], (ENV_SEV[x.severity] || ENV_SEV.minor)[1])}</span></td>
+        <td>${esc(biName(x.type))}</td><td><span class="tag ${envSev(x.severity)[2]}">${L(envSev(x.severity)[0], envSev(x.severity)[1])}</span></td>
         <td>${esc([x.substance, x.quantity].filter(Boolean).join(' · '))}</td><td class="small">${esc(x.description)}</td>
         <td>${x.drive_url ? `<a class="btn btn-sm" href="${esc(x.drive_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">📁</a>` : '—'}</td>
         <td>${x.status === 'closed' ? `<span class="tag green">${L('Closed', '已結案')}</span>` : `<span class="tag red">${L('Open', '處理中')}</span>`}</td></tr>`).join('')}</table></div>`
       : `<div class="empty">✅ ${L('No incidents this month', '本月沒有環境事件')}</div>`}</div>`;
 }
 function envIncidentModal(id) {
-  const x = id ? envData().incidents.find(i => i.id === id) : { time: nowLocal(), severity: 'minor', status: 'open' };
+  const x = id ? envData().incidents.find(i => i.id === id) : { time: nowLocal(), severity: 'event', status: 'open' };
   const types = lines(S.settings.env_incident_types); if (x.type && types.indexOf(x.type) < 0) types.push(x.type);
   const vs = S.vessels.filter(v => bool(v.active) || v.id === x.vessel_id);
   // 地點：船舶、工地（後台設定），或自行填寫；船以外的地點 vessel_id 留空、名稱存在 vessel_name
@@ -3125,7 +3131,7 @@ function envIncidentModal(id) {
       <input id="eiPlace" value="${esc(cur === '__other' ? x.vessel_name : '')}" placeholder="${L('e.g. Taichung Port pier 2', '例：台中港 2 號碼頭')}"></div>
     <div class="fg"><label>${L('Time', '時間')} *</label><input id="eiT" type="datetime-local" value="${esc(String(x.time).slice(0, 16))}"></div>
     <div class="fg"><label>${L('Type', '類型')} *</label><select id="eiTy">${opts(types.map(t => ({ v: t, t: biName(t) })), x.type, '—')}</select></div>
-    <div class="fg"><label>${L('Severity', '嚴重度')}</label><select id="eiS">${opts(Object.keys(ENV_SEV).map(k => ({ v: k, t: L(ENV_SEV[k][0], ENV_SEV[k][1]) })), x.severity)}</select></div>
+    <div class="fg"><label>${L('Severity', '嚴重度')}</label><select id="eiS">${opts(Object.keys(ENV_SEV).concat(ENV_SEV_OLD[x.severity] ? [x.severity] : []).map(k => ({ v: k, t: L(envSev(k)[0], envSev(k)[1]) })), x.severity)}</select></div>
     <div class="fg"><label>${L('Substance / item', '物質／物品')}</label><input id="eiSub" value="${esc(x.substance)}" placeholder="${L('e.g. hydraulic oil', '例：液壓油')}"></div>
     <div class="fg"><label>${L('Quantity', '數量')}</label><input id="eiQ" value="${esc(x.quantity)}" placeholder="${L('e.g. about 5 L', '例：約 5 L')}"></div>
     <div class="fg"><label>${L('Latitude', '緯度')}</label><input id="eiLat" class="mono" inputmode="decimal" value="${esc(x.lat)}"></div>
@@ -3144,9 +3150,8 @@ function envIncidentModal(id) {
       reported_to: val(bg, 'eiRep'), status: val(bg, 'eiSt'), drive_url: val(bg, 'eiUrl') }, L('Saved', '已儲存'), btn); } });
 }
 function envExportIncidents() {
-  const sev = { near_miss: '虛驚', minor: '輕微', major: '重大' };
   const rows = [['時間', '地點', '類型', '嚴重度', '物質／物品', '數量', '緯度', '經度', '事件說明', '處置措施', '通報對象', '狀態', '結案時間', '登錄者', 'Drive 資料夾']];
-  envData().incidents.filter(x => x.time.slice(0, 7) === ENV.month).sort((a, b) => a.time.localeCompare(b.time)).forEach(x => rows.push([x.time.replace('T', ' '), x.vessel_name, x.type, sev[x.severity] || x.severity,
+  envData().incidents.filter(x => x.time.slice(0, 7) === ENV.month).sort((a, b) => a.time.localeCompare(b.time)).forEach(x => rows.push([x.time.replace('T', ' '), x.vessel_name, x.type, envSev(x.severity)[1],
     x.substance, x.quantity, x.lat, x.lon, x.description, x.action, x.reported_to, x.status === 'closed' ? '已結案' : '處理中', (x.closed_at || '').replace('T', ' '), x.created_by, x.drive_url]));
   downloadCsv('ENV_incidents_' + ENV.month + '.csv', rows);
 }
@@ -3164,7 +3169,7 @@ function envExportMonth() {
   out.push([ENV.month, '合計', '', '', '', '', '', tot.due, tot.days, '', tot.pob ? r1(tot.pob, 1) : '', r1(tot.personDays, 0), r1(tot.fuel, 3), r1(tot.water, 2), r1(tot.co2, 3), r1(tot.wasteKg, 1)]
     .concat(cats.map(c => tot.byCat[c] ? r1(tot.byCat[c], 1) : '')).concat([tot.inc]));
   out.push([]);
-  out.push(['CO₂＝用油量 (m³) × 燃料密度 (t/m³，即 kg/L) × 排放係數；係數與密度見後台 › 規則與清單 › 環保統計。連續零事件天數（不含虛驚）：' + (envZeroDays() === null ? '無事件紀錄' : envZeroDays())]);
+  out.push(['CO₂＝用油量 (m³) × 燃料密度 (t/m³，即 kg/L) × 排放係數；係數與密度見後台 › 規則與清單 › 環保統計。連續零事件天數（不含 Event／Near miss）：' + (envZeroDays() === null ? '無事件紀錄' : envZeroDays())]);
   downloadCsv('ENV_monthly_' + ENV.month + '.csv', out);
 }
 
@@ -3339,7 +3344,7 @@ function adminSettings() {
         <span class="small muted">${L('Active vessels appear in the incident form automatically; inactive ones are hidden.', '啟用中的船舶會自動出現在事件表單；停用的不會顯示。')}</span></div>
       ${ta('env_incident_places', 'Incident locations — sites (one per line, add or edit freely)', '環境事件地點 — 工地（每行一個，可直接修改或新增）', L('Together with the vessels above, these make up the location menu; “Other” lets you type any location.', '和上面的船舶一起組成事件表單的地點選單；另有「其他」可自行填寫。'), 3)}
       <div class="fg"><label>${L('Days-without-incident counted from', '連續零事件天數起算日')}</label><input id="st_env_zero_start" type="date" value="${esc(st.env_zero_start)}">
-        <span class="small muted">${L('Counts from this date, or from the latest incident after it (near misses excluded).', '從這天起算；之後若有事件（不含虛驚）就從最近一次事件重新算。')}</span></div>
+        <span class="small muted">${L('Counts from this date, or from the latest incident after it (Event / Near miss excluded).', '從這天起算；之後若有事件（不含 Event／Near miss）就從最近一次事件重新算。')}</span></div>
     </div></div></div>
     <button class="btn btn-primary" onclick="saveSettings(this)">💾 ${L('Save settings', '儲存設定')}</button>`;
   const est = () => {
