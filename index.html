@@ -131,6 +131,10 @@ body:not(.admin) .adm{display:none!important}
 .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .empty{padding:28px 16px;text-align:center;color:var(--muted);font-size:13px}
 .table-wrap{overflow-x:auto}
+/* 操作紀錄：表格在固定高度的捲動框裡，橫向捲軸與表頭一直看得到；內容欄吃剩下的寬度 */
+.audit-wrap{overflow-x:scroll;overflow-y:auto;max-height:calc(100vh - 230px);min-height:240px}
+.audit-tbl{table-layout:fixed;min-width:1100px;font-size:12px}
+.audit-tbl thead th{position:sticky;top:0;z-index:1}
 table.tbl{width:100%;border-collapse:collapse;font-size:13px}
 .tbl th{text-align:left;font-weight:600;font-size:12px;color:var(--muted);padding:9px 12px;border-bottom:1px solid var(--border);background:#fafbfc;white-space:nowrap}
 .tbl td{padding:9px 12px;border-bottom:1px solid var(--border);vertical-align:top}
@@ -3597,9 +3601,10 @@ async function adminAudit() {
     const r = await api('audit.list', { limit: 500 });
     if (ADMIN_TAB !== 'audit') return;
     $('adminBody').innerHTML = `<div class="section"><div class="section-header"><h3>${L('Activity log (latest 500)', '操作紀錄（最近 500 筆）')}</h3></div>
-      <div class="table-wrap"><table class="tbl" style="font-size:12px"><tr><th>${L('Time', '時間')}</th><th>${L('User', '使用者')}</th><th>${L('Action', '動作')}</th><th>${L('Target', '對象')}</th><th>${L('Detail', '內容')}</th></tr>
-      ${r.rows.map(x => `<tr><td class="mono" style="white-space:nowrap">${fmtT(x.time, true)}</td><td>${esc(x.user)}</td><td class="mono">${esc(x.action)} ${x.ok === 'TRUE' ? '' : `<span class="tag red">${esc(x.error)}</span>`}</td>
-        <td class="mono">${esc(x.target)}</td><td class="mono" style="max-width:420px;word-break:break-all">${esc(x.detail)}</td></tr>`).join('')}</table></div></div>`;
+      <div class="audit-wrap"><table class="tbl audit-tbl"><colgroup><col style="width:150px"><col style="width:110px"><col style="width:190px"><col style="width:150px"><col></colgroup>
+      <thead><tr><th>${L('Time', '時間')}</th><th>${L('User', '使用者')}</th><th>${L('Action', '動作')}</th><th>${L('Target', '對象')}</th><th>${L('Detail', '內容')}</th></tr></thead>
+      ${r.rows.map(x => `<tr><td class="mono" style="white-space:nowrap">${fmtT(x.time, true)}</td><td>${esc(x.user)}</td><td class="mono">${esc(x.action)} ${x.ok === 'TRUE' ? '' : `<span class="tag red" style="white-space:normal">${esc(x.error)}</span>`}</td>
+        <td class="mono" style="word-break:break-all">${esc(x.target)}</td><td class="mono" style="white-space:pre-wrap;word-break:break-all">${esc(x.detail)}</td></tr>`).join('')}</table></div></div>`;
   } catch (e) { $('adminBody').innerHTML = `<div class="alert red">${esc(e.message)}</div>`; }
 }
 
