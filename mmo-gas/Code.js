@@ -10,7 +10,7 @@
 // 角色：admin（全部，固定）＋後台自訂角色（Roles 表，勾選 PERMS 裡的功能）；預設 mmo（填報批次）、viewer（唯讀共用帳號）
 // ============================================================
 
-const VERSION = '1.8.5';
+const VERSION = '1.8.8';
 const ROOT_FOLDER_ID = '1uVkbv4tndRVERhrHmHUzaTvPlHaFV4em';
 const SS_NAME = 'MMO 鯨豚觀察總表';
 const TZ = 'Asia/Taipei';
@@ -38,7 +38,7 @@ const SCHEMAS = {
   // 離岸環保統計（只有管理員看得到，不放進共用快取）
   EnvDaily: ['id','vessel_id','vessel_name','date','pob','fuel_used_m3','water_used_m3','remark',
     'updated_by','updated_at'],
-  EnvWaste: ['id','vessel_id','vessel_name','date','method','receiver','port','receipt_no','items','total_kg','drive_id','file_name','file_mime','remark',
+  EnvWaste: ['id','vessel_id','vessel_name','date','method','receiver','port','receipt_no','items','unit','total_kg','drive_id','file_name','file_mime','remark',
     'created_by','created_at','updated_by','updated_at'],
   EnvIncidents: ['id','vessel_id','vessel_name','time','type','severity','substance','quantity','lat','lon','description','action','reported_to','status','closed_at',
     'created_by','created_at','updated_by','updated_at','drive_url'],
@@ -1439,7 +1439,7 @@ function envDailySave_(u, p) {
     return { saved: saved, removed: removed };
   });
 }
-/** 廢棄物：每次交運一筆，items＝{類別: kg}；聯單存 Drive「環保/<船名>/廢棄物聯單」 */
+/** 廢棄物：每次交運一筆，items＝{類別: 數量}，單位 unit＝kg 或 m3（total_kg 欄存的是該單位的合計）；聯單存 Drive「環保/<船名>/廢棄物聯單」 */
 function envWasteSave_(u, p) {
   const v = envVessel_(p.vessel_id), date = envDate_(p.date);
   const items = {};
@@ -1450,7 +1450,7 @@ function envWasteSave_(u, p) {
   });
   if (!total) fail_('Enter the weight of at least one waste category');
   const rec = { vessel_id: v.id, vessel_name: v.name, date: date, method: str_(p.method), receiver: str_(p.receiver), port: str_(p.port),
-    receipt_no: str_(p.receipt_no), items: JSON.stringify(items), total_kg: String(Math.round(total * 1000) / 1000), remark: str_(p.remark),
+    receipt_no: str_(p.receipt_no), items: JSON.stringify(items), unit: p.unit === 'm3' ? 'm3' : 'kg', total_kg: String(Math.round(total * 1000) / 1000), remark: str_(p.remark),
     updated_by: u.username, updated_at: nowIso_() };
   const file = p.file && p.file.data ? p.file : null;
   const bytes = file ? Utilities.base64Decode(String(file.data)) : null;
