@@ -2927,13 +2927,18 @@ function envWasteItems(w) { return json(w.items, {}); }
 // m³ 換算 kg 用的預設密度（t/m³，鬆散堆積估計值）；後台類別那行寫「名稱, 密度」可覆寫，都沒有就用 1（1 m³＝1000 kg）
 const ENV_WASTE_DENSITY = { '塑膠': 0.05, '食物廢棄物': 0.5, '生活廢棄物': 0.15, '廢食用油': 0.92, '焚化爐灰燼': 0.6, '作業廢棄物': 0.2,
   '電子廢棄物': 0.3, '有害廢棄物': 1, '油泥': 0.95, '艙底油水': 0.95, '污水': 1, '資源回收': 0.1 };
+// 預設算「有害」的類別；後台類別那行第三欄寫「有害／無害」可覆寫
+const ENV_WASTE_HAZ = ['有害廢棄物', '電子廢棄物', '油泥', '艙底油水'];
 function envWasteCats() {
   return lines(S.settings.env_waste_cats).map(l => {
-    const a = l.split(/[,，]/).map(x => x.trim()), d = parseFloat(a[1]);
-    return { name: a[0], density: d > 0 ? d : (ENV_WASTE_DENSITY[a[0].split(/\s+/)[0]] || 1) };
+    const a = l.split(/[,，]/).map(x => x.trim()), d = parseFloat(a[1]), h = (a[2] || '').toLowerCase(), base = a[0].split(/\s+/)[0];
+    return { name: a[0], dens: d > 0 ? d : '', density: d > 0 ? d : (ENV_WASTE_DENSITY[base] || 1),
+      haz: /^(有害|hazardous|h|y|true|1)$/.test(h) ? true : /^(無害|non-hazardous|n|false|0)$/.test(h) ? false : ENV_WASTE_HAZ.includes(base) };
   }).filter(c => c.name);
 }
 const envWasteDensity = name => (envWasteCats().find(c => c.name === name) || { density: ENV_WASTE_DENSITY[String(name).split(/\s+/)[0]] || 1 }).density;
+const envWasteHaz = name => { const c = envWasteCats().find(x => x.name === name); return c ? c.haz : ENV_WASTE_HAZ.includes(String(name).split(/\s+/)[0]); };
+const envHazTag = name => envWasteHaz(name) ? ` <span class="tag red">${L('Hazardous', '有害')}</span>` : '';
 /** 用 m³ 填的類別：{類別: 體積}（items 裡一律存換算後的 kg） */
 function envWasteM3(w) { return json(w.items_m3, {}); }
 function envSummary(month) {
@@ -3030,7 +3035,7 @@ function envOverview() {
     <div class="grid-2">
       <div class="section"><div class="section-header"><h3>🗑 ${L('Waste by category', '廢棄物分類統計')}</h3></div>
         ${cats.length ? `<div class="table-wrap"><table class="tbl"><tr><th>${L('Category', '類別')}</th><th>kg</th><th>%</th></tr>
-          ${cats.map(k => `<tr><td>${esc(biName(k))}</td><td class="mono">${fmtN(tot.byCat[k], 1)}</td><td class="mono">${fmtN(tot.byCat[k] / tot.wasteKg * 100, 1)}%</td></tr>`).join('')}</table></div>`
+          ${cats.map(k => `<tr><td>${esc(biName(k))}${envHazTag(k)}</td><td class="mono">${fmtN(tot.byCat[k], 1)}</td><td class="mono">${fmtN(tot.byCat[k] / tot.wasteKg * 100, 1)}%</td></tr>`).join('')}</table></div>`
           : `<div class="empty">${L('No waste deliveries this month', '本月沒有廢棄物交運紀錄')}</div>`}</div>
       <div class="section"><div class="section-header"><h3>📅 ${L('Missing daily reports', '缺填的每日資料')}</h3></div>
         ${rows.some(r => r.missing.length) ? `<div style="padding:12px 16px;display:flex;flex-direction:column;gap:10px">${rows.filter(r => r.missing.length).map(r => `<div><b>${esc(r.v.name)}</b>
@@ -3108,14 +3113,22 @@ function envWaste() {
   list.forEach(w => { const it = envWasteItems(w), m3 = envWasteM3(w);
     Object.keys(it).forEach(k => { const c = byCat[k] || (byCat[k] = { kg: 0, m3: 0, n: 0 }); c.kg += envNum(it[k]); c.n++; if (m3[k] !== undefined) c.m3 += envNum(m3[k]); }); });
   const cats = Array.from(new Set(envWasteCats().map(c => c.name).concat(Object.keys(byCat)))).filter(k => byCat[k]).sort((a, b) => byCat[b].kg - byCat[a].kg);
-  const catKg = cats.reduce((n, k) => n + byCat[k].kg, 0);
+  const catKg = cats.reduce((n, k) => n + byCat[k].kg, 0), hazKg = cats.filter(envWasteHaz).reduce((n, k) => n + byCat[k].kg, 0);
+  const pct = n => catKg ? fmtN(n / catKg * 100, 1) + '%' : '—';
   const pb = (p, t) => `<button class="btn btn-sm" onclick="envWastePreset('${p}')">${t}</button>`;
-  $('envBody').innerHTML = `<div class="section"><div class="section-header"><div class="toolbar">
+  $('envBody').innerHTML = `<div class="toolbar" style="margin-bottom:12px">
       <input type="date" style="width:auto" value="${from}" onchange="if(this.value){ENV.wFrom=this.value;envWaste()}"> ～
       <input type="date" style="width:auto" value="${to}" onchange="if(this.value){ENV.wTo=this.value;envWaste()}">
-      ${pb('month', L('This month', '本月'))}${pb('last', L('Last month', '上月'))}${pb('q', L('Last 90 days', '近 90 天'))}${pb('year', L('This year', '今年'))}${pb('all', L('All', '全部'))}</div></div>
-    ${cats.length ? `<div class="table-wrap"><table class="tbl"><tr><th>🗑 ${L('Category', '類別')}</th><th>${L('Deliveries', '筆數')}</th><th>${L('Total (kg)', '總量 (kg)')}</th><th>${L('of which entered in m³', '其中以 m³ 填報')}</th><th>%</th></tr>
-      ${cats.map(k => `<tr><td>${esc(biName(k))}</td><td class="mono">${byCat[k].n}</td><td class="mono"><b>${fmtN(byCat[k].kg, 1)}</b></td><td class="mono">${byCat[k].m3 ? fmtN(byCat[k].m3, 2) + ' m³' : '—'}</td><td class="mono">${catKg ? fmtN(byCat[k].kg / catKg * 100, 1) : 0}%</td></tr>`).join('')}
+      ${pb('month', L('This month', '本月'))}${pb('last', L('Last month', '上月'))}${pb('q', L('Last 90 days', '近 90 天'))}${pb('year', L('This year', '今年'))}${pb('all', L('All', '全部'))}</div>
+    <div class="stat-grid">
+      <div class="stat amber"><div class="v">${fmtN(total, 0)}</div><div class="l">${L('Total waste (kg)', '廢棄物總量 (kg)')}</div></div>
+      <div class="stat red"><div class="v">${fmtN(hazKg, 0)}</div><div class="l">${L('Hazardous (kg)', '有害 (kg)')} · ${pct(hazKg)}</div></div>
+      <div class="stat green"><div class="v">${fmtN(catKg - hazKg, 0)}</div><div class="l">${L('Non-hazardous (kg)', '無害 (kg)')} · ${pct(catKg - hazKg)}</div></div>
+      <div class="stat blue"><div class="v">${list.length}</div><div class="l">${L('Deliveries', '交運筆數')}</div></div>
+    </div>
+    <div class="section"><div class="section-header"><h3>🗑 ${L('By category', '各類別總量')} · ${esc(from)} ～ ${esc(to)}</h3></div>
+    ${cats.length ? `<div class="table-wrap"><table class="tbl"><tr><th>${L('Category', '類別')}</th><th>${L('Deliveries', '筆數')}</th><th>${L('Total (kg)', '總量 (kg)')}</th><th>${L('of which entered in m³', '其中以 m³ 填報')}</th><th>%</th></tr>
+      ${cats.map(k => `<tr><td>${esc(biName(k))}${envHazTag(k)}</td><td class="mono">${byCat[k].n}</td><td class="mono"><b>${fmtN(byCat[k].kg, 1)}</b></td><td class="mono">${byCat[k].m3 ? fmtN(byCat[k].m3, 2) + ' m³' : '—'}</td><td class="mono">${catKg ? fmtN(byCat[k].kg / catKg * 100, 1) : 0}%</td></tr>`).join('')}
       <tr style="font-weight:700"><td>${L('Total', '合計')}</td><td class="mono">${list.length}</td><td class="mono">${fmtN(total, 1)}</td><td></td><td class="mono">100%</td></tr></table></div>`
       : `<div class="empty">${L('No waste deliveries in this period', '這段期間沒有廢棄物交運紀錄')}</div>`}</div>
   <div class="section"><div class="section-header"><div class="toolbar">
@@ -3142,9 +3155,9 @@ function envWasteModal(id) {
     <div class="fg"><label>${L('Receiver / contractor', '清運廠商')}</label><input id="ewR" value="${esc(w.receiver)}"></div>
     <div class="fg"><label>${L('Receipt no.', '聯單號碼')}</label><input id="ewN" class="mono" value="${esc(w.receipt_no)}"></div>
     <div class="fg full" style="border-top:1px solid var(--border);padding-top:10px"><b>${L('Amount by category (kg or m³; m³ is converted to kg by the category density)', '各類別數量（kg 或 m³；m³ 依類別密度換算成 kg）')}</b> <span class="small muted" id="ewTot"></span></div>
-    ${cats.map(c => { const isM3 = m3[c] !== undefined, d = envWasteDensity(c);
-      return `<div class="fg"><label>${esc(biName(c))} <span class="small muted ew-hint"></span></label><div style="display:flex;gap:6px">
-        <input class="mono ew-cat" data-cat="${esc(c)}" data-density="${d}" type="number" step="any" min="0" inputmode="decimal" style="flex:1;min-width:0" value="${esc(isM3 ? m3[c] : (it[c] !== undefined ? it[c] : ''))}">
+    ${cats.map(c => { const isM3 = m3[c] !== undefined || it[c] === undefined, d = envWasteDensity(c);   // 預設 m³；已存成 kg 的維持 kg
+      return `<div class="fg"><label>${esc(biName(c))}${envHazTag(c)} <span class="small muted ew-hint"></span></label><div style="display:flex;gap:6px">
+        <input class="mono ew-cat" data-cat="${esc(c)}" data-density="${d}" type="number" step="any" min="0" inputmode="decimal" style="flex:1;min-width:0" value="${esc(m3[c] !== undefined ? m3[c] : (it[c] !== undefined ? it[c] : ''))}">
         <select class="ew-unit" style="width:auto" title="${L('Density', '密度')} ${d} t/m³">${opts([{ v: 'kg', t: 'kg' }, { v: 'm3', t: 'm³' }], isM3 ? 'm3' : 'kg')}</select></div></div>`; }).join('')}
     <div class="fg full"><label>${L('Remark', '備註')}</label><input id="ewRem" value="${esc(w.remark)}"></div>
     <div class="fg full"><label>${L('Receipt (PDF or photo)', '交運聯單（PDF 或照片）')}${w.drive_id ? ` · <a href="#" onclick="event.preventDefault();envViewFile('${w.id}')">📎 ${esc(w.file_name)}</a> <span class="small muted">${L('(choosing a file replaces it)', '（選新檔會取代）')}</span>` : ''}</label>
@@ -3517,7 +3530,11 @@ function adminSettings() {
     <div class="section"><div class="section-header"><h3>🌱 ${L('Environmental statistics', '環保統計')}</h3></div><div class="section-body"><div class="form-grid">
       <div class="fg full"><label>${L('Fuels (name, density kg/L, CO₂ factor t CO₂ per t fuel — one per line)', '燃料（每行：名稱, 密度 kg/L, CO₂ 排放係數 t CO₂／t 燃料）')}</label><textarea id="st_env_fuels" class="mono" rows="4">${esc(st.env_fuels)}</textarea>
         <span class="small muted">${L('CO₂ = m³ × density (t/m³ = kg/L) × factor. Default factors follow IMO MEPC.308(73); densities are typical values — use your bunker delivery notes if you have them.', 'CO₂＝用油 m³ × 密度（t/m³，數值同 kg/L）× 係數。預設係數依 IMO MEPC.308(73)；密度為一般值，有加油單（BDN）請以實際密度為準。')}</span></div>
-      ${ta('env_waste_cats', 'Waste categories (name, density t/m³ for converting m³ to kg — density optional, one per line)', '廢棄物類別（每行：名稱, 密度 t/m³；用來把 m³ 換算成 kg，可省略：常見類別用內建估計值，其他用 1）', '', 6)}
+      <div class="fg full"><label>${L('Waste categories', '廢棄物類別')}</label>
+        <div class="table-wrap"><table class="tbl" id="stWasteCats"><tr><th>${L('Name (“中文 English”)', '名稱（中文 English）')}</th><th>${L('Density t/m³ (for m³ → kg)', '密度 t/m³（m³ 換算 kg 用）')}</th><th>${L('Type', '性質')}</th><th></th></tr>
+          ${envWasteCats().map(c => envCatRow(c)).join('')}</table></div>
+        <div class="toolbar" style="margin-top:6px"><button type="button" class="btn btn-green btn-sm" onclick="$('stWasteCats').insertAdjacentHTML('beforeend',envCatRow({name:'',dens:'',haz:false}))">＋ ${L('Add category', '新增類別')}</button></div>
+        <span class="small muted">${L('Blank density = built-in estimate for common categories, otherwise 1. Removing a category does not change past records.', '密度留白＝常見類別用內建估計值，其他用 1。刪除類別不會影響已登錄的紀錄。')}</span></div>
       ${ta('env_waste_methods', 'Waste disposal methods', '廢棄物處理方式', '', 4)}
       ${ta('env_incident_types', 'Environmental incident types', '環境事件類型', '', 4)}
       <div class="fg full"><label>${L('Incident locations — vessels (click to edit)', '環境事件地點 — 船舶（點一下可編輯）')}</label>
@@ -3550,9 +3567,20 @@ async function testAis(btn) {
   } catch (e) { out.textContent = '❌ ' + e.message; }
   btn.disabled = false;
 }
+/** 後台廢棄物類別表的一列；存檔時組回「名稱, 密度, 有害／無害」一行一個 */
+function envCatRow(c) {
+  return `<tr class="st-wc"><td><input class="wc-n" value="${esc(c.name)}" style="min-width:160px"></td>
+    <td><input class="wc-d mono" type="number" step="any" min="0" inputmode="decimal" value="${esc(c.dens)}" placeholder="${c.name ? envWasteDensity(c.name) : 1}" style="width:110px"></td>
+    <td><select class="wc-h" style="width:auto">${opts([{ v: '無害', t: L('Non-hazardous', '無害') }, { v: '有害', t: L('Hazardous', '有害') }], c.haz ? '有害' : '無害')}</select></td>
+    <td><button type="button" class="btn btn-danger btn-sm" onclick="this.closest('tr').remove()">🗑</button></td></tr>`;
+}
 function saveSettings(btn) {
   const p = {};
-  ['project_name', 'pre_watch_min', 'alert_zone_m', 'watch_zone_m', 'response_min', 'repre_pause_min', 'mmo_dist_tol_m', 'sites', 'crew_slots', 'scopes', 'species', 'pause_reasons', 'ais_api_url', 'ais_api_key', 'weather_name', 'weather_points', 'weather_wave_limit', 'weather_wind_limit', 'pos_interval_min', 'track_interval_min', 'env_fuels', 'env_waste_cats', 'env_waste_methods', 'env_incident_types', 'env_incident_places', 'env_zero_start'].forEach(k => { p[k] = $('st_' + k).value.trim(); });
+  p.env_waste_cats = Array.from(document.querySelectorAll('#stWasteCats .st-wc')).map(tr => {
+    const n = tr.querySelector('.wc-n').value.replace(/[,，]/g, ' ').trim(), d = tr.querySelector('.wc-d').value.trim();
+    return n ? [n, d, tr.querySelector('.wc-h').value].join(', ') : '';
+  }).filter(Boolean).join('\n');
+  ['project_name', 'pre_watch_min', 'alert_zone_m', 'watch_zone_m', 'response_min', 'repre_pause_min', 'mmo_dist_tol_m', 'sites', 'crew_slots', 'scopes', 'species', 'pause_reasons', 'ais_api_url', 'ais_api_key', 'weather_name', 'weather_points', 'weather_wave_limit', 'weather_wind_limit', 'pos_interval_min', 'track_interval_min', 'env_fuels', 'env_waste_methods', 'env_incident_types', 'env_incident_places', 'env_zero_start'].forEach(k => { p[k] = $('st_' + k).value.trim(); });
   mut('settings.save', p, L('Settings saved', '設定已儲存'), btn).catch(() => {});
 }
 function adminUsers() {
