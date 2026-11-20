@@ -2971,7 +2971,7 @@ function envZeroDays() {
 function envKpiRow() {
   if (!S.env) return '';
   const m = today().slice(0, 7), t = envSummary(m).tot, z = envZeroDays();
-  const st = (cls, v, l, tab) => `<div class="stat ${cls}" style="cursor:pointer" onclick="ENV.month='${m}';envTab('${tab}')"><div class="v">${v}</div><div class="l">${l}</div></div>`;
+  const st = (cls, v, l, tab) => `<div class="stat ${cls}" style="cursor:pointer" onclick="ENV.month='${m}';ENV.wFrom=ENV.wTo='';envTab('${tab}')"><div class="v">${v}</div><div class="l">${l}</div></div>`;
   return `<div class="section-header" style="padding:0 0 10px;border:0"><h3>🌱 ${L('Environmental KPIs this month', '本月環保 KPI')}</h3></div>
     <div class="stat-grid">
       ${st('', fmtN(t.fuel, 2), L('Fuel used (m³)', '用油量 (m³)'), 'overview')}
@@ -3085,17 +3085,48 @@ function envExportDaily() {
   downloadCsv('ENV_daily_' + m + '.csv', [head].concat(rows));
 }
 // ---- 廢棄物交運：每次一筆，附聯單 ----
+/** 廢棄物分頁的時間區間（預設＝ENV.month 那個月；KPI 點進來會重設） */
+function envWasteRange() {
+  if (!ENV.wFrom || !ENV.wTo) { ENV.wFrom = ENV.month + '-01'; ENV.wTo = monthEnd(ENV.month); }
+  return [ENV.wFrom, ENV.wTo].sort();
+}
+function envWasteList() {
+  const [from, to] = envWasteRange();
+  return envData().waste.filter(x => x.date >= from && x.date <= to);
+}
+function envWastePreset(p) {
+  const t = today(), m = t.slice(0, 7), pm = addDays(m + '-01', -1).slice(0, 7), dates = envData().waste.map(x => x.date).sort();
+  const r = { month: [m + '-01', monthEnd(m)], last: [pm + '-01', monthEnd(pm)], q: [addDays(t, -89), t], year: [t.slice(0, 4) + '-01-01', t.slice(0, 4) + '-12-31'],
+    all: [dates[0] || t, dates[dates.length - 1] || t] }[p];
+  if (r) { ENV.wFrom = r[0]; ENV.wTo = r[1]; envWaste(); }
+}
 function envWaste() {
-  const list = envData().waste.filter(x => x.date.slice(0, 7) === ENV.month).sort((a, b) => b.date.localeCompare(a.date));
-  $('envBody').innerHTML = `<div class="section"><div class="section-header"><div class="toolbar">${envMonthSel('envWaste')}
-      <span class="muted small">${list.length} ${L('deliveries', '筆')} · ${fmtN(list.reduce((n, w) => n + envNum(w.total_kg), 0), 1)} kg</span></div>
+  const [from, to] = envWasteRange();
+  const list = envWasteList().sort((a, b) => b.date.localeCompare(a.date)), total = list.reduce((n, w) => n + envNum(w.total_kg), 0);
+  // 分類統計：kg（m³ 已換算）、其中以 m³ 填的體積、出現在幾筆交運
+  const byCat = {};
+  list.forEach(w => { const it = envWasteItems(w), m3 = envWasteM3(w);
+    Object.keys(it).forEach(k => { const c = byCat[k] || (byCat[k] = { kg: 0, m3: 0, n: 0 }); c.kg += envNum(it[k]); c.n++; if (m3[k] !== undefined) c.m3 += envNum(m3[k]); }); });
+  const cats = Array.from(new Set(envWasteCats().map(c => c.name).concat(Object.keys(byCat)))).filter(k => byCat[k]).sort((a, b) => byCat[b].kg - byCat[a].kg);
+  const catKg = cats.reduce((n, k) => n + byCat[k].kg, 0);
+  const pb = (p, t) => `<button class="btn btn-sm" onclick="envWastePreset('${p}')">${t}</button>`;
+  $('envBody').innerHTML = `<div class="section"><div class="section-header"><div class="toolbar">
+      <input type="date" style="width:auto" value="${from}" onchange="if(this.value){ENV.wFrom=this.value;envWaste()}"> ～
+      <input type="date" style="width:auto" value="${to}" onchange="if(this.value){ENV.wTo=this.value;envWaste()}">
+      ${pb('month', L('This month', '本月'))}${pb('last', L('Last month', '上月'))}${pb('q', L('Last 90 days', '近 90 天'))}${pb('year', L('This year', '今年'))}${pb('all', L('All', '全部'))}</div></div>
+    ${cats.length ? `<div class="table-wrap"><table class="tbl"><tr><th>🗑 ${L('Category', '類別')}</th><th>${L('Deliveries', '筆數')}</th><th>${L('Total (kg)', '總量 (kg)')}</th><th>${L('of which entered in m³', '其中以 m³ 填報')}</th><th>%</th></tr>
+      ${cats.map(k => `<tr><td>${esc(biName(k))}</td><td class="mono">${byCat[k].n}</td><td class="mono"><b>${fmtN(byCat[k].kg, 1)}</b></td><td class="mono">${byCat[k].m3 ? fmtN(byCat[k].m3, 2) + ' m³' : '—'}</td><td class="mono">${catKg ? fmtN(byCat[k].kg / catKg * 100, 1) : 0}%</td></tr>`).join('')}
+      <tr style="font-weight:700"><td>${L('Total', '合計')}</td><td class="mono">${list.length}</td><td class="mono">${fmtN(total, 1)}</td><td></td><td class="mono">100%</td></tr></table></div>`
+      : `<div class="empty">${L('No waste deliveries in this period', '這段期間沒有廢棄物交運紀錄')}</div>`}</div>
+  <div class="section"><div class="section-header"><div class="toolbar">
+      <span class="muted small">${esc(from)} ～ ${esc(to)} · ${list.length} ${L('deliveries', '筆')} · ${fmtN(total, 1)} kg</span></div>
       <div class="toolbar"><button class="btn btn-sm" onclick="envExportWaste()">⬇ CSV</button><button class="btn btn-green btn-sm ew" onclick="envWasteModal()">＋ ${L('Add delivery', '新增交運')}</button></div></div>
     ${list.length ? `<div class="table-wrap"><table class="tbl"><tr><th>${L('Date', '日期')}</th><th>${L('Vessel', '船名')}</th><th>${L('Method', '處理方式')}</th><th>${L('Total (kg)', '合計 (kg)')}</th><th>${L('Categories', '類別明細')}</th>
       <th>${L('Receiver', '清運廠商')}</th><th>${L('Receipt no.', '聯單號碼')}</th><th>${L('Receipt', '聯單')}</th></tr>
       ${list.map(w => { const it = envWasteItems(w); return `<tr class="click" onclick="envWasteModal('${w.id}')"><td class="mono">${esc(w.date)}</td><td><b>${esc(w.vessel_name)}</b></td><td>${esc(biName(w.method))}</td>
         <td class="mono">${fmtN(envNum(w.total_kg), 1)}</td><td class="small">${(m3 => Object.keys(it).map(k => esc(biName(k)) + ' ' + (m3[k] !== undefined ? fmtN(m3[k], 2) + ' m³ ≈ ' : '') + fmtN(it[k], 1)).join('、'))(envWasteM3(w))}</td><td>${esc(w.receiver)}</td><td class="mono">${esc(w.receipt_no)}</td>
         <td>${w.drive_id ? `<button class="btn btn-sm" onclick="event.stopPropagation();envViewFile('${w.id}')">📎</button>` : `<span class="tag amber">${L('None', '未附')}</span>`}</td></tr>`; }).join('')}</table></div>`
-      : `<div class="empty">${L('No waste deliveries this month', '本月沒有廢棄物交運紀錄')}</div>`}</div>`;
+      : `<div class="empty">${L('No waste deliveries in this period', '這段期間沒有廢棄物交運紀錄')}</div>`}</div>`;
 }
 function envWasteModal(id) {
   const w = id ? envData().waste.find(x => x.id === id) : { date: today(), method: lines(S.settings.env_waste_methods)[0] || '' };
@@ -3170,12 +3201,12 @@ async function envDel(action, id, btn, file) {
   mut(action, { id }, L('Deleted', '已刪除')).catch(() => {});
 }
 function envExportWaste() {
-  const cats = envWasteCats().map(c => c.name), list = envData().waste.filter(x => x.date.slice(0, 7) === ENV.month).sort((a, b) => a.date.localeCompare(b.date));
+  const cats = envWasteCats().map(c => c.name), list = envWasteList().sort((a, b) => a.date.localeCompare(b.date)), [from, to] = envWasteRange();
   list.forEach(w => Object.keys(envWasteItems(w)).forEach(k => { if (cats.indexOf(k) < 0) cats.push(k); }));
   const rows = [['日期', '船名', '處理方式', '港口', '清運廠商', '聯單號碼', '合計 (kg)'].concat(cats.map(c => c + ' (kg)')).concat(['以 m³ 填報', '聯單檔案', '備註', '登錄者'])];
   list.forEach(w => { const it = envWasteItems(w); rows.push([w.date, w.vessel_name, w.method, w.port, w.receiver, w.receipt_no, w.total_kg].concat(cats.map(c => it[c] !== undefined ? it[c] : ''))
     .concat([(m3 => Object.keys(m3).map(k => k + ' ' + m3[k] + ' m³').join('; '))(envWasteM3(w)), w.drive_id ? 'https://drive.google.com/file/d/' + w.drive_id + '/view' : '', w.remark, w.created_by])); });
-  downloadCsv('ENV_waste_' + ENV.month + '.csv', rows);
+  downloadCsv('ENV_waste_' + from + '_' + to + '.csv', rows);
 }
 // ---- 環境事件 ----
 function envIncidents() {
