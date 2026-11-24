@@ -57,7 +57,7 @@ const DEFAULT_SETTINGS = {
   sites: '通霄 Tongxiao, 24.47, 120.55',
   scopes: '海管鋪設 Pipelay\n拋石作業 Rock placement\n後噴埋 Post-lay jetting\n回填作業 Backfilling\n超長段作業 Extra-long section',
   species: '台灣白海豚 Taiwanese humpback dolphin\n印太瓶鼻海豚 Indo-Pacific bottlenose dolphin\n瓶鼻海豚 Common bottlenose dolphin\n印太露脊鼠海豚 Indo-Pacific finless porpoise\n熱帶斑海豚 Pantropical spotted dolphin\n飛旋海豚 Spinner dolphin\n糙齒海豚 Rough-toothed dolphin\n未知鯨豚 Unidentified cetacean',
-  pause_reasons: '目擊鯨豚進入警戒區 Cetacean in alert zone\nPAM 偵測到鯨豚 PAM detection\n天氣／能見度不佳 Poor weather / visibility\n設備故障 Equipment failure\n其他 Other',
+  pause_reasons: '目擊鯨豚進入警戒區 Cetacean in alert zone\nPAM 偵測到鯨豚 PAM detection\n天氣／能見度不佳 Poor weather / visibility\n設備故障 Equipment failure\n施工船停止作業 Construction vessel stopped work\n其他 Other',
   ais_api_url: '',              // 之後接付費船位 API（伺服器端呼叫，金鑰不給前端）
   ais_api_key: '',
   pos_interval_min: '60',       // 儀表板自動更新船位（分鐘；0＝關閉），只更新 pos_vessels 勾選的船
