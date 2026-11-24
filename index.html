@@ -626,7 +626,13 @@ function openModal(title, body, opt) {
   bg.addEventListener('mousedown', e => { if (e.target === bg) bg.__down = true; });
   bg.addEventListener('mouseup', e => { if (e.target === bg && bg.__down) close(); bg.__down = false; });
   const sv = bg.querySelector('[data-save]');
-  if (sv) sv.onclick = async () => { try { const r = await opt.onSave(bg, sv); if (r !== false) close(); } catch (e) { /* 已 toast */ } };
+  // 儲存中鎖住按鈕：onSave 在 mut 之前可能還有確認框或同步其他船的請求，連點會重複新增
+  if (sv) sv.onclick = async () => {
+    if (bg.__busy) return;
+    bg.__busy = true; sv.disabled = true;
+    try { const r = await opt.onSave(bg, sv); if (r !== false) close(); } catch (e) { /* 已 toast */ }
+    finally { bg.__busy = false; sv.disabled = false; }
+  };
   $('modals').appendChild(bg);
   const f = bg.querySelector('input:not([type=checkbox]):not([type=file]),select,textarea'); if (f && !opt.noFocus) setTimeout(() => f.focus(), 30);
   return bg;
@@ -1846,11 +1852,15 @@ function svPanel(s, sv, ed) {
   const preMin = settingsNum('pre_watch_min', 30);
   const tRow = (k, en, zh, extra) => `<div class="trow"><label>${L(en, zh)}</label>
       <input type="datetime-local" value="${esc(sv[k] || '')}" ${ed ? '' : 'disabled'} onchange="manualSv(this,'${sv.id}','${k}',this.value)">
-      <div class="toolbar">${ed ? `<button class="btn btn-sm w" onclick="manualSv(null,'${sv.id}','${k}',nowLocal())">${L('Now', '現在')}</button>` : ''}${extra || ''}</div></div>`;
+      <div class="toolbar">${ed ? `<button class="btn btn-sm w" onclick="manualSv(null,'${sv.id}','${k}',nowLocal())">${L('Now', '現在')}</button>` + rowBtns('sv', sv.id, k, sv[k], L(en, zh)) : ''}${extra || ''}</div></div>`;
+  // 每個時間都可編輯／刪除（修正系統或人為記錯的時間）
+  const rowBtns = (kind, id, f, v, label) => { const a = `'${kind}','${id}','${f}','${esc(label).replace(/'/g, '&#39;')}'`;
+    return `<button class="btn btn-sm w" title="${L('Edit', '編輯')}" onclick="timeEdit(${a})">✏️</button>` +
+      (v ? `<button class="btn btn-sm w" title="${L('Delete', '刪除')}" onclick="timeDel(${a})">🗑</button>` : ''); };
   // 作業時間依實際順序：暫停施工 → （需要時）重新預觀測 → 回復施工；「現在」只出現在進行中暫停的下一步
   const pRow = (p, f, en, zh, step, note) => `<div class="trow"><label>${L(en, zh)}${note ? `<div class="small muted" style="font-weight:400">${note}</div>` : ''}</label>
       <input type="datetime-local" value="${esc(p[f] || '')}" ${ed && !(f === 'end' && !p.end && !step) ? '' : 'disabled'} onchange="manualPause(this,'${p.id}','${f}')">
-      <div class="toolbar">${ed && step ? `<button class="btn btn-sm w" onclick="doNext('${sv.id}','${step}')">${L('Now', '現在')}</button>` : ''}</div></div>`;
+      <div class="toolbar">${ed && step ? `<button class="btn btn-sm w" onclick="doNext('${sv.id}','${step}')">${L('Now', '現在')}</button>` : ''}${ed ? rowBtns('pause', p.id, f, p[f], L(en, zh)) : ''}</div></div>`;
   const pauseRows = () => ps.slice().sort((a, b) => tms(a.start) - tms(b.start)).map((p, i) => {
     const st = pauseState(p), step = p.end ? '' : pauseStep(p), n = ps.length > 1 ? ' ' + (i + 1) : '';
     const ended = p.end && sv.work_end && tms(p.end) >= tms(sv.work_end);
@@ -2027,7 +2037,7 @@ async function timeOk(sv, svPatch, pp) {
 // 手動改時間也同步：同批次其他船這個時間原本跟此船一樣的，一起改
 async function manualSv(el, id, k, value) {
   const sv = S.svs.find(x => x.id === id);
-  if (value && !(await timeOk(sv, { [k]: value }))) { if (el) el.value = sv[k] || ''; return; }
+  if (value && !(await timeOk(sv, { [k]: value }))) { if (el) el.value = sv[k] || ''; return false; }
   const peers = peerSvs(id, x => (x[k] || '') === (sv[k] || ''));
   if (!peers.length) return saveSv(id, { [k]: value });
   showLoading(L('Saving…', '儲存中…'));
@@ -2037,14 +2047,31 @@ async function manualSv(el, id, k, value) {
     if (k === 'work_end' && value) for (const x of [sv].concat(peers)) await trackImage(x.id, true);
   } catch (e) {}
 }
-async function manualPause(el, id, f) {
+async function manualPause(el, id, f, value) {
   const p = S.pauses.find(x => x.id === id), sv = S.svs.find(x => x.id === p.sv_id);
-  if (el.value && !(await timeOk(sv, null, { id, [f]: el.value }))) { el.value = p[f] || ''; return; }
+  const v = el ? el.value : value;
+  if (v && !(await timeOk(sv, null, { id, [f]: v }))) { if (el) el.value = p[f] || ''; return false; }
   const peers = peerPauses(p).filter(q => (q[f] || '') === (p[f] || ''));
-  if (!peers.length) return savePause(id, f, el.value);
+  if (!peers.length) return savePause(id, f, v);
   showLoading(L('Saving…', '儲存中…'));
-  const also = await syncPeers(peers.map(q => ({ q, vessel_name: svName(q.sv_id) })), x => api('pause.save', { id: x.q.id, [f]: el.value }));
-  try { await mut('pause.save', { id, [f]: el.value }, L('Saved', '已儲存') + also); } catch (e) {}
+  const also = await syncPeers(peers.map(q => ({ q, vessel_name: svName(q.sv_id) })), x => api('pause.save', { id: x.q.id, [f]: v }));
+  try { await mut('pause.save', { id, [f]: v }, L('Saved', '已儲存') + also); } catch (e) {}
+}
+// 作業時間每一列的 ✏️／🗑：同批次其他船同一時間一起改（沿用 manualSv／manualPause）
+function timeEdit(kind, id, f, label) {
+  const r = kind === 'sv' ? S.svs.find(x => x.id === id) : S.pauses.find(x => x.id === id);
+  openModal(L('Edit time', '編輯時間') + ' — ' + label, `<div class="fg"><label>${label}</label><input id="teV" type="datetime-local" value="${esc(r[f] || nowLocal())}"></div>`, {
+    onSave: async bg => {
+      const v = val(bg, 'teV');
+      if (!v) { toast(L('Enter a time', '請填寫時間'), 'error'); return false; }
+      if ((await (kind === 'sv' ? manualSv(null, id, f, v) : manualPause(null, id, f, v))) === false) return false;
+    } });
+}
+async function timeDel(kind, id, f, label) {
+  if (kind === 'pause' && f === 'start') return delPause(id, null);   // 刪暫停時間 = 刪整筆暫停施工
+  const warn = kind === 'pause' && f === 'end' ? '<br>' + L('This pause will be open again.', '此筆暫停會變回「暫停施工中」。') : '';
+  if (!(await confirmBox(L('Clear this time?', '確定刪除此時間？') + ' <b>' + label + '</b>' + warn, L('Delete', '刪除'), true))) return;
+  if (kind === 'sv') manualSv(null, id, f, ''); else manualPause(null, id, f, '');
 }
 // 同批次其他船的「同一次」暫停施工：開始時間相同（同步建立的暫停都用同一個時間）
 function peerPauses(p) { return S.pauses.filter(q => q.shift_id === p.shift_id && q.sv_id !== p.sv_id && q.start === p.start); }
@@ -2090,7 +2117,7 @@ async function doNext(svId, k) {
     const also = await syncPeers(peerSvs(svId, x => { const o = openPauseOf(x.id); return o && o.pre_start && !o.pre_end; }), x => api('pause.save', { id: openPauseOf(x.id).id, pre_end: t }));
     return mut('pause.save', { id: openP.id, pre_end: t }, L('Pre-watch ended', '預觀測結束') + also).catch(() => {});
   }
-  if (k === 'pause') return pauseModal(svId);
+  if (k === 'pause') return pauseModal(svId, null, false, true);
   if (k === 'resume') { const p = S.pauses.find(x => x.sv_id === svId && !x.end); return pauseModal(svId, p && p.id, true); }
   if (k === 'pre_end') {
     const m = mins(sv.pre_start, nowLocal()), need = settingsNum('pre_watch_min', 30);
@@ -2176,7 +2203,8 @@ function crewModal(svId) {
     onSave: async (bg, btn) => { await mut('sv.save', { id: svId, crew: crewRead(bg) }, L('Saved', '已儲存'), btn); } });
 }
 
-function pauseModal(svId, id, resume) {
+// live：按流程按鈕「暫停施工」時只填暫停時間與原因，回復時間與重新預觀測之後再按按鈕記錄
+function pauseModal(svId, id, resume, live) {
   const p = id ? S.pauses.find(x => x.id === id) : null;
   const reasons = lines(S.settings.pause_reasons);
   if (p && p.reason && reasons.indexOf(p.reason) < 0) reasons.push(p.reason);
@@ -2186,14 +2214,14 @@ function pauseModal(svId, id, resume) {
   const free = p && !linked ? ss.filter(x => !S.pauses.some(q => q.sighting_id === x.id)) : [];
   const body = `<div class="form-grid">
     <div class="fg"><label>${L('Pause time', '暫停施工時間')} *</label><input id="pStart" type="datetime-local" value="${esc(p ? p.start : nowLocal())}"></div>
-    <div class="fg"><label>${L('Resume time', '回復施工時間')}</label><input id="pEnd" type="datetime-local" value="${esc(p ? (p.end || (resume ? nowLocal() : '')) : '')}"></div>
+    ${live ? '' : `<div class="fg"><label>${L('Resume time', '回復施工時間')}</label><input id="pEnd" type="datetime-local" value="${esc(p ? (p.end || (resume ? nowLocal() : '')) : '')}"></div>`}
     <div class="fg full"><label>${L('Reason', '原因')}</label><select id="pReason">${opts(reasons.map(r => ({ v: r, t: biName(r) })), p ? p.reason : reasons[0])}</select></div>
     <div class="full form-grid" id="pSightBox">
       ${free.length ? `<div class="fg full"><label>${L('Existing sighting', '選擇既有目擊紀錄')}</label><select id="pSight">${opts(free.map(x => ({ v: x.id, t: fmtT(x.time, true) + ' ' + biName(x.species) })), '', L('Add a new sighting', '新增一筆目擊'))}</select></div>` : ''}
       ${sightFields(linked, p ? p.start : nowLocal())}
     </div>
-    <div class="fg"><label>${L('New pre-watch start', '重新預觀測開始')}</label><input id="pPreS" type="datetime-local" value="${esc(p ? p.pre_start : '')}"></div>
-    <div class="fg"><label>${L('New pre-watch end', '重新預觀測結束')}</label><input id="pPreE" type="datetime-local" value="${esc(p ? p.pre_end : '')}"></div>
+    ${live ? '' : `<div class="fg"><label>${L('New pre-watch start', '重新預觀測開始')}</label><input id="pPreS" type="datetime-local" value="${esc(p ? p.pre_start : '')}"></div>
+    <div class="fg"><label>${L('New pre-watch end', '重新預觀測結束')}</label><input id="pPreE" type="datetime-local" value="${esc(p ? p.pre_end : '')}"></div>`}
     <div class="fg full"><label>${L('Remark', '備註')}</label><input id="pRemark" value="${esc(p ? p.remark : '')}"></div></div>
     <div class="alert blue" style="margin-top:12px;font-size:12px">${L('A pause longer than ' + settingsNum('repre_pause_min', 60) + ' min, or cetaceans entering the ' + settingsNum('alert_zone_m', 750) + ' m alert zone (after they leave), requires a new ' + settingsNum('pre_watch_min', 30) + '-min pre-watch before work resumes.',
       '暫停施工超過 ' + settingsNum('repre_pause_min', 60) + ' 分鐘，或鯨豚進入 ' + settingsNum('alert_zone_m', 750) + ' m 警戒區（離開後），須重新預觀測 ' + settingsNum('pre_watch_min', 30) + ' 分鐘才可回復施工。')}</div>`;
@@ -2210,6 +2238,7 @@ function pauseModal(svId, id, resume) {
       }
       if (!(await timeOk(S.svs.find(x => x.id === svId), null, { id: rec.id, start: rec.start, end: rec.end, pre_start: rec.pre_start, pre_end: rec.pre_end }))) return false;
       let also = '';
+      showLoading(L('Saving…', '儲存中…'));
       // 新增：施工中的船一起暫停；事後補登（已有回復時間）的，已開始實際觀測的船也一起補，同一開始時間已有暫停的就不重複
       if (!p) also = await syncPeers(peerSvs(svId, x => !S.pauses.some(q => q.sv_id === x.id && q.start === rec.start) && (x.checks.status === 'work' || (!!rec.end && !!x.work_start))),
         x => api('pause.save', { sv_id: x.id, start: rec.start, end: rec.end, reason: rec.reason, pre_start: rec.pre_start, pre_end: rec.pre_end, remark: rec.remark }));
@@ -2233,7 +2262,7 @@ function pauseModal(svId, id, resume) {
 async function delPause(id, btn) {
   const peers = peerPauses(S.pauses.find(x => x.id === id));
   if (!(await confirmBox(L('Delete this pause?', '確定刪除此暫停施工紀錄？') + (peers.length ? '<br>' + L('Also deletes: ', '同批次一併刪除：') + esc(peers.map(q => svName(q.sv_id)).join('、')) : ''), L('Delete', '刪除'), true))) return;
-  btn.closest('.modal-bg').remove();
+  const m = btn && btn.closest('.modal-bg'); if (m) m.remove();
   showLoading(L('Saving…', '儲存中…'));
   const also = await syncPeers(peers.map(q => ({ q, vessel_name: svName(q.sv_id) })), x => api('pause.delete', { id: x.q.id }));
   mut('pause.delete', { id }, L('Deleted', '已刪除') + also).catch(() => {});
