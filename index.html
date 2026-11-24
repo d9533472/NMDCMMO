@@ -1775,13 +1775,14 @@ const ACT_LEFT = () => ({ k: 'left', cls: 'btn-amber', t: '🐬 ' + L('Cetaceans
 const ACT_PRE_END = () => L('✓ End pre-watch (no cetaceans)', '✓ 預觀測結束（未發現鯨豚）');
 function inZone(x) { return bool(x.in_alert_zone) || (x.min_distance_m !== '' && x.min_distance_m != null && Number(x.min_distance_m) <= settingsNum('alert_zone_m', 750)); }
 /** 尚未開始實際觀測時，預觀測開始後仍在警戒區內（或之後才離開）的目擊 → 預觀測須重新開始 */
+// 同批次兩艘 MMO 船一起動作：任一船在警戒區的目擊，都算進整批次的預觀測／暫停規則（後端 checks_ 同規則）
 function preRedo(sv) {
-  const list = sv.pre_start && !sv.work_start ? S.sightings.filter(x => x.sv_id === sv.id && inZone(x) && (!x.left_time || tms(x.left_time) > tms(sv.pre_start))) : [];
+  const list = sv.pre_start && !sv.work_start ? S.sightings.filter(x => x.shift_id === sv.shift_id && inZone(x) && (!x.left_time || tms(x.left_time) > tms(sv.pre_start))) : [];
   return { list, away: list.filter(x => !x.left_time) };
 }
 function pauseState(p) {
   const end = p.end ? tms(p.end) : Infinity;
-  const zs = S.sightings.filter(x => x.sv_id === p.sv_id && inZone(x) && (x.id === p.sighting_id || (tms(x.time) <= end && (x.left_time ? tms(x.left_time) > tms(p.start) : tms(x.time) >= tms(p.start)))));
+  const zs = S.sightings.filter(x => x.shift_id === p.shift_id && inZone(x) && (x.id === p.sighting_id || (tms(x.time) <= end && (x.left_time ? tms(x.left_time) > tms(p.start) : tms(x.time) >= tms(p.start)))));
   const last = zs.reduce((m, x) => Math.max(m, tms(x.left_time || x.time)), 0);
   const stale = !!p.pre_start && last > tms(p.pre_start);   // 重新預觀測開始後又有鯨豚進入 → 這輪作廢
   const dur = mins(p.start, p.end || nowLocal()), limit = settingsNum('repre_pause_min', 60);
@@ -2023,16 +2024,31 @@ async function timeOk(sv, svPatch, pp) {
     `${short[3]}僅 <b>${mins(short[0], short[1])} 分鐘</b>（作業指引須滿 ${need} 分鐘），確定仍要儲存？`), L('Save anyway', '仍要儲存'), true))) return false;
   return true;
 }
+// 手動改時間也同步：同批次其他船這個時間原本跟此船一樣的，一起改
 async function manualSv(el, id, k, value) {
   const sv = S.svs.find(x => x.id === id);
   if (value && !(await timeOk(sv, { [k]: value }))) { if (el) el.value = sv[k] || ''; return; }
-  saveSv(id, { [k]: value });
+  const peers = peerSvs(id, x => (x[k] || '') === (sv[k] || ''));
+  if (!peers.length) return saveSv(id, { [k]: value });
+  showLoading(L('Saving…', '儲存中…'));
+  const also = await syncPeers(peers, x => api('sv.save', { id: x.id, [k]: value }));
+  try {
+    await mut('sv.save', { id, [k]: value }, L('Saved', '已儲存') + also);
+    if (k === 'work_end' && value) for (const x of [sv].concat(peers)) await trackImage(x.id, true);
+  } catch (e) {}
 }
 async function manualPause(el, id, f) {
   const p = S.pauses.find(x => x.id === id), sv = S.svs.find(x => x.id === p.sv_id);
   if (el.value && !(await timeOk(sv, null, { id, [f]: el.value }))) { el.value = p[f] || ''; return; }
-  savePause(id, f, el.value);
+  const peers = peerPauses(p).filter(q => (q[f] || '') === (p[f] || ''));
+  if (!peers.length) return savePause(id, f, el.value);
+  showLoading(L('Saving…', '儲存中…'));
+  const also = await syncPeers(peers.map(q => ({ q, vessel_name: svName(q.sv_id) })), x => api('pause.save', { id: x.q.id, [f]: el.value }));
+  try { await mut('pause.save', { id, [f]: el.value }, L('Saved', '已儲存') + also); } catch (e) {}
 }
+// 同批次其他船的「同一次」暫停施工：開始時間相同（同步建立的暫停都用同一個時間）
+function peerPauses(p) { return S.pauses.filter(q => q.shift_id === p.shift_id && q.sv_id !== p.sv_id && q.start === p.start); }
+function svName(svId) { return (S.svs.find(x => x.id === svId) || {}).vessel_name || ''; }
 // 同批次的 MMO 船流程同步：按一艘船的流程按鈕，其他狀態相符的船以同一時間記錄同一步驟（軌跡隨預觀測開始自動記錄）；目擊、照片仍各船分開
 function peerSvs(svId, ok) { const sv = S.svs.find(x => x.id === svId); return S.svs.filter(x => x.shift_id === sv.shift_id && x.id !== svId && ok(x)); }
 function openPauseOf(svId) { return S.pauses.find(p => p.sv_id === svId && !p.end); }
@@ -2182,7 +2198,7 @@ function pauseModal(svId, id, resume) {
     <div class="alert blue" style="margin-top:12px;font-size:12px">${L('A pause longer than ' + settingsNum('repre_pause_min', 60) + ' min, or cetaceans entering the ' + settingsNum('alert_zone_m', 750) + ' m alert zone (after they leave), requires a new ' + settingsNum('pre_watch_min', 30) + '-min pre-watch before work resumes.',
       '暫停施工超過 ' + settingsNum('repre_pause_min', 60) + ' 分鐘，或鯨豚進入 ' + settingsNum('alert_zone_m', 750) + ' m 警戒區（離開後），須重新預觀測 ' + settingsNum('pre_watch_min', 30) + ' 分鐘才可回復施工。')}</div>`;
   const bg = openModal(resume ? L('Resume work', '回復施工') : (p ? L('Edit pause', '編輯暫停施工') : L('Pause work', '暫停施工')), body, {
-    foot: p ? `<button class="btn btn-danger w" style="margin-right:auto" onclick="delRec('pause.delete','${p.id}',this)">🗑 ${L('Delete', '刪除')}</button>` : '',
+    foot: p ? `<button class="btn btn-danger w" style="margin-right:auto" onclick="delPause('${p.id}',this)">🗑 ${L('Delete', '刪除')}</button>` : '',
     onSave: async (bg, btn) => {
       const sight = isSightReason(val(bg, 'pReason')), picked = sight ? val(bg, 'pSight') : '';
       const rec = { id: p ? p.id : '', sv_id: svId, start: val(bg, 'pStart'), end: val(bg, 'pEnd'), reason: val(bg, 'pReason'), sighting_id: !sight ? '' : (picked || (linked ? linked.id : '')), pre_start: val(bg, 'pPreS'), pre_end: val(bg, 'pPreE'), remark: val(bg, 'pRemark') };
@@ -2194,9 +2210,13 @@ function pauseModal(svId, id, resume) {
       }
       if (!(await timeOk(S.svs.find(x => x.id === svId), null, { id: rec.id, start: rec.start, end: rec.end, pre_start: rec.pre_start, pre_end: rec.pre_end }))) return false;
       let also = '';
-      if (!p) also = await syncPeers(peerSvs(svId, stIn('work')), x => api('pause.save', { sv_id: x.id, start: rec.start, end: rec.end, reason: rec.reason, pre_start: rec.pre_start, pre_end: rec.pre_end, remark: rec.remark }));
+      // 新增：施工中的船一起暫停；事後補登（已有回復時間）的，已開始實際觀測的船也一起補，同一開始時間已有暫停的就不重複
+      if (!p) also = await syncPeers(peerSvs(svId, x => !S.pauses.some(q => q.sv_id === x.id && q.start === rec.start) && (x.checks.status === 'work' || (!!rec.end && !!x.work_start))),
+        x => api('pause.save', { sv_id: x.id, start: rec.start, end: rec.end, reason: rec.reason, pre_start: rec.pre_start, pre_end: rec.pre_end, remark: rec.remark }));
       else if (resume && rec.end) also = await syncPeers(peerSvs(svId, x => openPauseOf(x.id)), x => { const o = openPauseOf(x.id);
         return api('pause.save', { id: o.id, end: rec.end, pre_start: o.pre_start || rec.pre_start, pre_end: o.pre_end || rec.pre_end }); });
+      // 編輯：同批次的同一次暫停一起改時間與原因（目擊各船分開）
+      else also = await syncPeers(peerPauses(p).map(q => ({ q, vessel_name: svName(q.sv_id) })), x => api('pause.save', { id: x.q.id, start: rec.start, end: rec.end, reason: rec.reason, pre_start: rec.pre_start, pre_end: rec.pre_end, remark: rec.remark }));
       await mut('pause.save', rec, L('Saved', '已儲存') + also, btn);
     } });
   const q = s => bg.querySelector(s);
@@ -2209,6 +2229,14 @@ function pauseModal(svId, id, resume) {
   if (q('#pSight')) q('#pSight').addEventListener('change', sync);
   if (!p) q('#pStart').addEventListener('change', () => { q('#sTime').value = q('#pStart').value; });
   sync();
+}
+async function delPause(id, btn) {
+  const peers = peerPauses(S.pauses.find(x => x.id === id));
+  if (!(await confirmBox(L('Delete this pause?', '確定刪除此暫停施工紀錄？') + (peers.length ? '<br>' + L('Also deletes: ', '同批次一併刪除：') + esc(peers.map(q => svName(q.sv_id)).join('、')) : ''), L('Delete', '刪除'), true))) return;
+  btn.closest('.modal-bg').remove();
+  showLoading(L('Saving…', '儲存中…'));
+  const also = await syncPeers(peers.map(q => ({ q, vessel_name: svName(q.sv_id) })), x => api('pause.delete', { id: x.q.id }));
+  mut('pause.delete', { id }, L('Deleted', '已刪除') + also).catch(() => {});
 }
 async function delRec(action, id, btn) {
   if (!(await confirmBox(L('Delete this record?', '確定刪除此紀錄？'), L('Delete', '刪除'), true))) return;

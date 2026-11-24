@@ -777,6 +777,8 @@ function checks_(sv, pauses, sightings, files, items, st, pos, svs) {
   const preMin = Number(st.pre_watch_min) || 30, alertM = Number(st.alert_zone_m) || 750;
   const ps = pauses.filter(p => p.sv_id === sv.id);
   const ss = sightings.filter(s => s.sv_id === sv.id);
+  // 同批次兩艘 MMO 船一起動作：任一船在警戒區的目擊，都算進整批次的預觀測／暫停規則（前端 preRedo／pauseState 同規則）
+  const bs = sightings.filter(s => s.shift_id === sv.shift_id);
   const openPause = ps.find(p => !p.end);
   let status = 'idle';
   if (sv.pre_start) status = 'pre';
@@ -813,7 +815,7 @@ function checks_(sv, pauses, sightings, files, items, st, pos, svs) {
     // 暫停施工超過門檻，或鯨豚進入警戒區（離開後）→ 回復施工前須重新預觀測
     if (!p.end || (sv.work_end && tms_(p.end) >= tms_(sv.work_end)) || p.restart === 'prewatch') return;
     const hh = p.start.slice(11, 16), end = tms_(p.end);
-    const zs = ss.filter(s => inZone(s) && (s.id === p.sighting_id || (tms_(s.time) <= end && (s.left_time ? tms_(s.left_time) > tms_(p.start) : tms_(s.time) >= tms_(p.start)))));
+    const zs = bs.filter(s => inZone(s) && (s.id === p.sighting_id || (tms_(s.time) <= end && (s.left_time ? tms_(s.left_time) > tms_(p.start) : tms_(s.time) >= tms_(p.start)))));
     if (!zs.length && mins_(p.start, p.end) <= repreMin) return;
     const last = zs.reduce((m, s) => Math.max(m, tms_(s.left_time || s.time)), 0);
     if (!p.pre_start || !p.pre_end) add('repre_missing', 'Resumed after the pause at ' + hh + ' without a new pre-watch', hh + ' 暫停施工後未重新預觀測即回復施工', p.id);
@@ -822,7 +824,7 @@ function checks_(sv, pauses, sightings, files, items, st, pos, svs) {
       hh + ' 暫停施工的重新預觀測僅 ' + mins_(p.pre_start, p.pre_end) + ' 分鐘（未滿 ' + preMin + ' 分）', p.id);
     else if (tms_(p.pre_end) > end) add('repre_order', 'Work resumed before the new pre-watch ended (pause at ' + hh + ')', hh + ' 暫停施工在重新預觀測結束前就回復施工', p.id);
   });
-  ss.forEach(s => {
+  bs.forEach(s => {
     if (!inZone(s)) return;
     const t = tms_(s.time), hh = s.time.slice(11, 16);
     // 實際觀測開始前的警戒區內目擊 → 鯨豚離開後須重新預觀測（預觀測開始要晚於離開時間）
