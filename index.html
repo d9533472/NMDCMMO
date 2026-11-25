@@ -3422,14 +3422,19 @@ function dprPrintHtml() {
       <tr><th class="c">船隻代表 Vessel representative</th><th class="c">安達希代表 NMDC Representative</th></tr></table>
   </div>`;
 }
-function dprPrint() {
+async function dprPrint() {
   const c = DPR.cur, t = document.title;
   $('dprPrint').innerHTML = dprPrintHtml();
+  // 等 logo 載入完才叫出列印視窗，不然第一次列印會是空白（最多等 5 秒）
+  showLoading(L('Preparing print…', '準備列印…'));
+  await Promise.race([Promise.all([...$('dprPrint').querySelectorAll('img')].map(i => i.complete && i.naturalWidth ? null : new Promise(r => { i.onload = i.onerror = r; }))),
+    new Promise(r => setTimeout(r, 5000))]);
+  hideLoading();
   document.body.classList.add('print-dpr');
   document.title = (c.date.replace(/-/g, '') + '_' + c.dpr_no).replace(/[\\/:*?"<>|]/g, '_');   // 另存 PDF 的預設檔名
   const done = () => { document.body.classList.remove('print-dpr'); document.title = t; window.removeEventListener('afterprint', done); };
   window.addEventListener('afterprint', done);
-  setTimeout(() => window.print(), 300);
+  setTimeout(() => window.print(), 100);
 }
 
 window.addEventListener('beforeunload', e => { if (DPR.dirty) { e.preventDefault(); e.returnValue = ''; } });
