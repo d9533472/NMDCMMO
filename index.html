@@ -3239,6 +3239,7 @@ function dprEditor() {
         <textarea class="dpr-in" data-p="hsse_remarks" rows="2" oninput="dprSet(this)" ${ro ? 'disabled' : ''}>${esc(d.hsse_remarks)}</textarea></div></div></div>
 
     <div class="section">${head(2, 'Personnel', '人員', ro ? '' : `<span class="small muted">POB ${pob}</span>
+        <button class="btn btn-sm" onclick="dprPrevCrew(this)">📋 ${L('Copy from previous DPR', '帶入前一天人員')}</button>
         <button class="btn btn-sm" onclick="dprObsImport()">👀 ${L('Add observers from batches', '從批次帶入觀察員')}</button>
         <button class="btn btn-green btn-sm" onclick="dprRow('personnel')">＋ ${L('Add row', '新增一列')}</button>`)}
       ${d.personnel.length ? `<div class="table-wrap"><table class="tbl dpr-tbl"><tr><th>#</th><th>名字 Name</th><th>角色 Function</th><th>公司 Company</th><th>工作 On (hr)</th><th>休息 Off (hr)</th><th>備註 Remarks</th>${ro ? '' : '<th></th>'}</tr>
@@ -3296,6 +3297,20 @@ async function dprActsImport() {
   if (!list.length) return toast(L('No batch observation on this date for this vessel', '這艘船這天沒有批次觀測紀錄'), 'error');
   if (c.d.acts.length && !(await confirmBox(L('Replace the activity rows with the batch times?', '用批次時間取代目前的工作紀錄？'), L('Replace', '取代'), true))) return;
   c.d.acts = list; DPR.dirty = true; dprEditor();
+}
+/** 人員表換成同船前一份 DPR 的人員（重新讀一次，前一份剛存的也抓得到） */
+async function dprPrevCrew(btn) {
+  const c = DPR.cur;
+  btn.disabled = true;
+  let r;
+  try { r = await api('dpr.get', { vessel_id: c.vessel_id, date: c.date }); } catch (e) { toast(e.message, 'error'); return; } finally { btn.disabled = false; }
+  const list = r.prev ? dprFix(json(r.prev.data, {})).personnel.filter(p => String(p.name || '').trim()) : [];
+  if (!list.length) return toast(L('No earlier DPR with personnel for this vessel', '這艘船之前的 DPR 沒有人員資料'), 'error');
+  if (c.d.personnel.some(p => String(p.name || '').trim()) &&
+    !(await confirmBox(L(`Replace the personnel list with the ${list.length} people from the DPR of ${r.prev.date}?`, `用 ${r.prev.date} 那份 DPR 的 ${list.length} 位人員取代目前的人員表？`), L('Replace', '取代'), true))) return;
+  c.d.personnel = list.map(p => Object.assign({}, p));
+  DPR.dirty = true; dprEditor();
+  toast(L(`Copied ${list.length} people from ${r.prev.date}`, `已帶入 ${r.prev.date} 的 ${list.length} 位人員`));
 }
 function dprObsImport() {
   const n = dprAddObservers(dprData(), DPR.cur.vessel_id, DPR.cur.date);
