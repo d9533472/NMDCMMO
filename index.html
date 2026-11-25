@@ -612,7 +612,7 @@ const ERR_ZH = {
   'Position API rejected the key (HTTP 401) — check the API key in Back office': '船位 API 拒絕此金鑰（401），請檢查後台的 API 金鑰',
   'Position API rejected the key (HTTP 403) — check the API key in Back office': '船位 API 拒絕此金鑰（403），請檢查方案或金鑰',
   'Vessel not found by the position API (HTTP 404) — check the MMSI': '船位 API 找不到這艘船（404），請檢查 MMSI',
-  'A DPR for this vessel and date already exists': '這艘船這天已經有 DPR', 'DPR is too long — shorten the remarks': 'DPR 內容太長，請縮短備註',
+  'A DPR for this vessel and date already exists': '這艘船這天已經有 DPR', 'This account can only report for its own vessel': '這個帳號只能填自己船的報告', 'DPR is too long — shorten the remarks': 'DPR 內容太長，請縮短備註',
   'Tick at least one item to clear': '請至少勾選一項要清空的資料', 'No reset request — send a new verification code': '沒有待確認的清空申請，請重新寄送驗證碼',
   'This code was requested by another administrator': '此驗證碼是由其他管理員申請的', 'Verification code expired — send a new one': '驗證碼已過期，請重新寄送',
   'Too many wrong codes — send a new one': '驗證碼錯誤次數過多，請重新寄送',
@@ -3011,6 +3011,8 @@ function dprNextNo(prev, v) {
   if (m) return m[1] + String(Number(m[2]) + 1).padStart(m[2].length, '0');
   return (S.settings.dpr_no_prefix || 'NMDC-HY') + '-' + dprShort(v) + '-001';
 }
+/** 這個帳號能填哪些船（帳號沒限定＝全部；管理員一律全部） */
+function dprMyVessel(id) { const ids = String(S.user.vessel_ids || '').split(',').filter(Boolean); return isAdmin() || !ids.length || ids.indexOf(id) >= 0; }
 function dprVessel(id) { return S.vessels.find(v => v.id === id) || { id, name: '' }; }
 function dprData() { return DPR.cur.d; }
 function dprFix(d) {
@@ -3097,13 +3099,13 @@ function renderDpr() {
   if (!DPR.month) DPR.month = today().slice(0, 7);
   const list = (S.dpr || []).filter(x => x.date.slice(0, 7) === DPR.month && (!DPR.vessel || x.vessel_id === DPR.vessel))
     .sort((a, b) => (b.date + a.vessel_name).localeCompare(a.date + b.vessel_name));
-  const vs = S.vessels.filter(v => bool(v.active) || (S.dpr || []).some(x => x.vessel_id === v.id));
+  const vs = S.vessels.filter(v => dprMyVessel(v.id) && (bool(v.active) || (S.dpr || []).some(x => x.vessel_id === v.id)));
   // 有批次但還沒有 DPR 的日子（MMO 船，到今天為止）
   const miss = [];
   S.svs.forEach(sv => {
     const s = shiftOf(sv.shift_id); if (!s || !sv.pre_start) return;
     const d = sv.pre_start.slice(0, 10);
-    if (d.slice(0, 7) !== DPR.month || d > today() || (DPR.vessel && sv.vessel_id !== DPR.vessel)) return;
+    if (d.slice(0, 7) !== DPR.month || d > today() || (DPR.vessel && sv.vessel_id !== DPR.vessel) || !dprMyVessel(sv.vessel_id)) return;
     if ((S.dpr || []).some(x => x.vessel_id === sv.vessel_id && x.date === d) || miss.some(m => m.vid === sv.vessel_id && m.d === d)) return;
     miss.push({ vid: sv.vessel_id, d, name: sv.vessel_name });
   });
@@ -3122,7 +3124,7 @@ function renderDpr() {
         : `<div class="empty">${L('No DPR this month', '這個月還沒有 DPR')}</div>`}</div>`;
 }
 function dprNewModal() {
-  const vs = S.vessels.filter(v => bool(v.active)).sort((a, b) => (a.kind === 'mmo' ? 0 : 1) - (b.kind === 'mmo' ? 0 : 1) || (Number(a.sort) || 999) - (Number(b.sort) || 999));
+  const vs = S.vessels.filter(v => bool(v.active) && dprMyVessel(v.id)).sort((a, b) => (a.kind === 'mmo' ? 0 : 1) - (b.kind === 'mmo' ? 0 : 1) || (Number(a.sort) || 999) - (Number(b.sort) || 999));
   openModal(L('New DPR', '新增 DPR'), `<div class="form-grid">
     <div class="fg"><label>${L('Vessel', '船舶')} *</label><select id="dnV">${opts(vs.map(v => ({ v: v.id, t: v.name })), DPR.vessel || (vs[0] || {}).id)}</select></div>
     <div class="fg"><label>${L('Date', '日期')} *</label><input id="dnD" type="date" value="${today()}" max="${today()}"></div>
@@ -4141,24 +4143,28 @@ function adminUsers() {
     ${(S.roles || []).map(r => `<tr class="click" onclick="roleModal('${r.id}')"><td><b>${esc(r.name)}</b></td><td>${permCell(r)}</td><td>${count(r.id)}</td></tr>`).join('')}</table></div></div>
     <div class="section"><div class="section-header"><h3>${L('Accounts', '帳號')}</h3><button class="btn btn-green btn-sm" onclick="userModal()">＋ ${L('Add account', '新增帳號')}</button></div>
     <div class="table-wrap"><table class="tbl"><tr><th>${L('Username', '帳號')}</th><th>${L('Name', '姓名')}</th><th>Email</th><th>${L('Role', '角色')}</th><th>${L('Last login', '最後登入')}</th><th>${L('Status', '狀態')}</th></tr>
-    ${(S.users || []).map(u => `<tr class="click" onclick="userModal('${u.id}')"><td class="mono">${esc(u.username)}</td><td>${esc(u.name)}</td><td>${esc(u.email)}</td><td>${esc(roleName(u.role))}</td><td class="mono">${fmtT(u.last_login, true)}</td><td>${yes(u.active)}</td></tr>`).join('')}</table></div></div>`;
+    ${(S.users || []).map(u => `<tr class="click" onclick="userModal('${u.id}')"><td class="mono">${esc(u.username)}</td><td>${esc(u.name)}</td><td>${esc(u.email)}</td><td>${esc(roleName(u.role))}${u.vessel_ids ? `<div class="small muted">🚢 ${esc(u.vessel_ids.split(',').map(id => (S.vessels.find(v => v.id === id) || {}).name || id).join('、'))}</div>` : ''}</td><td class="mono">${fmtT(u.last_login, true)}</td><td>${yes(u.active)}</td></tr>`).join('')}</table></div></div>`;
 }
 function userModal(id) {
   const u = id ? S.users.find(x => x.id === id) : { role: ((S.roles || [])[0] || { id: 'admin' }).id, active: true };
   const roleOpts = [{ v: 'admin', t: roleName('admin') }].concat((S.roles || []).map(r => ({ v: r.id, t: r.name })));
   if (u.role && !roleOpts.some(o => o.v === u.role)) roleOpts.push({ v: u.role, t: u.role });
+  const vids = String(u.vessel_ids || '').split(',').filter(Boolean);
   openModal(id ? L('Edit account', '編輯帳號') : L('Add account', '新增帳號'), `<div class="form-grid">
     <div class="fg"><label>${L('Username', '帳號')} *</label><input id="uUser" value="${esc(u.username)}"></div>
     <div class="fg"><label>${L('Name', '姓名')}</label><input id="uName" value="${esc(u.name)}"></div>
     <div class="fg"><label>Email</label><input id="uEmail" type="email" value="${esc(u.email)}"></div>
     <div class="fg"><label>${L('Role', '角色')}</label><select id="uRole">${opts(roleOpts, u.role)}</select></div>
     <div class="fg"><label>${id ? L('Reset password (blank = keep)', '重設密碼（空白＝不變）') : L('Temporary password *', '臨時密碼 *')}</label><input id="uPass" type="text" autocomplete="off"></div>
-    <div class="fg"><label>&nbsp;</label><label class="chk"><input type="checkbox" id="uAct" ${u.active === true || bool(u.active) ? 'checked' : ''}> ${L('Active', '啟用')}</label></div></div>
+    <div class="fg"><label>&nbsp;</label><label class="chk"><input type="checkbox" id="uAct" ${u.active === true || bool(u.active) ? 'checked' : ''}> ${L('Active', '啟用')}</label></div>
+    <div class="fg full"><label>${L('Daily reports (DPR) limited to vessel(s) — none ticked = all vessels', '每日報告 DPR 限定船舶（都不勾＝全部船）')}</label>
+      <div class="chk-list">${S.vessels.filter(v => bool(v.active) || vids.indexOf(v.id) >= 0).map(v => `<label class="chk"><input type="checkbox" class="u_vid" value="${v.id}" ${vids.indexOf(v.id) >= 0 ? 'checked' : ''}> ${esc(v.name)}</label>`).join('')}</div>
+      <span class="small muted">${L('For crew accounts: give them the role “船員（只填每日報告）” and tick their vessel — they will only see and fill that vessel’s DPR.', '船員帳號：角色選「船員（只填每日報告）」並勾選所屬船舶，登入後只看得到、只能填自己船的 DPR。')}</span></div></div>
     <div class="small muted" style="margin-top:10px">${L('The user must change the temporary password at first sign-in.', '使用者首次登入時須更改臨時密碼。')}</div>`, {
     perm: 'admin',
     foot: id && id !== S.user.id ? `<button class="btn btn-danger" style="margin-right:auto" onclick="delMaster('user.delete','${id}',this)">🗑</button>` : '',
     onSave: async (bg, btn) => mut('user.save', { id: id || '', username: val(bg, 'uUser'), name: val(bg, 'uName'), email: val(bg, 'uEmail'), role: val(bg, 'uRole'),
-      password: val(bg, 'uPass'), active: val(bg, 'uAct') }, L('Saved', '已儲存'), btn) });
+      password: val(bg, 'uPass'), active: val(bg, 'uAct'), vessel_ids: [...bg.querySelectorAll('.u_vid')].filter(c => c.checked).map(c => c.value) }, L('Saved', '已儲存'), btn) });
 }
 function roleModal(id) {
   const r = id ? S.roles.find(x => x.id === id) : { name: '', perms: ['dashboard', 'shifts', 'sightings', 'summary', 'tracks'] };

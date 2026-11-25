@@ -16,7 +16,7 @@ const SS_NAME = 'MMO 鯨豚觀察總表';
 const TZ = 'Asia/Taipei';
 
 const SCHEMAS = {
-  Users: ['id','username','name','email','role','password_salt','password_hash','active','must_change','last_login','created_at','updated_at'],
+  Users: ['id','username','name','email','role','password_salt','password_hash','active','must_change','last_login','created_at','updated_at','vessel_ids'],
   Sessions: ['token','user_id','expires_at','created_at'],
   Settings: ['key','value'],
   Vessels: ['id','name','kind','mmsi','imo','type','operator','remark','active','sort','created_at','updated_at',
@@ -106,7 +106,8 @@ const ITEM_SEED = [
 const PERMS = ['dashboard', 'shifts', 'sightings', 'summary', 'tracks', 'shift.edit', 'shift.manage', 'dpr', 'dpr.edit', 'env', 'env.edit', 'master', 'settings', 'audit'];
 const ROLE_SEED = [
   { id: 'mmo', name: 'MMO 填報人員', perms: ['dashboard', 'shifts', 'sightings', 'summary', 'tracks', 'shift.edit', 'dpr', 'dpr.edit'] },
-  { id: 'viewer', name: '訪客（唯讀）', perms: ['dashboard', 'shifts', 'sightings', 'summary', 'tracks', 'dpr'] }
+  { id: 'viewer', name: '訪客（唯讀）', perms: ['dashboard', 'shifts', 'sightings', 'summary', 'tracks', 'dpr'] },
+  { id: 'crew', name: '船員（只填每日報告）', perms: ['dpr', 'dpr.edit'] }
 ];
 // 動作 → 需要的功能；沒列的動作登入就能用（讀取、登出、改密碼）
 const ACTION_PERM = {
@@ -240,9 +241,9 @@ const ROUTES = {
   'env.file': (u, p) => envFile_(p.id),
   'env.incident.save': (u, p) => envIncidentSave_(u, p),
   'env.incident.delete': (u, p) => withLock_(() => ({ id: p.id, ok: Repo.remove('EnvIncidents', p.id) })),
-  'dpr.get': (u, p) => dprGet_(p),
+  'dpr.get': (u, p) => dprGet_(u, p),
   'dpr.save': (u, p) => dprSave_(u, p),
-  'dpr.delete': (u, p) => withLock_(() => ({ id: p.id, ok: Repo.remove('DPR', p.id) })),
+  'dpr.delete': (u, p) => withLock_(() => { const r = Repo.get('DPR', p.id); if (r) dprCheck_(u, r.vessel_id); return { id: p.id, ok: Repo.remove('DPR', p.id) }; }),
   'summary.rebuild': (u) => { rebuildSummary_(); return { url: ss_().getUrl() }; }
 };
 
@@ -409,6 +410,11 @@ function ensureSchema_() {
         const nx = ps.concat(add[r.id].filter(x => ps.indexOf(x) < 0));
         if (nx.length !== ps.length) Repo.update('Roles', r.id, { perms: nx.join(','), updated_at: nowIso_() });
       });
+      // 已自訂過角色（Roles 表有資料）的，補上「船員（只填每日報告）」
+      const rs = Repo.all('Roles');
+      if (rs.length && !rs.some(r => r.id === 'crew')) {
+        Repo.insert('Roles', { id: 'crew', name: '船員（只填每日報告）', perms: 'dpr,dpr.edit', sort: String(rs.reduce((m, r) => Math.max(m, Number(r.sort) || 0), 0) + 1), updated_at: nowIso_() });
+      }
       props.setProperty('v190_dpr', '1');
       bumpRev_();
     }
@@ -549,7 +555,7 @@ function hash_(password, salt) {
 }
 function publicUser_(u) {
   return { id: u.id, username: u.username, name: u.name, email: u.email, role: u.role, active: bool_(u.active),
-    must_change: u.role !== 'viewer' && bool_(u.must_change), last_login: u.last_login };
+    must_change: u.role !== 'viewer' && bool_(u.must_change), last_login: u.last_login, vessel_ids: str_(u.vessel_ids) };
 }
 function checkPassword_(pw) { if (str_(pw).length < 6) fail_('Password must be at least 6 characters', 'WEAK_PASSWORD'); }
 function newSession_(user) {
@@ -625,7 +631,8 @@ function saveUser_(u, p) {
     const role = str_(p.role);
     if (role !== 'admin' && !roles_().some(r => r.id === role)) fail_('Unknown role');
     if (Repo.all('Users').find(x => str_(x.username).toLowerCase() === username && x.id !== p.id)) fail_('Username already exists');
-    const patch = { username: username, name: str_(p.name), email: str_(p.email), role: role, active: bool_(p.active) ? 'TRUE' : 'FALSE', updated_at: nowIso_() };
+    const vids = (Array.isArray(p.vessel_ids) ? p.vessel_ids : str_(p.vessel_ids).split(',')).map(str_).filter(id => id && Repo.get('Vessels', id));
+    const patch = { username: username, name: str_(p.name), email: str_(p.email), role: role, active: bool_(p.active) ? 'TRUE' : 'FALSE', vessel_ids: vids.join(','), updated_at: nowIso_() };
     if (p.id) {
       if (p.id === u.id && (role !== 'admin' || patch.active !== 'TRUE')) fail_('You cannot demote or disable your own account');
       if (p.password) {
@@ -719,7 +726,7 @@ function loadData_(u) {
   out.roles = roles_();
   out.posTick = PropertiesService.getScriptProperties().getProperty('pos_tick') || '';
   if (u.role === 'admin') out.users = Repo.all('Users').map(publicUser_);
-  if (can_(u, 'dpr')) out.dpr = Repo.all('DPR').map(r => { const c = Object.assign({}, r); delete c.data; return c; });
+  if (can_(u, 'dpr')) out.dpr = Repo.all('DPR').filter(r => dprVesselOk_(u, r.vessel_id)).map(r => { const c = Object.assign({}, r); delete c.data; return c; });
   if (can_(u, 'env')) out.env = { daily: Repo.all('EnvDaily'), waste: Repo.all('EnvWaste'), incidents: Repo.all('EnvIncidents') };
   return out;
 }
@@ -1618,10 +1625,18 @@ function writeTable_(name, head, rows, pos) {
 
 // ============ 每日報告 DPR（Daily Progress Report，一船一天一筆） ============
 /** 讀一份 DPR：{id} 或 {vessel_id, date}；一併回傳同船前一份（帶入人員、起始油水量、編號）與當天環保每日填報 */
-function dprGet_(p) {
+/** 帳號可以限定船舶（Users.vessel_ids，逗號分隔；空白＝全部船），只能看／填自己船的 DPR */
+function dprVesselOk_(u, vid) {
+  if (!u || u.role === 'admin') return true;
+  const ids = str_(u.vessel_ids).split(',').filter(Boolean);
+  return !ids.length || ids.indexOf(vid) >= 0;
+}
+function dprCheck_(u, vid) { if (!dprVesselOk_(u, vid)) fail_('This account can only report for its own vessel', 'FORBIDDEN'); }
+function dprGet_(u, p) {
   const all = Repo.all('DPR');
   const rec = p.id ? all.find(x => x.id === p.id) : all.find(x => x.vessel_id === p.vessel_id && x.date === p.date);
   const vid = rec ? rec.vessel_id : str_(p.vessel_id), date = rec ? rec.date : str_(p.date);
+  dprCheck_(u, vid);
   const prev = all.filter(x => x.vessel_id === vid && x.date < date).sort((a, b) => a.date < b.date ? 1 : -1)[0] || null;
   const env = Repo.all('EnvDaily').find(x => x.vessel_id === vid && x.date === date) || null;
   return { rec: rec || null, prev: prev, env: env };
@@ -1629,11 +1644,14 @@ function dprGet_(p) {
 /** 存 DPR；同船同日只能一份。有填用油／用水量時同步到環保每日填報（只更新有值的欄位，備註不動） */
 function dprSave_(u, p) {
   const v = envVessel_(p.vessel_id), date = envDate_(p.date);
+  dprCheck_(u, v.id);
   const data = typeof p.data === 'string' ? p.data : JSON.stringify(p.data || {});
   if (data.length > 45000) fail_('DPR is too long — shorten the remarks');
   return withLock_(() => {
     const all = Repo.all('DPR');
     if (all.some(x => x.vessel_id === v.id && x.date === date && x.id !== p.id)) fail_('A DPR for this vessel and date already exists');
+    const old = p.id ? all.find(x => x.id === p.id) : null;
+    if (old) dprCheck_(u, old.vessel_id);
     const rec = { vessel_id: v.id, vessel_name: v.name, date: date, dpr_no: str_(p.dpr_no), status: p.status === 'done' ? 'done' : 'draft', data: data,
       updated_by: u.username, updated_at: nowIso_() };
     let out;
