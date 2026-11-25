@@ -526,6 +526,7 @@ const PERM_LABELS = [
   ['shift.edit', 'Batch data entry (create, record, upload, close)', '批次填報（新增、觀測紀錄、上傳、結案）'],
   ['shift.manage', 'Reopen / delete / edit closed batches', '重新開啟／刪除／修改已結案批次'],
   ['dpr', 'Daily progress report (view)', '每日報告 DPR（檢視）'], ['dpr.edit', 'Daily progress report entry', '每日報告 DPR 填報'],
+  ['dpr.manage', 'Edit / delete completed DPRs', '修改／刪除已完成的 DPR'],
   ['env', 'Environment (view)', '環保統計（檢視）'], ['env.edit', 'Environment data entry', '環保填報（每日、廢棄物、環境事件）'],
   ['master', 'Back office: vessels, observers, upload items', '後台：船舶、觀察員、上傳項目'],
   ['settings', 'Back office: rules & lists', '後台：規則與清單'], ['audit', 'Back office: activity log', '後台：操作紀錄']
@@ -612,7 +613,7 @@ const ERR_ZH = {
   'Position API rejected the key (HTTP 401) — check the API key in Back office': '船位 API 拒絕此金鑰（401），請檢查後台的 API 金鑰',
   'Position API rejected the key (HTTP 403) — check the API key in Back office': '船位 API 拒絕此金鑰（403），請檢查方案或金鑰',
   'Vessel not found by the position API (HTTP 404) — check the MMSI': '船位 API 找不到這艘船（404），請檢查 MMSI',
-  'A DPR for this vessel and date already exists': '這艘船這天已經有 DPR', 'This account can only report for its own vessel': '這個帳號只能填自己船的報告', 'DPR is too long — shorten the remarks': 'DPR 內容太長，請縮短備註',
+  'A DPR for this vessel and date already exists': '這艘船這天已經有 DPR', 'This DPR is completed and locked': '這份 DPR 已完成並鎖定，請通知管理員或 NMDC 環保人員協助修改', 'This account can only report for its own vessel': '這個帳號只能填自己船的報告', 'DPR is too long — shorten the remarks': 'DPR 內容太長，請縮短備註',
   'Tick at least one item to clear': '請至少勾選一項要清空的資料', 'No reset request — send a new verification code': '沒有待確認的清空申請，請重新寄送驗證碼',
   'This code was requested by another administrator': '此驗證碼是由其他管理員申請的', 'Verification code expired — send a new one': '驗證碼已過期，請重新寄送',
   'Too many wrong codes — send a new one': '驗證碼錯誤次數過多，請重新寄送',
@@ -3155,7 +3156,10 @@ async function dprBack() {
 }
 
 // ---- 編輯頁 ----
-function dprRO() { return !can('dpr.edit'); }
+/** 唯讀：沒有填報權限，或這份已完成而且沒有「修改已完成的 DPR」權限 */
+function dprLocked() { return !!(DPR.cur && DPR.cur.id && DPR.cur.status === 'done' && !can('dpr.manage')); }
+function dprRO() { return !can('dpr.edit') || dprLocked(); }
+function dprManagerNames() { return (S.dprManagers || []).map(m => m.name).join('、') || L('an administrator', '管理員'); }
 /** 依路徑讀寫 DPR.cur.d，例如 inc.fatal、personnel.2.name、wx.w10.3 */
 function dprGet(path) { return path.split('.').reduce((o, k) => (o === undefined || o === null ? undefined : o[k]), dprData()); }
 function dprSet(el) {
@@ -3217,9 +3221,11 @@ function dprEditor() {
         ${c.id ? '' : `<span class="tag red">${L('Not saved yet', '尚未儲存')}</span>`}</b>
       <button class="btn btn-sm" onclick="dprPrint()">🖨 ${L('Print / PDF', '列印／PDF')}</button>
       ${ro ? '' : `${c.id ? `<button class="btn btn-danger btn-sm" onclick="dprDelete(this)">🗑</button>` : ''}
-        <button class="btn btn-sm" onclick="dprSave(this,'draft')">💾 ${L('Save draft', '存草稿')}</button>
+        <button class="btn btn-sm" onclick="dprSave(this,'draft')">${c.status === 'done' && c.id ? '↩ ' + L('Reopen as draft', '改回草稿') : '💾 ' + L('Save draft', '存草稿')}</button>
         <button class="btn btn-primary btn-sm" onclick="dprSave(this,'done')">✅ ${L('Save as completed', '完成並儲存')}</button>`}
     </div>
+    ${dprLocked() && can('dpr.edit') ? `<div class="alert amber">🔒 ${L('This DPR is completed and can no longer be edited. If something needs to change, please contact ', '這份 DPR 已完成，不能再修改。如需修改，請通知')} <b>${esc(dprManagerNames())}</b> ${L('(administrator / NMDC environmental staff) to update it.', '（管理員／NMDC 環保人員）協助更新。')}</div>`
+      : c.status === 'done' && c.id && can('dpr.manage') ? `<div class="alert blue">🔓 ${L('Completed DPR — you can still edit it because you have the “Edit completed DPRs” permission.', '已完成的 DPR：你有「修改已完成的 DPR」權限，仍可修改。')}</div>` : ''}
     <div class="section"><div class="section-body"><div class="form-grid dpr-head">
       <div class="fg"><label>專案 Project</label><div>${esc(st.dpr_project)}</div></div>
       <div class="fg"><label>日報編號 DPR No.</label><input class="mono" value="${esc(c.dpr_no)}" oninput="DPR.cur.dpr_no=this.value;DPR.dirty=true" ${ro ? 'disabled' : ''}></div>
@@ -3362,7 +3368,8 @@ async function dprSave(btn, status) {
     const t = dprActsTotal(), warn = [];
     if (t !== 1440) warn.push(L(`Daily activities add up to ${dprHm(t)}, not 24:00.`, `本日工作合計 ${dprHm(t)}，不是 24:00。`));
     if (!d.personnel.some(p => String(p.name || '').trim())) warn.push(L('No personnel listed.', '沒有填人員。'));
-    if (warn.length && !(await confirmBox(warn.join('<br>') + '<br>' + L('Mark as completed anyway?', '仍要標記為已完成？'), L('Complete', '完成')))) return;
+    if (!can('dpr.manage')) warn.push(L('After completion the DPR is locked — only an administrator or NMDC environmental staff can change it.', '完成後這份 DPR 會鎖定，只有管理員或 NMDC 環保人員能修改。'));
+    if (warn.length && !(await confirmBox(warn.join('<br>') + '<br>' + L('Mark as completed?', '確定標記為已完成？'), L('Complete', '完成')))) return;
   }
   const pob = d.personnel.filter(p => String(p.name || '').trim()).length;
   const env = envOn(v) ? { fuel_used_m3: d.cons.fuel.used || '', water_used_m3: d.cons.water.used || '', pob: pob ? String(pob) : '' } : {};

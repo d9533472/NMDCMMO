@@ -10,7 +10,7 @@
 // 角色：admin（全部，固定）＋後台自訂角色（Roles 表，勾選 PERMS 裡的功能）；預設 mmo（填報批次）、viewer（唯讀共用帳號）
 // ============================================================
 
-const VERSION = '1.9.0';
+const VERSION = '1.9.4';
 const ROOT_FOLDER_ID = '1uVkbv4tndRVERhrHmHUzaTvPlHaFV4em';
 const SS_NAME = 'MMO 鯨豚觀察總表';
 const TZ = 'Asia/Taipei';
@@ -103,7 +103,7 @@ const ITEM_SEED = [
 ];
 
 // 可勾選的功能（前端 PERM_LABELS 要同步）；admin 角色固定擁有全部，帳號／角色／清空資料只有 admin
-const PERMS = ['dashboard', 'shifts', 'sightings', 'summary', 'tracks', 'shift.edit', 'shift.manage', 'dpr', 'dpr.edit', 'env', 'env.edit', 'master', 'settings', 'audit'];
+const PERMS = ['dashboard', 'shifts', 'sightings', 'summary', 'tracks', 'shift.edit', 'shift.manage', 'dpr', 'dpr.edit', 'dpr.manage', 'env', 'env.edit', 'master', 'settings', 'audit'];
 const ROLE_SEED = [
   { id: 'mmo', name: 'MMO 填報人員', perms: ['dashboard', 'shifts', 'sightings', 'summary', 'tracks', 'shift.edit', 'dpr', 'dpr.edit'] },
   { id: 'viewer', name: '訪客（唯讀）', perms: ['dashboard', 'shifts', 'sightings', 'summary', 'tracks', 'dpr'] },
@@ -243,7 +243,7 @@ const ROUTES = {
   'env.incident.delete': (u, p) => withLock_(() => ({ id: p.id, ok: Repo.remove('EnvIncidents', p.id) })),
   'dpr.get': (u, p) => dprGet_(u, p),
   'dpr.save': (u, p) => dprSave_(u, p),
-  'dpr.delete': (u, p) => withLock_(() => { const r = Repo.get('DPR', p.id); if (r) dprCheck_(u, r.vessel_id); return { id: p.id, ok: Repo.remove('DPR', p.id) }; }),
+  'dpr.delete': (u, p) => withLock_(() => { const r = Repo.get('DPR', p.id); if (r) { dprCheck_(u, r.vessel_id); dprDoneCheck_(u, r); } return { id: p.id, ok: Repo.remove('DPR', p.id) }; }),
   'summary.rebuild': (u) => { rebuildSummary_(); return { url: ss_().getUrl() }; }
 };
 
@@ -402,6 +402,15 @@ function ensureSchema_() {
       bumpRev_();
     }
     // v1.9.0：新增每日報告 DPR；預設角色 MMO 填報人員可填、訪客可看（後台改過角色的只補不刪）
+    // v1.9.4：已完成的 DPR 只有「修改已完成的 DPR」權限能改；名稱含「環保人員」的角色自動加上（之後可在後台取消）
+    if (!props.getProperty('v194_dpr_manage')) {
+      Repo.all('Roles').forEach(r => {
+        const ps = String(r.perms).split(',').map(x => x.trim()).filter(Boolean);
+        if (/環保人員/.test(r.name) && ps.indexOf('dpr.manage') < 0) Repo.update('Roles', r.id, { perms: ps.concat(['dpr', 'dpr.edit', 'dpr.manage'].filter(x => ps.indexOf(x) < 0)).join(','), updated_at: nowIso_() });
+      });
+      props.setProperty('v194_dpr_manage', '1');
+      bumpRev_();
+    }
     if (!props.getProperty('v190_dpr')) {
       const add = { mmo: ['dpr', 'dpr.edit'], viewer: ['dpr'] };
       Repo.all('Roles').forEach(r => {
@@ -726,6 +735,8 @@ function loadData_(u) {
   out.roles = roles_();
   out.posTick = PropertiesService.getScriptProperties().getProperty('pos_tick') || '';
   if (u.role === 'admin') out.users = Repo.all('Users').map(publicUser_);
+  // 能修改已完成 DPR 的人（只給姓名，鎖定時提示要找誰）
+  if (can_(u, 'dpr')) out.dprManagers = Repo.all('Users').filter(x => bool_(x.active) && (x.role === 'admin' || can_(x, 'dpr.manage'))).map(x => ({ name: x.name || x.username, role: x.role }));
   if (can_(u, 'dpr')) out.dpr = Repo.all('DPR').filter(r => dprVesselOk_(u, r.vessel_id)).map(r => { const c = Object.assign({}, r); delete c.data; return c; });
   if (can_(u, 'env')) out.env = { daily: Repo.all('EnvDaily'), waste: Repo.all('EnvWaste'), incidents: Repo.all('EnvIncidents') };
   return out;
@@ -1631,6 +1642,8 @@ function dprVesselOk_(u, vid) {
   const ids = str_(u.vessel_ids).split(',').filter(Boolean);
   return !ids.length || ids.indexOf(vid) >= 0;
 }
+/** 已完成的 DPR 鎖定：只有管理員與有「修改已完成的 DPR」權限的人能改或刪 */
+function dprDoneCheck_(u, rec) { if (rec.status === 'done' && !can_(u, 'dpr.manage')) fail_('This DPR is completed and locked', 'FORBIDDEN'); }
 function dprCheck_(u, vid) { if (!dprVesselOk_(u, vid)) fail_('This account can only report for its own vessel', 'FORBIDDEN'); }
 function dprGet_(u, p) {
   const all = Repo.all('DPR');
@@ -1651,7 +1664,7 @@ function dprSave_(u, p) {
     const all = Repo.all('DPR');
     if (all.some(x => x.vessel_id === v.id && x.date === date && x.id !== p.id)) fail_('A DPR for this vessel and date already exists');
     const old = p.id ? all.find(x => x.id === p.id) : null;
-    if (old) dprCheck_(u, old.vessel_id);
+    if (old) { dprCheck_(u, old.vessel_id); dprDoneCheck_(u, old); }
     const rec = { vessel_id: v.id, vessel_name: v.name, date: date, dpr_no: str_(p.dpr_no), status: p.status === 'done' ? 'done' : 'draft', data: data,
       updated_by: u.username, updated_at: nowIso_() };
     let out;
