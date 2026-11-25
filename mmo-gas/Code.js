@@ -10,7 +10,7 @@
 // 角色：admin（全部，固定）＋後台自訂角色（Roles 表，勾選 PERMS 裡的功能）；預設 mmo（填報批次）、viewer（唯讀共用帳號）
 // ============================================================
 
-const VERSION = '1.8.9';
+const VERSION = '1.8.16';
 const ROOT_FOLDER_ID = '1uVkbv4tndRVERhrHmHUzaTvPlHaFV4em';
 const SS_NAME = 'MMO 鯨豚觀察總表';
 const TZ = 'Asia/Taipei';
@@ -77,15 +77,16 @@ const DEFAULT_SETTINGS = {
 };
 const SECRET_SETTINGS = { ais_api_key: 1 };
 
+const MMO_PHOTO_NOTE = '日間：提供觀察員望遠鏡目視照片\n夜間：提供熱顯像儀觀測照片';
 const ITEM_SEED = [
   ['doc', 'MMO 自檢表', 'MMO self-check form', 'always'],
   ['doc', 'PAM 自檢表', 'PAM self-check form', 'always'],
-  ['doc', 'PAM 偵測紀錄表', 'PAM detection record', 'always'],
+  ['doc', 'PAM 偵測紀錄表', 'PAM detection record', 'sighting'],
   ['doc', '工具箱紀錄', 'Toolbox talk record', 'always'],
   ['doc', '目擊紀錄表', 'Sighting record', 'sighting'],
   ['doc', '作業紀錄表', 'Operation log', 'always'],
   ['doc', '施工紀錄表', 'Construction log', 'always'],
-  ['photo', '鯨豚觀察員監測照片', 'MMO monitoring photos', 'always'],
+  ['photo', '鯨豚觀察員監測照片', 'MMO monitoring photos', 'always', MMO_PHOTO_NOTE],
   ['photo', '被動聲學監測照片', 'PAM monitoring photos', 'always'],
   ['photo', 'AIS 照片', 'AIS photos', 'always']
 ];
@@ -360,7 +361,7 @@ function ensureSchema_() {
     Repo.flush();
     if (!Repo.all('UploadItems').length) {
       Repo.insertMany('UploadItems', ITEM_SEED.map((c, i) => ({ id: genId_(), kind: c[0], name_zh: c[1], name_en: c[2], required: 'TRUE',
-        cond: c[3], active: 'TRUE', sort: String(i + 1), note: '' })));
+        cond: c[3], active: 'TRUE', sort: String(i + 1), note: c[4] || '' })));
     }
     const st = Repo.all('Settings');
     Object.keys(DEFAULT_SETTINGS).forEach(k => { if (!st.find(s => s.key === k)) Repo.insert('Settings', { key: k, value: DEFAULT_SETTINGS[k] }); });
@@ -382,6 +383,15 @@ function ensureSchema_() {
         });
       }
       props.setProperty('v15_crew', '1');
+      bumpRev_();
+    }
+    // v1.8.16：PAM 偵測紀錄表改成有目擊才要傳；鯨豚觀察員監測照片加日夜間說明（後台改過的不動）
+    if (!props.getProperty('v1816_items')) {
+      Repo.all('UploadItems').forEach(i => {
+        if (i.name_zh === 'PAM 偵測紀錄表' && i.cond === 'always') Repo.update('UploadItems', i.id, { cond: 'sighting' });
+        if (i.name_zh === '鯨豚觀察員監測照片' && !i.note) Repo.update('UploadItems', i.id, { note: MMO_PHOTO_NOTE });
+      });
+      props.setProperty('v1816_items', '1');
       bumpRev_();
     }
     // v1.6.3：用油改用 m³；v1.6 存的公升欄位換算後清空（舊欄位留在表上不再使用）
@@ -1164,11 +1174,11 @@ function uploadFile_(u, p) {
   const out = Object.assign({}, rec); delete out.thumb;
   return out;
 }
-/** 軌跡圖存在批次層的「軌跡」資料夾；同一艘 MMO 船重新產生時蓋掉舊圖 */
+/** 軌跡圖存在批次層的「軌跡」資料夾，整批次一張；重新產生時蓋掉這批次所有舊圖（含 v1.8.16 前每船一張的） */
 function saveTrackImage_(u, shift, sv, bytes, file) {
-  const name = safeName_(file.name || sv.vessel_name + '_軌跡.png');
+  const name = safeName_(file.name || shift.date + '_批次' + shift.shift_no + '_軌跡.png');
   return withLock_(() => {
-    Repo.all('Files').filter(f => f.sv_id === sv.id && f.kind === 'track').forEach(f => {
+    Repo.all('Files').filter(f => f.shift_id === shift.id && f.kind === 'track').forEach(f => {
       try { DriveApp.getFileById(f.drive_id).setTrashed(true); } catch (e) {}
       Repo.remove('Files', f.id);
     });

@@ -2044,7 +2044,7 @@ async function manualSv(el, id, k, value) {
   const also = await syncPeers(peers, x => api('sv.save', { id: x.id, [k]: value }));
   try {
     await mut('sv.save', { id, [k]: value }, L('Saved', '已儲存') + also);
-    if (k === 'work_end' && value) for (const x of [sv].concat(peers)) await trackImage(x.id, true);
+    if (k === 'work_end' && value) await trackImage(id, true);
   } catch (e) {}
 }
 async function manualPause(el, id, f, value) {
@@ -2135,7 +2135,7 @@ async function doNext(svId, k) {
     if (k === 'work_end') await endPause(svId);
     await mut('sv.save', patch, { pre_start: L('Pre-watch started', '預觀測開始'), pre_end: L('Pre-watch ended', '預觀測結束'), work_start: L('Observation started', '開始實際觀測'), work_end: L('Observation ended', '實際觀測結束') }[k] + also);
     if (k === 'pre_start') [sv].concat(peers).forEach(x => { if (!x.weather) fetchWeather(x.id, true); });
-    if (k === 'work_end') for (const x of [sv].concat(peers)) await trackImage(x.id, true);
+    if (k === 'work_end') await trackImage(svId, true);
   } catch (e) { hideLoading(); }
 }
 async function closeShift(id) {
@@ -2410,7 +2410,8 @@ function uploadGrid(sv, ed) {
     const cond = i.cond === 'sighting' ? L('if sighting', '有目擊時') : i.cond === 'pause' ? L('if paused', '有暫停施工時') : '';
     const nm = LANG === 'zh' ? i.name_zh : (i.name_en || i.name_zh);
     return `<div class="item ${fs.length ? 'ok' : (needed ? 'miss' : '')}">
-        <div class="item-h"><div><b>${esc(nm)}</b><div class="small muted">${needed ? L('Required', '必傳') : (bool(i.required) ? L('Not needed', '免傳') : L('Optional', '選填'))}${cond ? ' · ' + cond : ''}</div></div>
+        <div class="item-h"><div><b>${esc(nm)}</b><div class="small muted">${needed ? L('Required', '必傳') : (bool(i.required) ? L('Not needed', '免傳') : L('Optional', '選填'))}${cond ? ' · ' + cond : ''}${kind === 'photo' ? ' · ' + L('multiple allowed', '可多張') : ''}</div>
+          ${i.note ? `<div class="small" style="margin-top:2px;white-space:pre-line">${esc(i.note)}</div>` : ''}</div>
           ${fs.length ? `<span class="tag green">✓ ${fs.length}</span>` : (needed ? `<span class="tag amber">${L('Missing', '缺')}</span>` : '')}</div>
         ${kind === 'photo' ? `<div class="thumbs">${fs.map(f => `<div class="thumb" onclick="viewFile('${f.id}')" title="${esc(f.name)}">${THUMBS[f.id] ? `<img src="${THUMBS[f.id]}">` : '📷'}
             ${ed ? `<button class="x w" onclick="event.stopPropagation();delFile('${f.id}')">×</button>` : ''}</div>`).join('')}</div>`
@@ -2422,7 +2423,7 @@ function uploadGrid(sv, ed) {
   const head = (ico, title) => `<h4 style="font-size:13px;color:var(--muted);margin:4px 0 10px">${ico} ${title}</h4>`;
   const grid = html => `<div class="items" style="margin-bottom:16px">${html}</div>`;
   const docs = list.filter(i => i.kind !== 'photo'), photos = list.filter(i => i.kind === 'photo'), slots = svSlots(sv);
-  const trk = S.files.filter(f => f.sv_id === sv.id && f.kind === 'track');
+  const trk = S.files.filter(f => f.shift_id === sv.shift_id && f.kind === 'track'), allEnded = svsOf(sv.shift_id).every(x => x.work_end);
   const noSlot = S.files.filter(f => f.sv_id === sv.id && f.kind === 'photo' && !f.slot);   // v1.4 之前上傳、沒有時段的照片
   return (docs.length ? head('📄', L('Paper records (one set per vessel)', '紙本紀錄（每艘 MMO 船一份）')) + grid(docs.map(i => card(i)).join('')) : '') +
     (photos.length ? head('📷', L('Photos (one set per 12-hour period)', '照片（每 12 小時時段一組）')) +
@@ -2430,10 +2431,10 @@ function uploadGrid(sv, ed) {
         : `<div class="small muted" style="margin-bottom:16px">${L('Periods appear once the pre-watch starts.', '預觀測開始後才會出現時段。')}</div>`) : '') +
     (noSlot.length ? `<div class="alert blue small" style="margin-bottom:16px">${L('Uploaded before 12-hour periods existed — these do not count; upload them again under a period.', '以下照片在分時段之前上傳，不計入時段，請重新傳到對應時段：')}
       <div class="files" style="margin-top:6px">${noSlot.map(f => `<div class="file">🖼<a onclick="viewFile('${f.id}')" title="${esc(f.name)}">${esc(f.name)}</a>${ed ? `<button class="btn btn-sm w" style="padding:1px 6px" onclick="delFile('${f.id}')">×</button>` : ''}</div>`).join('')}</div></div>` : '') +
-    head('🗺', L('Track image', '軌跡圖')) +
+    head('🗺', L('Track image (one per batch: construction vessel + all MMO vessels)', '軌跡圖（整批次一張：施工船＋所有 MMO 船）')) +
     `<div class="files" style="margin-bottom:8px">${trk.map(f => `<div class="file">🖼<a onclick="viewFile('${f.id}')" title="${esc(f.name)}">${esc(f.name)}</a><span class="muted">${fmtSize(f.size)}</span></div>`).join('')}</div>
-    ${!trk.length && !sv.work_end ? `<div class="small muted">${L('Created automatically when the observation ends.', '結束實際觀測時自動產生。')}</div>` : ''}
-    ${ed && sv.work_end ? `<button class="btn btn-sm w" onclick="trackImage('${sv.id}')">🗺 ${trk.length ? L('Recreate track image', '重新產生軌跡圖') : L('Create track image', '產生軌跡圖')}</button>` : ''}`;
+    ${!trk.length && !allEnded ? `<div class="small muted">${L('Created automatically once every MMO vessel in this batch has ended the observation.', '本批次所有 MMO 船都結束實際觀測後自動產生。')}</div>` : ''}
+    ${ed && allEnded ? `<button class="btn btn-sm w" onclick="trackImage('${sv.id}')">🗺 ${trk.length ? L('Recreate track image', '重新產生軌跡圖') : L('Create track image', '產生軌跡圖')}</button>` : ''}`;
 }
 function fmtSize(n) { n = Number(n) || 0; return n > 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB'; }
 async function loadThumbs(shiftId, force) {
@@ -2834,14 +2835,16 @@ async function tqCanvasUrl(map, gs) {
   g.textAlign = 'right'; g.font = '10px Inter,sans-serif'; g.fillStyle = '#556'; g.fillText('Map: Esri, GEBCO, NOAA', W - 6, H + top - 6);
   try { return c.toDataURL('image/png'); } catch (e) { throw new Error(L('The map tiles block image export — use PDF instead.', '底圖不允許匯出圖片，請改用 PDF。')); }
 }
-// 軌跡圖存進批次資料夾的「軌跡」：這艘 MMO 船＋施工船，預觀測開始到實際觀測結束
+// 軌跡圖存進批次資料夾的「軌跡」：整批次一張＝施工船＋本批次所有 MMO 船，最早預觀測開始到最晚實際觀測結束
 async function trackImage(svId, auto) {
-  const sv = S.svs.find(x => x.id === svId), s = sv && shiftOf(sv.shift_id);
-  if (!sv || !sv.pre_start || !sv.work_end || !L_) { if (!auto) toast(L('End the observation first', '請先結束實際觀測'), 'error'); return; }
+  const sv = S.svs.find(x => x.id === svId), s = sv && shiftOf(sv.shift_id), all = sv ? svsOf(sv.shift_id) : [];
+  if (!sv || !L_) return;
+  if (!all.every(x => x.pre_start && x.work_end)) { if (!auto) toast(L('Every MMO vessel in this batch must end the observation first', '本批次所有 MMO 船都結束實際觀測後才能產生'), 'error'); return; }
+  const from = all.reduce((m, x) => x.pre_start < m ? x.pre_start : m, all[0].pre_start), to = all.reduce((m, x) => x.work_end > m ? x.work_end : m, '');
   let el, map;
   showLoading(L('Creating track image…', '產生軌跡圖中…'));
   try {
-    const r = await api('pos.list', { vessel_ids: [sv.vessel_id, s.construction_vessel_id].filter(Boolean), from: sv.pre_start, to: sv.work_end });
+    const r = await api('pos.list', { vessel_ids: [s.construction_vessel_id].concat(all.map(x => x.vessel_id)).filter(Boolean), from, to });
     const gs = tqGroups(r.positions);
     if (!gs.length) throw new Error(L('No AIS positions for this period — no track image created.', '這段時間沒有 AIS 船位，無法產生軌跡圖。'));
     el = document.createElement('div');
@@ -2854,7 +2857,7 @@ async function trackImage(svId, auto) {
     layers.forEach(l => l.addTo(map));
     await Promise.race([loaded, new Promise(res => setTimeout(res, 8000))]);
     const url = await tqCanvasUrl(map, gs);
-    await api('file.upload', { sv_id: svId, track: true, file: { name: sv.vessel_name + '_軌跡.png', mime: 'image/png', data: url.slice(url.indexOf(',') + 1) } }, { reload: true });
+    await api('file.upload', { sv_id: svId, track: true, file: { name: s.date + '_批次' + s.shift_no + '_軌跡.png', mime: 'image/png', data: url.slice(url.indexOf(',') + 1) } }, { reload: true });
     toast(L('Track image saved to the batch folder', '軌跡圖已存入批次資料夾'));
     render();
   } catch (e) { toast(e.message, 'error'); }
