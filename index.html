@@ -3020,7 +3020,7 @@ function dprFix(d) {
   ['inc', 'hse', 'drill', 'wx', 'sign'].forEach(k => { if (!d[k] || typeof d[k] !== 'object') d[k] = {}; });
   ['personnel', 'acts'].forEach(k => { if (!Array.isArray(d[k])) d[k] = []; });
   d.cons = d.cons || {};
-  DPR_CONS.forEach(c => { d.cons[c[0]] = d.cons[c[0]] || {}; });
+  DPR_CONS.forEach(c => { d.cons[c[0]] = d.cons[c[0]] || {}; if (d.cons[c[0]].end !== undefined && d.cons[c[0]].end !== '') dprConsUsed(d.cons[c[0]]); });
   return d;
 }
 /** 新的一份：人員、簽名人、起始油水量沿用同船前一份；作業時間與觀察員從當天批次帶入 */
@@ -3198,12 +3198,12 @@ function dprNormT(el, i) {
   else if (/^\d:\d\d$/.test(v)) v = '0' + v;
   el.value = v; dprSet(el); dprActsCalc(i);
 }
-/** 油水：改「消耗量」→ 算最終量；改「最終量」→ 回推消耗量（起始＋加油－最終） */
+/** 油水：消耗量不給填，一律＝起始量＋加油(水)量－最終量（起始或最終沒填就留白） */
+function dprConsUsed(c) { const s = dprNum(c.start), e = dprNum(c.end); c.used = s !== null && e !== null ? String(r3(s + (dprNum(c.bunk) || 0) - e)) : ''; }
 function dprConsCalc(el) {
   const k = el.dataset.p.split('.'), c = dprData().cons[k[1]];
-  if (k[2] === 'end') { const s = dprNum(c.start), e = dprNum(c.end); if (s !== null && e !== null) c.used = String(r3(s + (dprNum(c.bunk) || 0) - e)); }
-  else dprConsEnd(c);
-  ['end', 'used'].forEach(f => { if (f === k[2]) return; const i = document.querySelector(`[data-p="cons.${k[1]}.${f}"]`); if (i) i.value = c[f] === undefined ? '' : c[f]; });
+  dprConsUsed(c);
+  const o = $('dprUsed_' + k[1]); if (o) o.textContent = c.used === '' ? '—' : c.used;
 }
 function dprEditor() {
   const c = DPR.cur, d = c.d, v = dprVessel(c.vessel_id), st = S.settings, ro = dprRO(), acts = d.acts;
@@ -3269,9 +3269,10 @@ function dprEditor() {
       <div class="section-body small muted" style="padding-top:6px">${L('Times as hh:mm (0800 is fine); use 24:00 for the end of the day.', '時間填 hh:mm（打 0800 也可以）；一天結束填 24:00。')}</div></div>
 
     <div class="section">${head(5, 'Consumption', '消耗量')}
-      <div class="table-wrap"><table class="tbl dpr-tbl"><tr><th></th><th>本日起始量 Start of Day (m³)</th><th>本日加油(水)量 Bunkered Today (m³)</th><th>本日總計消耗量 Tot. Cons. Today (m³)</th><th>本日最終量 End of Day (m³)</th></tr>
-        ${DPR_CONS.map(x => `<tr><td><b>${x[2]} ${x[1]}</b></td>${['start', 'bunk', 'used', 'end'].map(f => `<td>${dprIn(`cons.${x[0]}.${f}`, { num: 1, style: 'width:110px', after: 'dprConsCalc(this)' })}</td>`).join('')}</tr>`).join('')}</table></div>
-      <div class="section-body small muted" style="padding-top:6px">${L('End = start + bunkered − consumed (enter either consumed or end). ', '最終量＝起始量＋加油(水)量－消耗量（填消耗量或最終量其一即可）。') +
+      <div class="table-wrap"><table class="tbl dpr-tbl"><tr><th></th><th>本日起始量 Start of Day (m³)</th><th>本日最終量 End of Day (m³)</th><th>本日總計消耗量 Tot. Cons. Today (m³)</th><th>本日加油(水)量 Bunkered Today (m³)</th></tr>
+        ${DPR_CONS.map(x => { const inp = f => `<td>${dprIn(`cons.${x[0]}.${f}`, { num: 1, style: 'width:110px', after: 'dprConsCalc(this)' })}</td>`, u = d.cons[x[0]].used;
+          return `<tr><td><b>${x[2]} ${x[1]}</b></td>${inp('start')}${inp('end')}<td class="mono" style="font-weight:700;font-size:14px" id="dprUsed_${x[0]}" title="${L('Calculated', '系統計算')}">${u === undefined || u === '' ? '—' : esc(u)}</td>${inp('bunk')}</tr>`; }).join('')}</table></div>
+      <div class="section-body small muted" style="padding-top:6px">${L('Consumed is calculated: start + bunkered − end. ', '本日總計消耗量由系統計算：起始量＋加油(水)量－最終量。') +
         (envOn(v) ? L('On save, consumption and POB are copied to Environment › Daily entry.', '儲存時，消耗量與在船人數 POB 會同步到「環保統計 › 每日填報」。') : '')}</div></div>
 
     <div class="section">${head(6, 'General Remarks', '總結')}<div class="section-body">
@@ -3411,8 +3412,8 @@ function dprPrintHtml() {
       ${d.acts.map(a => { const du = dprMin(a.to) - dprMin(a.from); return `<tr><td class="c">${e(a.from)}</td><td class="c">${e(a.to)}</td><td class="c">${du >= 0 ? dprHm(du) : ''}</td><td>${e(a.type)}</td><td>${e(a.desc)}</td></tr>`; }).join('') || '<tr><td colspan="5">&nbsp;</td></tr>'}
       <tr><th colspan="2">總計 Total</th><th class="c">${dprHm(tot)}</th><td colspan="2"></td></tr></table>
     <div class="dp-h">5) 消耗量 Consumption</div>
-    <table class="dp-t"><tr><th></th><th class="c">本日起始量 Start of Day (m³)</th><th class="c">本日最終量 End of Day (m³)</th><th class="c">本日加油(水)量 Bunkered Today (m³)</th><th class="c">本日總計消耗量 Tot. Cons. Today (m³)</th></tr>
-      ${DPR_CONS.map(x => `<tr><th>${x[2]} ${x[1]}</th><td class="c">${cons(x[0], 'start')}</td><td class="c">${cons(x[0], 'end')}</td><td class="c">${cons(x[0], 'bunk')}</td><td class="c">${cons(x[0], 'used')}</td></tr>`).join('')}</table>
+    <table class="dp-t"><tr><th></th><th class="c">本日起始量 Start of Day (m³)</th><th class="c">本日最終量 End of Day (m³)</th><th class="c">本日總計消耗量 Tot. Cons. Today (m³)</th><th class="c">本日加油(水)量 Bunkered Today (m³)</th></tr>
+      ${DPR_CONS.map(x => `<tr><th>${x[2]} ${x[1]}</th><td class="c">${cons(x[0], 'start')}</td><td class="c">${cons(x[0], 'end')}</td><td class="c">${cons(x[0], 'used')}</td><td class="c">${cons(x[0], 'bunk')}</td></tr>`).join('')}</table>
     <div class="dp-h">6) 總結 General Remarks</div>
     <table class="dp-t"><tr><td class="dp-rm" style="min-height:60px">${e(d.remarks).replace(/\n/g, '<br>') || '&nbsp;'}</td></tr></table>
     <div class="dp-h">7) 簽名 Signatures</div>
