@@ -10,7 +10,7 @@
 // 角色：admin（全部，固定）＋後台自訂角色（Roles 表，勾選 PERMS 裡的功能）；預設 mmo（填報批次）、viewer（唯讀共用帳號）
 // ============================================================
 
-const VERSION = '1.8.16';
+const VERSION = '1.9.0';
 const ROOT_FOLDER_ID = '1uVkbv4tndRVERhrHmHUzaTvPlHaFV4em';
 const SS_NAME = 'MMO 鯨豚觀察總表';
 const TZ = 'Asia/Taipei';
@@ -42,7 +42,9 @@ const SCHEMAS = {
     'created_by','created_at','updated_by','updated_at'],
   EnvIncidents: ['id','vessel_id','vessel_name','time','type','severity','substance','quantity','lat','lon','description','action','reported_to','status','closed_at',
     'created_by','created_at','updated_by','updated_at','drive_url'],
-  Roles: ['id','name','perms','sort','updated_at']
+  Roles: ['id','name','perms','sort','updated_at'],
+  // 船舶每日報告 DPR：一船一天一筆，表單內容整包存在 data（JSON）
+  DPR: ['id','vessel_id','vessel_name','date','dpr_no','status','data','created_by','created_at','updated_by','updated_at']
 };
 
 const DEFAULT_SETTINGS = {
@@ -73,7 +75,16 @@ const DEFAULT_SETTINGS = {
   env_waste_methods: '上岸交運 Landed ashore\n船上焚化 Incinerated on board\n依 MARPOL 排放 Discharged per MARPOL\n資源回收 Recycled',
   env_incident_types: '漏油／溢油 Oil spill\n化學品洩漏 Chemical spill\n物品落海 Object overboard\n廢棄物不當排放 Improper discharge\n其他 Other',
   env_incident_places: '工地 A Site A\n工地 B Site B',   // 環境事件地點（船舶以外）
-  env_zero_start: '2025-01-02'  // 連續零事件天數起算日（之後若有事件就從最近一次事件算）
+  env_zero_start: '2025-01-02', // 連續零事件天數起算日（之後若有事件就從最近一次事件算）
+  // 每日報告 DPR：表頭與下拉清單（清單每行「中文 English」）
+  dpr_project: 'Tung-Hsiao Power Plant 2nd Stage Renewal Project Turn-key Contract of Subsea Gas Pipeline',
+  dpr_client: 'Taiwan Power Company',
+  dpr_contractor: 'NMDC Energy',
+  dpr_company: 'Marine Mammal Observation\nHong-Yi Ecology Company',
+  dpr_no_prefix: 'NMDC-HY',
+  dpr_activities: '航行 Sailing\n停靠港 Port Call\n鯨豚觀察作業 MMO operations\n巡防工作 Guard Duties\n其他作業 Other Operations\n港區待命 Standby in Port\n因天氣待命 Standby for Weather\n因作業待命 Standby for Operations\n因客戶待命 Standby for Client\n因主管機關待命 Standby for Authorities\n因其他原因待命 Standby for Other',
+  dpr_functions: '鯨豚觀察員 TCO Observer\n船長 Master\n船副 Officer\n輪機長 Chief Engineer\n管輪 Engineer\n機匠 Motor Man\n水手 Deckhand\n大廚 Cook\n其他 Other',
+  dpr_companies: '宏華 HHC\n彰化區漁會 CFA\n台船 CSBC\n臺灣港務 TIPC\n安達希 NMDC\n白海豚育樂 WDE'
 };
 const SECRET_SETTINGS = { ais_api_key: 1 };
 
@@ -92,10 +103,10 @@ const ITEM_SEED = [
 ];
 
 // 可勾選的功能（前端 PERM_LABELS 要同步）；admin 角色固定擁有全部，帳號／角色／清空資料只有 admin
-const PERMS = ['dashboard', 'shifts', 'sightings', 'summary', 'tracks', 'shift.edit', 'shift.manage', 'env', 'env.edit', 'master', 'settings', 'audit'];
+const PERMS = ['dashboard', 'shifts', 'sightings', 'summary', 'tracks', 'shift.edit', 'shift.manage', 'dpr', 'dpr.edit', 'env', 'env.edit', 'master', 'settings', 'audit'];
 const ROLE_SEED = [
-  { id: 'mmo', name: 'MMO 填報人員', perms: ['dashboard', 'shifts', 'sightings', 'summary', 'tracks', 'shift.edit'] },
-  { id: 'viewer', name: '訪客（唯讀）', perms: ['dashboard', 'shifts', 'sightings', 'summary', 'tracks'] }
+  { id: 'mmo', name: 'MMO 填報人員', perms: ['dashboard', 'shifts', 'sightings', 'summary', 'tracks', 'shift.edit', 'dpr', 'dpr.edit'] },
+  { id: 'viewer', name: '訪客（唯讀）', perms: ['dashboard', 'shifts', 'sightings', 'summary', 'tracks', 'dpr'] }
 ];
 // 動作 → 需要的功能；沒列的動作登入就能用（讀取、登出、改密碼）
 const ACTION_PERM = {
@@ -107,6 +118,7 @@ const ACTION_PERM = {
   'settings.save': 'settings', 'pos.test': 'settings', 'summary.rebuild': 'settings',
   'audit.list': 'audit',
   'env.file': 'env',
+  'dpr.get': 'dpr', 'dpr.save': 'dpr.edit', 'dpr.delete': 'dpr.edit',
   'env.daily.save': 'env.edit', 'env.daily.delete': 'env.edit', 'env.waste.save': 'env.edit', 'env.waste.delete': 'env.edit',
   'env.incident.save': 'env.edit', 'env.incident.delete': 'env.edit',
   'user.save': 'admin', 'user.delete': 'admin', 'role.save': 'admin', 'role.delete': 'admin', 'reset.request': 'admin', 'reset.confirm': 'admin'
@@ -142,9 +154,9 @@ function visitHit_(p) {
 function json_(o) { return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON); }
 
 const PUBLIC = { 'ping': 1, 'visit.hit': 1, 'auth.status': 1, 'auth.setup': 1, 'auth.login': 1, 'data.rev': 1 };
-const NO_REV = { 'env.file': 1, 'ping': 1, 'visit.hit': 1, 'auth.status': 1, 'auth.login': 1, 'auth.logout': 1, 'auth.changePassword': 1, 'data.load': 1, 'data.rev': 1,
+const NO_REV = { 'env.file': 1, 'dpr.get': 1, 'ping': 1, 'visit.hit': 1, 'auth.status': 1, 'auth.login': 1, 'auth.logout': 1, 'auth.changePassword': 1, 'data.load': 1, 'data.rev': 1,
   'audit.list': 1, 'file.get': 1, 'shift.files': 1, 'pos.fetch': 1, 'pos.test': 1, 'pos.list': 1, 'reset.request': 1 };
-const AUDIT_SKIP = { 'env.file': 1, 'ping': 1, 'visit.hit': 1, 'auth.status': 1, 'data.load': 1, 'data.rev': 1, 'audit.list': 1, 'file.get': 1, 'shift.files': 1, 'pos.list': 1 };
+const AUDIT_SKIP = { 'env.file': 1, 'dpr.get': 1, 'ping': 1, 'visit.hit': 1, 'auth.status': 1, 'data.load': 1, 'data.rev': 1, 'audit.list': 1, 'file.get': 1, 'shift.files': 1, 'pos.list': 1 };
 // 這些寫入會改到批次資料 → 重建試算表「總表」
 const SUMMARY_ACTIONS = /^((shift|sv|pause|sighting|file)\.(save|delete|close|reopen|upload)|reset\.confirm)$/;
 
@@ -228,6 +240,9 @@ const ROUTES = {
   'env.file': (u, p) => envFile_(p.id),
   'env.incident.save': (u, p) => envIncidentSave_(u, p),
   'env.incident.delete': (u, p) => withLock_(() => ({ id: p.id, ok: Repo.remove('EnvIncidents', p.id) })),
+  'dpr.get': (u, p) => dprGet_(p),
+  'dpr.save': (u, p) => dprSave_(u, p),
+  'dpr.delete': (u, p) => withLock_(() => ({ id: p.id, ok: Repo.remove('DPR', p.id) })),
   'summary.rebuild': (u) => { rebuildSummary_(); return { url: ss_().getUrl() }; }
 };
 
@@ -383,6 +398,18 @@ function ensureSchema_() {
         });
       }
       props.setProperty('v15_crew', '1');
+      bumpRev_();
+    }
+    // v1.9.0：新增每日報告 DPR；預設角色 MMO 填報人員可填、訪客可看（後台改過角色的只補不刪）
+    if (!props.getProperty('v190_dpr')) {
+      const add = { mmo: ['dpr', 'dpr.edit'], viewer: ['dpr'] };
+      Repo.all('Roles').forEach(r => {
+        if (!add[r.id]) return;
+        const ps = String(r.perms).split(',').map(x => x.trim()).filter(Boolean);
+        const nx = ps.concat(add[r.id].filter(x => ps.indexOf(x) < 0));
+        if (nx.length !== ps.length) Repo.update('Roles', r.id, { perms: nx.join(','), updated_at: nowIso_() });
+      });
+      props.setProperty('v190_dpr', '1');
       bumpRev_();
     }
     // v1.8.16：PAM 偵測紀錄表改成有目擊才要傳；鯨豚觀察員監測照片加日夜間說明（後台改過的不動）
@@ -692,6 +719,7 @@ function loadData_(u) {
   out.roles = roles_();
   out.posTick = PropertiesService.getScriptProperties().getProperty('pos_tick') || '';
   if (u.role === 'admin') out.users = Repo.all('Users').map(publicUser_);
+  if (can_(u, 'dpr')) out.dpr = Repo.all('DPR').map(r => { const c = Object.assign({}, r); delete c.data; return c; });
   if (can_(u, 'env')) out.env = { daily: Repo.all('EnvDaily'), waste: Repo.all('EnvWaste'), incidents: Repo.all('EnvIncidents') };
   return out;
 }
@@ -944,13 +972,15 @@ const RESET_GROUPS = {
   tracks: ['Tracks'],
   vessels: ['Vessels'],
   observers: ['Observers'],
-  env: ['EnvDaily', 'EnvWaste', 'EnvIncidents']
+  env: ['EnvDaily', 'EnvWaste', 'EnvIncidents'],
+  dpr: ['DPR']
 };
 function resetRequest_(u, p) {
   const groups = (Array.isArray(p.groups) ? p.groups : []).filter(k => RESET_GROUPS[k]);
   if (!groups.length) fail_('Tick at least one item to clear');
   if (groups.indexOf('vessels') >= 0 && groups.indexOf('tracks') < 0) groups.push('tracks');   // 軌跡依附船舶
   if (groups.indexOf('vessels') >= 0 && groups.indexOf('env') < 0) groups.push('env');         // 環保紀錄也依附船舶
+  if (groups.indexOf('vessels') >= 0 && groups.indexOf('dpr') < 0) groups.push('dpr');         // DPR 也依附船舶
   const code = String(parseInt(Utilities.getUuid().replace(/-/g, '').slice(0, 8), 16) % 900000 + 100000);
   const state = { hash: hash_(code, 'reset'), groups: groups, by: u.id, tries: 0, exp: Date.now() + 10 * 60000 };
   PropertiesService.getScriptProperties().setProperty('reset_pending', JSON.stringify(state));
@@ -1391,7 +1421,7 @@ function deleteMaster_(sheet, id) {
   return withLock_(() => {
     if (sheet === 'Vessels' && (Repo.all('ShiftVessels').some(x => x.vessel_id === id) || Repo.all('Shifts').some(x => x.construction_vessel_id === id)))
       fail_('This vessel is used in batches — set it inactive instead');
-    if (sheet === 'Vessels' && ['EnvDaily', 'EnvWaste', 'EnvIncidents'].some(t => Repo.all(t).some(x => x.vessel_id === id)))
+    if (sheet === 'Vessels' && ['EnvDaily', 'EnvWaste', 'EnvIncidents', 'DPR'].some(t => Repo.all(t).some(x => x.vessel_id === id)))
       fail_('This vessel has environmental records — set it inactive instead');
     const r = Repo.get(sheet, id);
     Repo.remove(sheet, id);
@@ -1584,4 +1614,40 @@ function writeTable_(name, head, rows, pos) {
   sh.getRange(1, 1, 1, head.length).setFontWeight('bold').setBackground('#002038').setFontColor('#ffffff');
   sh.setFrozenRows(1);
   if (rows.length) sh.getRange(2, 1, rows.length, head.length).setVerticalAlignment('top');
+}
+
+// ============ 每日報告 DPR（Daily Progress Report，一船一天一筆） ============
+/** 讀一份 DPR：{id} 或 {vessel_id, date}；一併回傳同船前一份（帶入人員、起始油水量、編號）與當天環保每日填報 */
+function dprGet_(p) {
+  const all = Repo.all('DPR');
+  const rec = p.id ? all.find(x => x.id === p.id) : all.find(x => x.vessel_id === p.vessel_id && x.date === p.date);
+  const vid = rec ? rec.vessel_id : str_(p.vessel_id), date = rec ? rec.date : str_(p.date);
+  const prev = all.filter(x => x.vessel_id === vid && x.date < date).sort((a, b) => a.date < b.date ? 1 : -1)[0] || null;
+  const env = Repo.all('EnvDaily').find(x => x.vessel_id === vid && x.date === date) || null;
+  return { rec: rec || null, prev: prev, env: env };
+}
+/** 存 DPR；同船同日只能一份。有填用油／用水量時同步到環保每日填報（只更新有值的欄位，備註不動） */
+function dprSave_(u, p) {
+  const v = envVessel_(p.vessel_id), date = envDate_(p.date);
+  const data = typeof p.data === 'string' ? p.data : JSON.stringify(p.data || {});
+  if (data.length > 45000) fail_('DPR is too long — shorten the remarks');
+  return withLock_(() => {
+    const all = Repo.all('DPR');
+    if (all.some(x => x.vessel_id === v.id && x.date === date && x.id !== p.id)) fail_('A DPR for this vessel and date already exists');
+    const rec = { vessel_id: v.id, vessel_name: v.name, date: date, dpr_no: str_(p.dpr_no), status: p.status === 'done' ? 'done' : 'draft', data: data,
+      updated_by: u.username, updated_at: nowIso_() };
+    let out;
+    if (p.id && all.some(x => x.id === p.id)) out = Repo.update('DPR', p.id, rec);
+    else out = Repo.insert('DPR', Object.assign({ id: genId_(), created_by: u.username, created_at: nowIso_() }, rec));
+    const sync = p.env || {}, patch = {};
+    ENV_DAILY_NUM.forEach(k => { const n = envNum_(sync[k], k); if (n !== '') patch[k] = n; });
+    if (Object.keys(patch).length) {
+      const old = Repo.all('EnvDaily').find(x => x.vessel_id === v.id && x.date === date);
+      Object.assign(patch, { updated_by: u.username, updated_at: nowIso_() });
+      if (old) Repo.update('EnvDaily', old.id, patch);
+      else Repo.insert('EnvDaily', Object.assign({ id: genId_(), vessel_id: v.id, vessel_name: v.name, date: date, remark: 'DPR' }, patch));
+    }
+    const c = Object.assign({}, out); delete c.data;
+    return { id: out.id, rec: c, env: Object.keys(patch).length > 0 };
+  });
 }

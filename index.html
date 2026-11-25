@@ -361,6 +361,36 @@ textarea{resize:vertical;min-height:64px}
   body.print-trk .print-only{display:block!important}
 }
 .print-only{display:none}
+/* 每日報告 DPR：編輯頁＋列印版面（依原 Excel 範本） */
+.dpr-in{padding:5px 6px;font-size:13px}
+.dpr-tbl th{padding:7px 6px}
+.dpr-tbl td{padding:5px 6px;vertical-align:middle}
+.dpr-hsse{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0 16px;padding:12px 16px}
+.dpr-sub{font-weight:700;font-size:13px;color:var(--navy);margin-bottom:6px}
+.dpr-cnt td{padding:4px 6px;vertical-align:middle}
+.dpr-head .fg>div{font-size:13.5px;padding:8px 0}
+@media (max-width:900px){.dpr-hsse{grid-template-columns:1fr}}
+.dpr-print{display:none}
+@media print{
+  @page{size:A4;margin:10mm}
+  body.print-dpr>*:not(#dprPrint){display:none!important}
+  body.print-dpr #dprPrint{display:block}
+}
+.dp{font-family:Arial,'Microsoft JhengHei',sans-serif;font-size:8.5pt;color:#000;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.dp-t{width:100%;border-collapse:collapse;margin-bottom:-1px}
+.dp-t th,.dp-t td{border:1px solid #000;padding:2px 4px;vertical-align:middle;text-align:left}
+.dp-t th{background:#d9e1f2;font-weight:700}
+.dp-t .c{text-align:center}
+.dp tr{break-inside:avoid}
+.dp-top td{height:58px}
+.dp-logo{width:28%;white-space:nowrap}
+.dp-logo img{height:38px;margin-right:10px;vertical-align:middle}
+.dp-t .dp-title{text-align:center;font-size:18pt;font-weight:700}
+.dp-t .dp-co{width:28%;text-align:center;font-weight:700}
+.dp-h{background:#1f3864;color:#fff;font-weight:700;padding:3px 5px;margin-top:6px;border:1px solid #000}
+.dp-2{display:grid;grid-template-columns:1fr 1fr;align-items:start}
+.dp-t td.dp-rm{height:34px;vertical-align:top}
+.dp-sig td{height:30px;width:50%}
 /* 儀表板第一列 */
 .dash-top{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:16px;align-items:stretch;margin-bottom:16px}
 .dash-top>div{min-width:0;display:flex;flex-direction:column}
@@ -455,6 +485,7 @@ textarea{resize:vertical;min-height:64px}
 </div>
 
 <div id="modals"></div>
+<div id="dprPrint" class="dpr-print"></div>
 <div class="toasts" id="toasts"></div>
 <div class="loading hidden" id="loading"><div class="spinner"></div><div class="muted" id="loadingText"></div></div>
 
@@ -494,6 +525,7 @@ const PERM_LABELS = [
   ['summary', 'Summary sheet', '總表'], ['tracks', 'Vessel tracks', '船舶軌跡'],
   ['shift.edit', 'Batch data entry (create, record, upload, close)', '批次填報（新增、觀測紀錄、上傳、結案）'],
   ['shift.manage', 'Reopen / delete / edit closed batches', '重新開啟／刪除／修改已結案批次'],
+  ['dpr', 'Daily progress report (view)', '每日報告 DPR（檢視）'], ['dpr.edit', 'Daily progress report entry', '每日報告 DPR 填報'],
   ['env', 'Environment (view)', '環保統計（檢視）'], ['env.edit', 'Environment data entry', '環保填報（每日、廢棄物、環境事件）'],
   ['master', 'Back office: vessels, observers, upload items', '後台：船舶、觀察員、上傳項目'],
   ['settings', 'Back office: rules & lists', '後台：規則與清單'], ['audit', 'Back office: activity log', '後台：操作紀錄']
@@ -580,6 +612,7 @@ const ERR_ZH = {
   'Position API rejected the key (HTTP 401) — check the API key in Back office': '船位 API 拒絕此金鑰（401），請檢查後台的 API 金鑰',
   'Position API rejected the key (HTTP 403) — check the API key in Back office': '船位 API 拒絕此金鑰（403），請檢查方案或金鑰',
   'Vessel not found by the position API (HTTP 404) — check the MMSI': '船位 API 找不到這艘船（404），請檢查 MMSI',
+  'A DPR for this vessel and date already exists': '這艘船這天已經有 DPR', 'DPR is too long — shorten the remarks': 'DPR 內容太長，請縮短備註',
   'Tick at least one item to clear': '請至少勾選一項要清空的資料', 'No reset request — send a new verification code': '沒有待確認的清空申請，請重新寄送驗證碼',
   'This code was requested by another administrator': '此驗證碼是由其他管理員申請的', 'Verification code expired — send a new one': '驗證碼已過期，請重新寄送',
   'Too many wrong codes — send a new one': '驗證碼錯誤次數過多，請重新寄送',
@@ -803,6 +836,7 @@ const PAGES = [
   { id: 'sightings', ico: '🐬', en: 'Sightings', zh: '目擊紀錄' },
   { id: 'summary', ico: '📑', en: 'Summary sheet', zh: '總表' },
   { id: 'tracks', ico: '🗺', en: 'Vessel tracks', zh: '船舶軌跡' },
+  { id: 'dpr', ico: '📝', en: 'Daily report (DPR)', zh: '每日報告 DPR' },
   { id: 'env', ico: '🌱', en: 'Environment', zh: '環保統計' },
   { id: 'admin', ico: '⚙️', en: 'Back office', zh: '後台管理' }
 ];
@@ -820,6 +854,11 @@ function enterApp() {
   startPoll();
 }
 function go(page, shiftId, svId) {
+  if (PAGE === 'dpr' && DPR.dirty) {
+    confirmBox(L('Discard unsaved changes to this DPR?', '這份 DPR 還沒儲存，確定離開？'), L('Discard', '放棄'), true).then(ok => { if (ok) { DPR.dirty = false; go(page, shiftId, svId); } });
+    return;
+  }
+  if (page === 'dpr') DPR.cur = null;
   PAGE = page;
   ENV.dirty = false;
   if (shiftId) { CUR.shift = shiftId; CUR.sv = svId || ''; }
@@ -845,7 +884,7 @@ function render() {
   const role = S.user.role === 'admin' ? 'Admin' : esc(roleName(S.user.role));
   $('userChip').innerHTML = `👤 <span class="nm">${esc(S.user.name || S.user.username)}</span><span class="role">${role}</span>`;
   if (!/…|離線|Offline/.test($('liveTxt').textContent)) $('liveTxt').textContent = L('Live', '即時');
-  const P = { tracks: renderTracks, dashboard: renderDashboard, shifts: renderShifts, shift: renderShift, sightings: renderSightings, summary: renderSummary, admin: renderAdmin, env: renderEnv };
+  const P = { tracks: renderTracks, dashboard: renderDashboard, shifts: renderShifts, shift: renderShift, sightings: renderSightings, summary: renderSummary, admin: renderAdmin, env: renderEnv, dpr: renderDpr };
   if (PAGE === 'shift' && !shiftOf(CUR.shift)) PAGE = 'shifts';
   if (!canPage(PAGE)) PAGE = (PAGES.find(p => canPage(p.id)) || {}).id || '';
   if (!PAGE) { setTitle(''); $('content').innerHTML = `<div class="section"><div class="empty">${L('Your account has no pages enabled. Ask an administrator to set up your role.', '這個帳號沒有開放任何頁面，請管理員到後台設定角色權限。')}</div></div>`; return; }
@@ -884,7 +923,7 @@ function startPoll() {
     if (!S || !TOKEN || document.hidden) return;
     try {
       const r = await api('data.rev');
-      if (r.rev !== LAST_REV && !$('modals').children.length && !ENV.dirty &&!(document.activeElement && /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName))) {
+      if (r.rev !== LAST_REV && !$('modals').children.length && !ENV.dirty && !DPR.dirty && !(document.activeElement && /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName))) {
         S = await api('data.load'); LAST_REV = S.rev; render();
       }
     } catch (e) {}
@@ -2939,6 +2978,444 @@ async function rebuildSheet(btn) {
   btn.disabled = false;
 }
 
+// ==================== 每日報告 DPR（一船一天一份；清單在 S.dpr，內容用 dpr.get 讀） ====================
+const DPR_INC = [['fatal', 'Fatal Accidents', '死亡事故'], ['lti', 'Lost Time Injuries', '損失工時傷害'], ['mtc', 'Medical Treatment Cases', '醫療傷害'],
+  ['fac', 'First Aid cases', '急救傷害'], ['spill', 'Environmental Spills', '環境洩漏'], ['damage', 'Damages', '損傷'], ['downtime', 'Operational Downtime', '運轉停機時間'],
+  ['nearmiss', 'Near Misses', '虛驚事故'], ['ncr', 'Quality Non-conformities', '品質違規事項']];
+const DPR_HSE = [['prestart', 'Prestart meetings', '日開工會議'], ['reminder', 'Safety Reminders', '安全提示'], ['toolbox', 'Toolbox Meetings', '工具箱會議/訓練'],
+  ['site_ind', 'Project Site inductions', '專案教育訓練'], ['vessel_ind', 'Vessel Inductions', '船隻介紹'], ['jha', "JHA's", '工作危害分析'], ['ptw', 'Permits to work', '工作許可'],
+  ['inspect', 'HSE Inspections', '環安衛檢查'], ['incident', 'Incidents', '事故'], ['swa', 'Stop work authority', '停止工作'], ['hazobs', 'Hazard Observations', '危害事件']];
+const DPR_DRILL = [['abandon', 'Abandon ship drills', '棄船演練'], ['fire', 'Fire drills', '消防演練'], ['mob', 'Man over board drills', '落水演練'], ['oil', 'Oil spill drills', '油類洩漏演練'],
+  ['security', 'Security drills', '安全演習'], ['blackout', 'Blackout drills', '停電演習'], ['medevac', 'Medevac drills', '緊急演練'], ['other', 'Other drills', '其他演習']];
+// [key, English, 中文, 單位, 文字欄]
+const DPR_WX = [['wdir', 'Wind direction', '風向', 'NESW', 1], ['w10', 'Wind - 10 min mean (at 10m)', '', 'm/s'], ['g10', 'Wind - 3 sec gust (at 10m)', '', 'm/s'],
+  ['w100', 'Wind - 10 min mean (at 100m)', '', 'm/s'], ['g100', 'Wind - 3 sec gust (at 100m)', '', 'm/s'], ['cur', 'Current', '潮流', 'm/s'], ['hs', 'Sign. wave height', '有義波高', 'm'],
+  ['hmax', 'Max. wave height', '最大波高', 'm'], ['swh', 'Swell height', '湧浪波高', 'm'], ['swp', 'Swell period', '湧浪週期', 's'], ['swd', 'Swell direction', '湧浪方向', 'NESW', 1],
+  ['temp', 'Air Temperature', '氣溫', '°C'], ['rh', 'Relative Humidity', '相對溼度', '%'], ['vis', 'Horizontal Visibility (at 10m)', '水平能見度(10米)', 'm'],
+  ['local', 'Any local significant weather', '本地天氣', '', 1]];
+const DPR_WX_COLS = ['06:00', '12:00', '18:00', '24:00', '24hr', '48hr'];
+const DPR_CONS = [['fuel', 'Fuel', '燃料'], ['water', 'Water', '水']];
+const DPR = { month: '', vessel: '', cur: null, dirty: false };
+
+function dprList(k, d) { return lines(S.settings[k] || d || ''); }
+function dprPick(k, re) { const l = dprList(k); return l.find(x => re.test(x)) || l[0] || ''; }
+function dprMin(t) { const m = String(t || '').match(/^(\d{1,2}):(\d{2})$/); if (!m || +m[2] > 59) return NaN; const v = +m[1] * 60 + +m[2]; return v > 1440 ? NaN : v; }
+function dprHm(n) { return isNaN(n) || n === null ? '' : String(Math.floor(n / 60)).padStart(2, '0') + ':' + String(n % 60).padStart(2, '0'); }
+function dprNum(v) { const n = parseFloat(v); return isFinite(n) ? n : null; }
+const r3 = n => Math.round(n * 1000) / 1000;
+/** 船名裡的英文部分（「仕國衛1號 Triton1」→ Triton1），編號用 */
+function dprShort(v) { const m = String(v.name || '').match(/[A-Za-z][A-Za-z0-9\-]*(?:\s+[A-Za-z0-9\-]+)*\s*$/); return (m ? m[0] : v.name).replace(/\s+/g, ''); }
+/** 下一個 DPR 編號：前一份的尾數 +1（保留位數）；沒有前一份＝前綴-船名-001 */
+function dprNextNo(prev, v) {
+  const m = prev && String(prev.dpr_no || '').match(/^(.*?)(\d+)$/);
+  if (m) return m[1] + String(Number(m[2]) + 1).padStart(m[2].length, '0');
+  return (S.settings.dpr_no_prefix || 'NMDC-HY') + '-' + dprShort(v) + '-001';
+}
+function dprVessel(id) { return S.vessels.find(v => v.id === id) || { id, name: '' }; }
+function dprData() { return DPR.cur.d; }
+function dprFix(d) {
+  d = d || {};
+  ['inc', 'hse', 'drill', 'wx', 'sign'].forEach(k => { if (!d[k] || typeof d[k] !== 'object') d[k] = {}; });
+  ['personnel', 'acts'].forEach(k => { if (!Array.isArray(d[k])) d[k] = []; });
+  d.cons = d.cons || {};
+  DPR_CONS.forEach(c => { d.cons[c[0]] = d.cons[c[0]] || {}; });
+  return d;
+}
+/** 新的一份：人員、簽名人、起始油水量沿用同船前一份；作業時間與觀察員從當天批次帶入 */
+function dprBlank(prev, env, v, date) {
+  const p = dprFix(prev ? json(prev.data, {}) : {});
+  const d = dprFix({ personnel: p.personnel.map(x => Object.assign({}, x)), sign: Object.assign({}, p.sign) });
+  DPR_CONS.forEach(c => { if (p.cons[c[0]].end !== undefined && p.cons[c[0]].end !== '') d.cons[c[0]].start = p.cons[c[0]].end; });
+  if (env) {
+    if (env.fuel_used_m3 !== '') d.cons.fuel.used = env.fuel_used_m3;
+    if (env.water_used_m3 !== '') d.cons.water.used = env.water_used_m3;
+    DPR_CONS.forEach(c => dprConsEnd(d.cons[c[0]]));
+  }
+  d.acts = dprBatchActs(v.id, date);
+  dprAddObservers(d, v.id, date);
+  return d;
+}
+function dprConsEnd(c) { const s = dprNum(c.start), u = dprNum(c.used); if (s !== null && u !== null) c.end = String(r3(s + (dprNum(c.bunk) || 0) - u)); }
+
+// ---- 從施工批次帶入 ----
+/** 這艘船當天的批次觀測時段（預觀測開始 → 實際觀測結束；跨日的截在當天） */
+function dprBatchSegs(vid, date) {
+  const t0 = tms(date + 'T00:00'), t1 = t0 + 864e5, now = tms(nowLocal());
+  return S.svs.filter(sv => sv.vessel_id === vid && sv.pre_start).map(sv => {
+    const s = shiftOf(sv.shift_id) || {};
+    const a = tms(sv.pre_start), b = sv.work_end ? tms(sv.work_end) : Math.min(now, t1);
+    return { sv, s, a: Math.max(a, t0), b: Math.min(b, t1) };
+  }).filter(x => !isNaN(x.a) && !isNaN(x.b) && x.b > x.a).sort((x, y) => x.a - y.a)
+    .map(x => Object.assign(x, { from: Math.round((x.a - t0) / 60000), to: Math.round((x.b - t0) / 60000) }));
+}
+function dprBatchActs(vid, date) {
+  const segs = dprBatchSegs(vid, date), mmo = dprPick('dpr_activities', /MMO|鯨豚/), out = [];
+  let at = 0;
+  segs.forEach(x => {
+    if (x.from < at) x.from = at;
+    if (x.to <= x.from) return;
+    if (x.from > at) out.push({ from: dprHm(at), to: dprHm(x.from), type: '', desc: '' });
+    const np = S.pauses.filter(p => p.sv_id === x.sv.id).length, ns = S.sightings.filter(p => p.sv_id === x.sv.id).length;
+    const desc = [`批次 Batch ${x.s.shift_no || ''}`, x.s.construction_vessel, x.s.scope, x.s.site].filter(Boolean).join(' · ') +
+      (ns ? ` · 目擊 Sightings ${ns}` : '') + (np ? ` · 暫停施工 Pauses ${np}` : '');
+    out.push({ from: dprHm(x.from), to: dprHm(x.to), type: mmo, desc });
+    at = x.to;
+  });
+  if (out.length && at < 1440) out.push({ from: dprHm(at), to: '24:00', type: '', desc: '' });
+  return out;
+}
+/** 把當天批次的觀察員加進人員表（已在表上的不重複） */
+function dprAddObservers(d, vid, date) {
+  const segs = dprBatchSegs(vid, date), have = new Set(d.personnel.map(p => String(p.name).trim())), comps = dprList('dpr_companies');
+  let n = 0;
+  segs.forEach(x => {
+    const crew = json(x.sv.crew, {});
+    Object.keys(crew).forEach(slot => {
+      const ids = String((crew[slot] && crew[slot].id) || '').split(',');
+      String((crew[slot] && crew[slot].name) || '').split('、').map(s => s.trim()).filter(Boolean).forEach((name, i) => {
+        if (have.has(name)) return;
+        have.add(name); n++;
+        const o = S.observers.find(z => z.id === ids[i]) || S.observers.find(z => z.name === name) || {};
+        const func = dprList('dpr_functions').find(f => f.indexOf(slot) >= 0) || dprPick('dpr_functions', /TCO|觀察/);
+        const company = o.company ? (comps.find(c => c.indexOf(o.company) >= 0) || o.company) : '';
+        d.personnel.push({ name, func, company, on: '8', off: '16', remark: slot });
+      });
+    });
+  });
+  return n;
+}
+
+// ---- 清單頁 ----
+function dprMonths() {
+  const set = new Set([today().slice(0, 7)]);
+  (S.dpr || []).forEach(x => set.add(x.date.slice(0, 7)));
+  return Array.from(set).sort().reverse();
+}
+function renderDpr() {
+  setTitle(L('Daily progress report (DPR)', '每日報告 DPR'));
+  if (DPR.cur) return dprEditor();
+  if (!DPR.month) DPR.month = today().slice(0, 7);
+  const list = (S.dpr || []).filter(x => x.date.slice(0, 7) === DPR.month && (!DPR.vessel || x.vessel_id === DPR.vessel))
+    .sort((a, b) => (b.date + a.vessel_name).localeCompare(a.date + b.vessel_name));
+  const vs = S.vessels.filter(v => bool(v.active) || (S.dpr || []).some(x => x.vessel_id === v.id));
+  // 有批次但還沒有 DPR 的日子（MMO 船，到今天為止）
+  const miss = [];
+  S.svs.forEach(sv => {
+    const s = shiftOf(sv.shift_id); if (!s || !sv.pre_start) return;
+    const d = sv.pre_start.slice(0, 10);
+    if (d.slice(0, 7) !== DPR.month || d > today() || (DPR.vessel && sv.vessel_id !== DPR.vessel)) return;
+    if ((S.dpr || []).some(x => x.vessel_id === sv.vessel_id && x.date === d) || miss.some(m => m.vid === sv.vessel_id && m.d === d)) return;
+    miss.push({ vid: sv.vessel_id, d, name: sv.vessel_name });
+  });
+  miss.sort((a, b) => (a.d + a.name).localeCompare(b.d + b.name));
+  $('content').innerHTML = `
+    <div class="section"><div class="section-header"><div class="toolbar">
+        <select style="width:auto" onchange="DPR.month=this.value;renderDpr()">${opts(dprMonths(), DPR.month)}</select>
+        <select style="width:auto" onchange="DPR.vessel=this.value;renderDpr()">${opts(vs.map(v => ({ v: v.id, t: v.name })), DPR.vessel, L('All vessels', '全部船舶'))}</select></div>
+      ${can('dpr.edit') ? `<button class="btn btn-green btn-sm" onclick="dprNewModal()">＋ ${L('New DPR', '新增 DPR')}</button>` : ''}</div>
+      ${miss.length && can('dpr.edit') ? `<div style="padding:10px 16px;border-bottom:1px solid var(--border)"><span class="small muted">${L('Batch days without a DPR:', '有批次但還沒有 DPR：')}</span>
+        <div class="toolbar" style="margin-top:6px">${miss.map(m => `<button class="btn btn-sm" onclick="dprOpen({vessel_id:'${m.vid}',date:'${m.d}'})">📝 ${m.d.slice(5).replace('-', '/')} ${esc(m.name)}</button>`).join('')}</div></div>` : ''}
+      ${list.length ? `<div class="table-wrap"><table class="tbl"><tr><th>${L('Date', '日期')}</th><th>${L('Vessel', '船舶')}</th><th>${L('DPR No.', '日報編號')}</th><th>${L('Status', '狀態')}</th><th>${L('Last update', '最近更新')}</th></tr>
+        ${list.map(x => `<tr class="click" onclick="dprOpen({id:'${x.id}'})"><td class="mono">${esc(x.date)}</td><td><b>${esc(x.vessel_name)}</b></td><td class="mono">${esc(x.dpr_no)}</td>
+          <td>${x.status === 'done' ? `<span class="tag green">${L('Completed', '已完成')}</span>` : `<span class="tag amber">${L('Draft', '草稿')}</span>`}</td>
+          <td class="small muted">${esc(x.updated_by)} · ${fmtT(x.updated_at, true)}</td></tr>`).join('')}</table></div>`
+        : `<div class="empty">${L('No DPR this month', '這個月還沒有 DPR')}</div>`}</div>`;
+}
+function dprNewModal() {
+  const vs = S.vessels.filter(v => bool(v.active)).sort((a, b) => (a.kind === 'mmo' ? 0 : 1) - (b.kind === 'mmo' ? 0 : 1) || (Number(a.sort) || 999) - (Number(b.sort) || 999));
+  openModal(L('New DPR', '新增 DPR'), `<div class="form-grid">
+    <div class="fg"><label>${L('Vessel', '船舶')} *</label><select id="dnV">${opts(vs.map(v => ({ v: v.id, t: v.name })), DPR.vessel || (vs[0] || {}).id)}</select></div>
+    <div class="fg"><label>${L('Date', '日期')} *</label><input id="dnD" type="date" value="${today()}" max="${today()}"></div>
+    <div class="fg full"><span class="small muted">${L('Crew, signatories and start-of-day fuel/water are copied from the previous DPR of this vessel; working times and observers are taken from that day’s batches.',
+      '人員、簽名人與本日起始油水量會沿用這艘船的前一份 DPR；作業時間與觀察員會從當天的施工批次帶入。')}</span></div></div>`, {
+    saveText: L('Open', '開啟'),
+    onSave: async bg => {
+      const vessel_id = val(bg, 'dnV'), date = val(bg, 'dnD');
+      if (!vessel_id || !date) { toast(L('Pick a vessel and a date', '請選船舶與日期'), 'error'); return false; }
+      await dprOpen({ vessel_id, date });
+    } });
+}
+/** 開一份：已存在就讀出來，沒有就用前一份＋當天批次建一份新的（還沒存） */
+async function dprOpen(q) {
+  showLoading(L('Loading…', '載入中…'));
+  let r;
+  try { r = await api('dpr.get', q); } catch (e) { toast(e.message, 'error'); return; } finally { hideLoading(); }
+  const vid = r.rec ? r.rec.vessel_id : q.vessel_id, date = r.rec ? r.rec.date : q.date, v = dprVessel(vid);
+  DPR.cur = r.rec ? { id: r.rec.id, vessel_id: vid, date, dpr_no: r.rec.dpr_no, status: r.rec.status, d: dprFix(json(r.rec.data, {})), rec: r.rec, prev: r.prev }
+    : { id: '', vessel_id: vid, date, dpr_no: dprNextNo(r.prev, v), status: 'draft', d: dprBlank(r.prev, r.env, v, date), rec: null, prev: r.prev };
+  DPR.dirty = false;
+  renderDpr();
+  window.scrollTo(0, 0);
+}
+async function dprBack() {
+  if (DPR.dirty && !(await confirmBox(L('Discard unsaved changes to this DPR?', '這份 DPR 還沒儲存，確定離開？'), L('Discard', '放棄'), true))) return;
+  DPR.dirty = false; DPR.cur = null; renderDpr();
+}
+
+// ---- 編輯頁 ----
+function dprRO() { return !can('dpr.edit'); }
+/** 依路徑讀寫 DPR.cur.d，例如 inc.fatal、personnel.2.name、wx.w10.3 */
+function dprGet(path) { return path.split('.').reduce((o, k) => (o === undefined || o === null ? undefined : o[k]), dprData()); }
+function dprSet(el) {
+  const ps = el.dataset.p.split('.');
+  let o = dprData();
+  for (let i = 0; i < ps.length - 1; i++) { if (o[ps[i]] === undefined || o[ps[i]] === null) o[ps[i]] = /^\d+$/.test(ps[i + 1]) ? [] : {}; o = o[ps[i]]; }
+  o[ps[ps.length - 1]] = el.value;
+  DPR.dirty = true;
+}
+function dprIn(path, o) {
+  o = o || {};
+  const v = dprGet(path);
+  return `<input class="dpr-in ${o.cls || ''}" data-p="${path}" value="${esc(v === undefined ? '' : v)}" ${o.num ? 'type="number" step="any" min="0" inputmode="decimal"' : ''}
+    ${o.ph ? `placeholder="${esc(o.ph)}"` : ''} ${o.style ? `style="${o.style}"` : ''} oninput="dprSet(this)${o.after ? ';' + o.after : ''}" ${o.change ? `onchange="${o.change}"` : ''} ${dprRO() ? 'disabled' : ''}>`;
+}
+function dprSel(path, list) {
+  const v = dprGet(path) || '', l = list.slice();
+  if (v && l.indexOf(v) < 0) l.push(v);
+  return `<select class="dpr-in" data-p="${path}" onchange="dprSet(this)" ${dprRO() ? 'disabled' : ''}>${opts(l.map(x => ({ v: x, t: biName(x) })), v, '—')}</select>`;
+}
+function dprCounts(list, grp) {
+  return `<table class="tbl dpr-cnt">${list.map(x => `<tr><td>${esc(x[1])}<div class="small muted">${esc(x[2])}</div></td><td style="width:90px">${dprIn(grp + '.' + x[0], { num: 1, ph: '0' })}</td></tr>`).join('')}</table>`;
+}
+function dprActsTotal() { return dprData().acts.reduce((n, a) => { const d = dprMin(a.to) - dprMin(a.from); return n + (d > 0 ? d : 0); }, 0); }
+/** 改了時間：更新時長與合計（不重畫，避免游標跳掉）；下一列沒填起始時間就接上 */
+function dprActsCalc(i) {
+  const acts = dprData().acts;
+  if (i !== undefined && acts[i + 1] && !acts[i + 1].from && acts[i].to) {
+    acts[i + 1].from = acts[i].to;
+    const el = document.querySelector(`[data-p="acts.${i + 1}.from"]`); if (el) el.value = acts[i].to;
+  }
+  acts.forEach((a, k) => { const el = $('dprDur' + k); if (!el) return; const d = dprMin(a.to) - dprMin(a.from); el.textContent = d >= 0 ? dprHm(d) : (a.from && a.to ? '⚠' : ''); });
+  const t = dprActsTotal(), el = $('dprActTot');
+  if (el) el.innerHTML = `${dprHm(t)} ${t === 1440 ? '<span class="tag green">24 h ✓</span>' : `<span class="tag amber">${L('not 24 h', '未滿／超過 24 小時')}</span>`}`;
+}
+function dprNormT(el, i) {
+  let v = el.value.trim().replace(/[：.]/g, ':');
+  if (/^\d{3,4}$/.test(v)) v = v.padStart(4, '0').replace(/(\d\d)(\d\d)/, '$1:$2');
+  else if (/^\d{1,2}$/.test(v)) v = v.padStart(2, '0') + ':00';
+  else if (/^\d:\d\d$/.test(v)) v = '0' + v;
+  el.value = v; dprSet(el); dprActsCalc(i);
+}
+/** 油水：改「消耗量」→ 算最終量；改「最終量」→ 回推消耗量（起始＋加油－最終） */
+function dprConsCalc(el) {
+  const k = el.dataset.p.split('.'), c = dprData().cons[k[1]];
+  if (k[2] === 'end') { const s = dprNum(c.start), e = dprNum(c.end); if (s !== null && e !== null) c.used = String(r3(s + (dprNum(c.bunk) || 0) - e)); }
+  else dprConsEnd(c);
+  ['end', 'used'].forEach(f => { if (f === k[2]) return; const i = document.querySelector(`[data-p="cons.${k[1]}.${f}"]`); if (i) i.value = c[f] === undefined ? '' : c[f]; });
+}
+function dprEditor() {
+  const c = DPR.cur, d = c.d, v = dprVessel(c.vessel_id), st = S.settings, ro = dprRO(), acts = d.acts;
+  const funcs = dprList('dpr_functions'), comps = dprList('dpr_companies'), types = dprList('dpr_activities');
+  const tot = dprActsTotal(), pob = d.personnel.filter(p => String(p.name || '').trim()).length;
+  const head = (n, en, zh, right) => `<div class="section-header"><h3>${n}) ${zh} ${en}</h3>${right ? `<div class="toolbar">${right}</div>` : ''}</div>`;
+  $('content').innerHTML = `
+    <div class="toolbar" style="margin-bottom:12px;position:sticky;top:0;z-index:5;background:var(--bg,#f4f6f9);padding:8px 0">
+      <button class="btn btn-sm" onclick="dprBack()">◀ ${L('List', '清單')}</button>
+      <b style="margin-right:auto">${esc(v.name)} · ${esc(c.date)} ${c.status === 'done' ? `<span class="tag green">${L('Completed', '已完成')}</span>` : `<span class="tag amber">${L('Draft', '草稿')}</span>`}
+        ${c.id ? '' : `<span class="tag red">${L('Not saved yet', '尚未儲存')}</span>`}</b>
+      <button class="btn btn-sm" onclick="dprPrint()">🖨 ${L('Print / PDF', '列印／PDF')}</button>
+      ${ro ? '' : `${c.id ? `<button class="btn btn-danger btn-sm" onclick="dprDelete(this)">🗑</button>` : ''}
+        <button class="btn btn-sm" onclick="dprSave(this,'draft')">💾 ${L('Save draft', '存草稿')}</button>
+        <button class="btn btn-primary btn-sm" onclick="dprSave(this,'done')">✅ ${L('Save as completed', '完成並儲存')}</button>`}
+    </div>
+    <div class="section"><div class="section-body"><div class="form-grid dpr-head">
+      <div class="fg"><label>專案 Project</label><div>${esc(st.dpr_project)}</div></div>
+      <div class="fg"><label>日報編號 DPR No.</label><input class="mono" value="${esc(c.dpr_no)}" oninput="DPR.cur.dpr_no=this.value;DPR.dirty=true" ${ro ? 'disabled' : ''}></div>
+      <div class="fg"><label>客戶 Client</label><div>${esc(st.dpr_client)}</div></div>
+      <div class="fg"><label>日期 Date</label><div class="mono">${esc(c.date)}</div></div>
+      <div class="fg"><label>承攬商 Contractor</label><div>${esc(st.dpr_contractor)}</div></div>
+      <div class="fg"><label>船隻 Vessel</label><div>${esc(v.name)}</div></div>
+    </div></div></div>
+
+    <div class="section">${head(1, 'Health, Safety, Environment and Security', '環安衛')}
+      <div class="dpr-hsse">
+        <div><div class="dpr-sub">1.1 事故報告 Incident Reporting <span class="muted small">(${L('today', '今日')})</span></div>${dprCounts(DPR_INC, 'inc')}</div>
+        <div><div class="dpr-sub">1.2 環安衛作業 HSSE Activities <span class="muted small">(${L('today', '今日')})</span></div>${dprCounts(DPR_HSE, 'hse')}</div>
+        <div><div class="dpr-sub">1.3 演練 Drills <span class="muted small">(${L('today', '今日')})</span></div>${dprCounts(DPR_DRILL, 'drill')}</div>
+      </div>
+      <div class="section-body" style="padding-top:0"><div class="fg"><label>意見 Remarks</label>
+        <textarea class="dpr-in" data-p="hsse_remarks" rows="2" oninput="dprSet(this)" ${ro ? 'disabled' : ''}>${esc(d.hsse_remarks)}</textarea></div></div></div>
+
+    <div class="section">${head(2, 'Personnel', '人員', ro ? '' : `<span class="small muted">POB ${pob}</span>
+        <button class="btn btn-sm" onclick="dprObsImport()">👀 ${L('Add observers from batches', '從批次帶入觀察員')}</button>
+        <button class="btn btn-green btn-sm" onclick="dprRow('personnel')">＋ ${L('Add row', '新增一列')}</button>`)}
+      ${d.personnel.length ? `<div class="table-wrap"><table class="tbl dpr-tbl"><tr><th>#</th><th>名字 Name</th><th>角色 Function</th><th>公司 Company</th><th>工作 On (hr)</th><th>休息 Off (hr)</th><th>備註 Remarks</th>${ro ? '' : '<th></th>'}</tr>
+        ${d.personnel.map((p, i) => `<tr><td>${i + 1}</td><td>${dprIn(`personnel.${i}.name`, { style: 'min-width:120px' })}</td><td>${dprSel(`personnel.${i}.func`, funcs)}</td>
+          <td>${dprSel(`personnel.${i}.company`, comps)}</td><td>${dprIn(`personnel.${i}.on`, { num: 1, style: 'width:70px' })}</td><td>${dprIn(`personnel.${i}.off`, { num: 1, style: 'width:70px' })}</td>
+          <td>${dprIn(`personnel.${i}.remark`, { style: 'min-width:100px' })}</td>${ro ? '' : `<td style="white-space:nowrap"><button class="btn btn-sm" title="${L('Move up', '上移')}" onclick="dprMove('personnel',${i},-1)" ${i ? '' : 'disabled'}>↑</button>
+          <button class="btn btn-danger btn-sm" onclick="dprDelRow('personnel',${i})">🗑</button></td>`}</tr>`).join('')}</table></div>`
+        : `<div class="empty">${L('No personnel yet', '還沒有人員')}</div>`}</div>
+
+    <div class="section">${head(3, 'Weather', '天氣', ro ? '' : `<button class="btn btn-sm" onclick="dprWxFetch(this)">🌊 ${L('Fill from Open-Meteo', '從 Open-Meteo 帶入')}</button>`)}
+      <div class="table-wrap"><table class="tbl dpr-tbl dpr-wx"><tr><th></th><th>${L('Unit', '單位')}</th>${DPR_WX_COLS.map((h, i) => `<th>${i < 4 ? '今日 ' + h : '預報 Forecast ' + h}</th>`).join('')}</tr>
+        ${DPR_WX.map(w => `<tr><td>${esc(w[1])}<div class="small muted">${esc(w[2])}</div></td><td class="small muted">${esc(w[3])}</td>
+          ${DPR_WX_COLS.map((h, i) => `<td>${dprIn(`wx.${w[0]}.${i}`, { num: !w[4], style: w[0] === 'local' ? 'min-width:110px' : 'width:76px' })}</td>`).join('')}</tr>`).join('')}</table></div>
+      <div class="section-body small muted" style="padding-top:6px">${L('Open-Meteo has no data for max. wave height and 100 m gusts — enter those by hand. Forecast columns use noon of the next day and the day after.',
+        'Open-Meteo 沒有最大波高與 100 m 陣風資料，請自行填寫；預報欄取隔天與後天中午的預報值。')}</div></div>
+
+    <div class="section">${head(4, 'Daily Activities', '本日工作', ro ? '' : `<button class="btn btn-sm" onclick="dprActsImport()">📋 ${L('Fill from batches', '從批次帶入')}</button>
+        <button class="btn btn-green btn-sm" onclick="dprRow('acts')">＋ ${L('Add row', '新增一列')}</button>`)}
+      ${acts.length ? `<div class="table-wrap"><table class="tbl dpr-tbl"><tr><th>起 From</th><th>迄 To</th><th>持續 Duration</th><th>工作類別 Activity Type</th><th>敘述/備註 Description / Remarks</th>${ro ? '' : '<th></th>'}</tr>
+        ${acts.map((a, i) => `<tr><td>${dprIn(`acts.${i}.from`, { cls: 'mono', ph: 'hh:mm', style: 'width:72px', change: `dprNormT(this,${i})` })}</td>
+          <td>${dprIn(`acts.${i}.to`, { cls: 'mono', ph: 'hh:mm', style: 'width:72px', change: `dprNormT(this,${i})` })}</td>
+          <td class="mono" id="dprDur${i}"></td><td>${dprSel(`acts.${i}.type`, types)}</td><td>${dprIn(`acts.${i}.desc`, { style: 'min-width:220px' })}</td>
+          ${ro ? '' : `<td style="white-space:nowrap"><button class="btn btn-sm" onclick="dprMove('acts',${i},-1)" ${i ? '' : 'disabled'}>↑</button>
+          <button class="btn btn-danger btn-sm" onclick="dprDelRow('acts',${i})">🗑</button></td>`}</tr>`).join('')}
+        <tr style="font-weight:700"><td colspan="2">總計 Total</td><td class="mono" colspan="${ro ? 3 : 4}" id="dprActTot"></td></tr></table></div>`
+        : `<div class="empty">${L('No activities yet — “Fill from batches” adds the observation times of this vessel’s batches.', '還沒有工作紀錄；按「從批次帶入」會帶入這艘船當天各批次的觀測時間。')}</div>`}
+      <div class="section-body small muted" style="padding-top:6px">${L('Times as hh:mm (0800 is fine); use 24:00 for the end of the day.', '時間填 hh:mm（打 0800 也可以）；一天結束填 24:00。')}</div></div>
+
+    <div class="section">${head(5, 'Consumption', '消耗量')}
+      <div class="table-wrap"><table class="tbl dpr-tbl"><tr><th></th><th>本日起始量 Start of Day (m³)</th><th>本日加油(水)量 Bunkered Today (m³)</th><th>本日總計消耗量 Tot. Cons. Today (m³)</th><th>本日最終量 End of Day (m³)</th></tr>
+        ${DPR_CONS.map(x => `<tr><td><b>${x[2]} ${x[1]}</b></td>${['start', 'bunk', 'used', 'end'].map(f => `<td>${dprIn(`cons.${x[0]}.${f}`, { num: 1, style: 'width:110px', after: 'dprConsCalc(this)' })}</td>`).join('')}</tr>`).join('')}</table></div>
+      <div class="section-body small muted" style="padding-top:6px">${L('End = start + bunkered − consumed (enter either consumed or end). ', '最終量＝起始量＋加油(水)量－消耗量（填消耗量或最終量其一即可）。') +
+        (envOn(v) ? L('On save, consumption and POB are copied to Environment › Daily entry.', '儲存時，消耗量與在船人數 POB 會同步到「環保統計 › 每日填報」。') : '')}</div></div>
+
+    <div class="section">${head(6, 'General Remarks', '總結')}<div class="section-body">
+      <textarea class="dpr-in" data-p="remarks" rows="4" oninput="dprSet(this)" ${ro ? 'disabled' : ''}>${esc(d.remarks)}</textarea></div></div>
+
+    <div class="section">${head(7, 'Signatures', '簽名')}<div class="section-body"><div class="form-grid">
+      <div class="fg"><label>船隻代表 Vessel representative — 姓名 Name</label>${dprIn('sign.vessel')}</div>
+      <div class="fg"><label>安達希代表 NMDC Representative — 姓名 Name</label>${dprIn('sign.nmdc')}</div>
+      <div class="fg full"><span class="small muted">${L('Signatures are signed by hand on the printed copy.', '簽名欄於列印後親簽。')}</span></div></div></div></div>
+    ${c.rec ? `<div class="small muted">${L('Created', '建立')} ${esc(c.rec.created_by)} · ${fmtT(c.rec.created_at, true)} · ${L('Updated', '更新')} ${esc(c.rec.updated_by)} · ${fmtT(c.rec.updated_at, true)}</div>` : ''}`;
+  if (acts.length) dprActsCalc();
+}
+function dprRow(k) {
+  const d = dprData();
+  if (k === 'personnel') { const last = d.personnel[d.personnel.length - 1] || {}; d.personnel.push({ name: '', func: '', company: last.company || '', on: last.on || '8', off: last.off || '16', remark: '' }); }
+  else { const last = d.acts[d.acts.length - 1]; d.acts.push({ from: last ? last.to : '00:00', to: '', type: '', desc: '' }); }
+  DPR.dirty = true; dprEditor();
+}
+function dprDelRow(k, i) { dprData()[k].splice(i, 1); DPR.dirty = true; dprEditor(); }
+function dprMove(k, i, dir) { const a = dprData()[k], j = i + dir; if (j < 0 || j >= a.length) return; [a[i], a[j]] = [a[j], a[i]]; DPR.dirty = true; dprEditor(); }
+async function dprActsImport() {
+  const c = DPR.cur, list = dprBatchActs(c.vessel_id, c.date);
+  if (!list.length) return toast(L('No batch observation on this date for this vessel', '這艘船這天沒有批次觀測紀錄'), 'error');
+  if (c.d.acts.length && !(await confirmBox(L('Replace the activity rows with the batch times?', '用批次時間取代目前的工作紀錄？'), L('Replace', '取代'), true))) return;
+  c.d.acts = list; DPR.dirty = true; dprEditor();
+}
+function dprObsImport() {
+  const n = dprAddObservers(dprData(), DPR.cur.vessel_id, DPR.cur.date);
+  toast(n ? L(`Added ${n} observer(s)`, `已加入 ${n} 位觀察員`) : L('No new observers in this day’s batches', '當天批次沒有新的觀察人員'), n ? '' : 'error');
+  if (n) { DPR.dirty = true; dprEditor(); }
+}
+/** 天氣：用當天批次的船位（沒有就用第一個工區）抓 Open-Meteo，06/12/18/24 時＋隔天、後天中午 */
+async function dprWxFetch(btn) {
+  const c = DPR.cur, seg = dprBatchSegs(c.vessel_id, c.date).find(x => isFinite(parseFloat(x.sv.lat)) && isFinite(parseFloat(x.sv.lon)));
+  let lat, lon;
+  if (seg) { lat = parseFloat(seg.sv.lat); lon = parseFloat(seg.sv.lon); }
+  else { const p = wxPoints()[0]; if (p) { lat = p.lat; lon = p.lon; } }
+  if (!isFinite(lat) || !isFinite(lon)) return toast(L('Set site coordinates in Back office first', '請先在後台設定工區座標'), 'error');
+  const filled = Object.keys(c.d.wx).some(k => (c.d.wx[k] || []).some(x => x !== '' && x !== undefined && x !== null));
+  if (filled && !(await confirmBox(L('Overwrite the weather table with Open-Meteo values? (Empty Open-Meteo values keep what you typed.)', '用 Open-Meteo 的數值覆蓋天氣表？（Open-Meteo 沒有的欄位保留原值）'), L('Overwrite', '覆蓋')))) return;
+  const D = c.date, q = `latitude=${lat}&longitude=${lon}&timezone=Asia%2FTaipei&start_date=${D}&end_date=${addDays(D, 2)}`;
+  const at = [D + 'T06:00', D + 'T12:00', D + 'T18:00', addDays(D, 1) + 'T00:00', addDays(D, 1) + 'T12:00', addDays(D, 2) + 'T12:00'];
+  const hv = 'temperature_2m,relative_humidity_2m,wind_speed_10m,wind_direction_10m,wind_gusts_10m,wind_speed_100m,visibility,weather_code';
+  btn.disabled = true; showLoading(L('Fetching weather…', '取得天氣中…'));
+  try {
+    const get = u => fetch(u).then(r => r.json()).then(j => { if (j.error) throw new Error(j.reason || 'weather error'); return j; });
+    const [f, m] = await Promise.all([
+      get(`https://api.open-meteo.com/v1/forecast?${q}&wind_speed_unit=ms&hourly=${hv}`)
+        .catch(() => get(`https://archive-api.open-meteo.com/v1/archive?${q}&wind_speed_unit=ms&hourly=${hv.replace(',visibility', '')}`)),
+      get(`https://marine-api.open-meteo.com/v1/marine?${q}&hourly=wave_height,swell_wave_height,swell_wave_period,swell_wave_direction,ocean_current_velocity`).catch(() => null)
+    ]);
+    const g = (o, k, t) => { if (!o || !o.hourly || !o.hourly[k]) return null; const i = o.hourly.time.indexOf(t); const x = i >= 0 ? o.hourly[k][i] : null; return x === null || x === undefined ? null : x; };
+    const r1 = x => x === null ? null : Math.round(x * 10) / 10;
+    const map = {
+      wdir: t => { const x = g(f, 'wind_direction_10m', t); return x === null ? null : compass(x); }, w10: t => r1(g(f, 'wind_speed_10m', t)), g10: t => r1(g(f, 'wind_gusts_10m', t)),
+      w100: t => r1(g(f, 'wind_speed_100m', t)), cur: t => { const x = g(m, 'ocean_current_velocity', t); return x === null ? null : Math.round(x / 3.6 * 100) / 100; },
+      hs: t => r1(g(m, 'wave_height', t)), swh: t => r1(g(m, 'swell_wave_height', t)), swp: t => r1(g(m, 'swell_wave_period', t)),
+      swd: t => { const x = g(m, 'swell_wave_direction', t); return x === null ? null : compass(x); }, temp: t => r1(g(f, 'temperature_2m', t)),
+      rh: t => { const x = g(f, 'relative_humidity_2m', t); return x === null ? null : Math.round(x); }, vis: t => { const x = g(f, 'visibility', t); return x === null ? null : Math.round(x); },
+      local: t => { const x = g(f, 'weather_code', t); return x === null ? null : (WX_CODES[x] ? WX_CODES[x][1] : null); }
+    };
+    let n = 0;
+    Object.keys(map).forEach(k => { const row = c.d.wx[k] = c.d.wx[k] || []; at.forEach((t, i) => { const x = map[k](t); if (x !== null) { row[i] = String(x); n++; } }); });
+    DPR.dirty = true; dprEditor();
+    toast(L(`Filled ${n} values (${lat.toFixed(3)}, ${lon.toFixed(3)})`, `已帶入 ${n} 個數值（${lat.toFixed(3)}, ${lon.toFixed(3)}）`));
+  } catch (e) { toast(L('Could not load weather: ', '無法取得天氣：') + e.message, 'error'); }
+  finally { hideLoading(); btn.disabled = false; }
+}
+async function dprSave(btn, status) {
+  const c = DPR.cur, v = dprVessel(c.vessel_id), d = c.d;
+  if (!String(c.dpr_no).trim()) return toast(L('Enter the DPR No.', '請填日報編號'), 'error');
+  if (status === 'done') {
+    const t = dprActsTotal(), warn = [];
+    if (t !== 1440) warn.push(L(`Daily activities add up to ${dprHm(t)}, not 24:00.`, `本日工作合計 ${dprHm(t)}，不是 24:00。`));
+    if (!d.personnel.some(p => String(p.name || '').trim())) warn.push(L('No personnel listed.', '沒有填人員。'));
+    if (warn.length && !(await confirmBox(warn.join('<br>') + '<br>' + L('Mark as completed anyway?', '仍要標記為已完成？'), L('Complete', '完成')))) return;
+  }
+  const pob = d.personnel.filter(p => String(p.name || '').trim()).length;
+  const env = envOn(v) ? { fuel_used_m3: d.cons.fuel.used || '', water_used_m3: d.cons.water.used || '', pob: pob ? String(pob) : '' } : {};
+  try {
+    const r = await mut('dpr.save', { id: c.id, vessel_id: c.vessel_id, date: c.date, dpr_no: String(c.dpr_no).trim(), status, data: JSON.stringify(d), env }, '', btn);
+    c.id = r.id; c.status = status; c.rec = Object.assign({}, c.rec || {}, r.rec); DPR.dirty = false;
+    toast(L('DPR saved', 'DPR 已儲存') + (r.env ? L(' · environment daily entry updated', '，已同步環保每日填報') : ''));
+    renderDpr();
+  } catch (e) {}
+}
+async function dprDelete(btn) {
+  const c = DPR.cur;
+  if (!(await confirmBox(L(`Delete DPR ${esc(c.dpr_no)}? This cannot be undone.`, `刪除 DPR ${esc(c.dpr_no)}？刪除後無法復原。`), L('Delete', '刪除'), true))) return;
+  try { await mut('dpr.delete', { id: c.id }, L('Deleted', '已刪除'), btn); DPR.cur = null; DPR.dirty = false; renderDpr(); } catch (e) {}
+}
+
+// ---- 列印（依原 Excel 範本版面；中英並列，不跟介面語言） ----
+function dprPrintHtml() {
+  const c = DPR.cur, d = c.d, v = dprVessel(c.vessel_id), st = S.settings, e = esc;
+  const n0 = x => (x === undefined || x === null || x === '' ? '0' : e(x));
+  const cnt = (list, g) => list.map(x => `<tr><td>${e(x[1])} ${e(x[2])}</td><td class="c">${n0(d[g][x[0]])}</td></tr>`).join('');
+  const ppl = d.personnel.filter(p => String(p.name || '').trim());
+  const hrs = x => x === undefined || x === '' ? '' : e(x) + 'HR';
+  const tot = dprActsTotal();
+  const cons = (x, f) => e((d.cons[x] || {})[f]);
+  return `<div class="dp">
+    <table class="dp-t dp-top"><tr><td class="dp-logo"><img src="img/dpr-nmdc.jpg" alt="NMDC"><img src="img/dpr-tpc.png" alt="TPC"></td>
+      <td class="dp-title">Daily Progress Report</td><td class="dp-co">${e(st.dpr_company).replace(/\\n|\n/g, '<br>')}</td></tr></table>
+    <table class="dp-t"><tr><th>專案 Project</th><td>${e(st.dpr_project)}</td><th>日報編號 DPR No.</th><td>${e(c.dpr_no)}</td></tr>
+      <tr><th>客戶 Client</th><td>${e(st.dpr_client)}</td><th>日期 Date</th><td>${e(c.date)}</td></tr>
+      <tr><th>承攬商 Contractor</th><td>${e(st.dpr_contractor)}</td><th>船隻 Vessel</th><td>${e(v.name)}</td></tr></table>
+    <div class="dp-h">1) 環安衛 Health, Safety, Environment and Security</div>
+    <div class="dp-2"><table class="dp-t"><tr><th>1.1 事故報告 Incident Reporting</th><th class="c">今日 Today</th></tr>${cnt(DPR_INC, 'inc')}
+        <tr><th>1.3 演練 Drills</th><th class="c">今日 Today</th></tr>${cnt(DPR_DRILL, 'drill')}</table>
+      <table class="dp-t"><tr><th>1.2 環安衛作業 HSSE Activities</th><th class="c">今日 Today</th></tr>${cnt(DPR_HSE, 'hse')}</table></div>
+    <table class="dp-t"><tr><td class="dp-rm"><b>意見 Remarks:</b> ${e(d.hsse_remarks).replace(/\n/g, '<br>')}</td></tr></table>
+    <div class="dp-h">2) 人員 Personnel</div>
+    <table class="dp-t"><tr><th class="c">#</th><th>名字 Name</th><th>角色 Function</th><th>公司 Company</th><th class="c">工作/休息 On/Off</th><th>備註 Remarks</th></tr>
+      ${ppl.map((p, i) => `<tr><td class="c">${i + 1}</td><td>${e(p.name)}</td><td>${e(p.func)}</td><td>${e(p.company)}</td><td class="c">${hrs(p.on)} / ${hrs(p.off)}</td><td>${e(p.remark)}</td></tr>`).join('') || '<tr><td colspan="6">&nbsp;</td></tr>'}
+      <tr><td colspan="6"><b>POB: ${ppl.length}</b></td></tr></table>
+    <div class="dp-h">3) 天氣 Weather</div>
+    <table class="dp-t"><tr><th rowspan="2"></th><th rowspan="2" class="c">Unit</th><th colspan="4" class="c">今日天氣 Weather Today</th><th colspan="2" class="c">預報 Forecast</th></tr>
+      <tr>${DPR_WX_COLS.map(h => `<th class="c">${h}</th>`).join('')}</tr>
+      ${DPR_WX.map(w => `<tr><td>${e(w[1])} ${e(w[2])}</td><td class="c">${e(w[3])}</td>${DPR_WX_COLS.map((h, i) => `<td class="c">${e(((d.wx[w[0]] || [])[i]) || '')}</td>`).join('')}</tr>`).join('')}</table>
+    <div class="dp-h">4) 本日工作 Daily Activities</div>
+    <table class="dp-t"><tr><th class="c">起 From</th><th class="c">迄 To</th><th class="c">持續時間 Duration</th><th>工作類別 Activity Type</th><th>敘述/備註 Description / Remarks</th></tr>
+      ${d.acts.map(a => { const du = dprMin(a.to) - dprMin(a.from); return `<tr><td class="c">${e(a.from)}</td><td class="c">${e(a.to)}</td><td class="c">${du >= 0 ? dprHm(du) : ''}</td><td>${e(a.type)}</td><td>${e(a.desc)}</td></tr>`; }).join('') || '<tr><td colspan="5">&nbsp;</td></tr>'}
+      <tr><th colspan="2">總計 Total</th><th class="c">${dprHm(tot)}</th><td colspan="2"></td></tr></table>
+    <div class="dp-h">5) 消耗量 Consumption</div>
+    <table class="dp-t"><tr><th></th><th class="c">本日起始量 Start of Day (m³)</th><th class="c">本日最終量 End of Day (m³)</th><th class="c">本日加油(水)量 Bunkered Today (m³)</th><th class="c">本日總計消耗量 Tot. Cons. Today (m³)</th></tr>
+      ${DPR_CONS.map(x => `<tr><th>${x[2]} ${x[1]}</th><td class="c">${cons(x[0], 'start')}</td><td class="c">${cons(x[0], 'end')}</td><td class="c">${cons(x[0], 'bunk')}</td><td class="c">${cons(x[0], 'used')}</td></tr>`).join('')}</table>
+    <div class="dp-h">6) 總結 General Remarks</div>
+    <table class="dp-t"><tr><td class="dp-rm" style="min-height:60px">${e(d.remarks).replace(/\n/g, '<br>') || '&nbsp;'}</td></tr></table>
+    <div class="dp-h">7) 簽名 Signatures</div>
+    <table class="dp-t dp-sig"><tr><td>簽名 Signature:</td><td>簽名 Signature:</td></tr>
+      <tr><td>姓名 Name: ${e(d.sign.vessel)}</td><td>姓名 Name: ${e(d.sign.nmdc)}</td></tr>
+      <tr><th class="c">船隻代表 Vessel representative</th><th class="c">安達希代表 NMDC Representative</th></tr></table>
+  </div>`;
+}
+function dprPrint() {
+  const c = DPR.cur, t = document.title;
+  $('dprPrint').innerHTML = dprPrintHtml();
+  document.body.classList.add('print-dpr');
+  document.title = (c.date.replace(/-/g, '') + '_' + c.dpr_no).replace(/[\\/:*?"<>|]/g, '_');   // 另存 PDF 的預設檔名
+  const done = () => { document.body.classList.remove('print-dpr'); document.title = t; window.removeEventListener('afterprint', done); };
+  window.addEventListener('afterprint', done);
+  setTimeout(() => window.print(), 300);
+}
+
+window.addEventListener('beforeunload', e => { if (DPR.dirty) { e.preventDefault(); e.returnValue = ''; } });
+
 // ==================== 離岸環保統計（只有管理員；資料在 S.env） ====================
 const ENV_LABEL = {
   pob: ['POB (persons on board)', '在船人數 POB'], fuel_used_m3: ['Fuel used (m³)', '用油量 (m³)'], water_used_m3: ['Water used (m³)', '用水量 (m³)']
@@ -3587,6 +4064,17 @@ function adminSettings() {
       <div class="fg full"><label>${L('API key (stored on the server only)', 'API 金鑰（只存在伺服器端）')}</label><input id="st_ais_api_key" class="mono" value="${esc(st.ais_api_key)}"></div>
       <div class="full toolbar"><button class="btn btn-sm" type="button" onclick="testAis(this)">🔑 ${L('Test key (free, no credits used)', '測試金鑰（不扣點）')}</button><span class="small muted" id="aisTest">${L('Save settings first, then test.', '請先儲存設定再測試。')}</span></div>
     </div></div></div>
+    <div class="section"><div class="section-header"><h3>📝 ${L('Daily progress report (DPR)', '每日報告 DPR')}</h3></div><div class="section-body"><div class="form-grid">
+      <div class="fg full"><label>專案 Project</label><input id="st_dpr_project" value="${esc(st.dpr_project)}"></div>
+      <div class="fg"><label>客戶 Client</label><input id="st_dpr_client" value="${esc(st.dpr_client)}"></div>
+      <div class="fg"><label>承攬商 Contractor</label><input id="st_dpr_contractor" value="${esc(st.dpr_contractor)}"></div>
+      <div class="fg"><label>${L('Header text, top right (printed)', '列印表頭右上角文字')}</label><textarea id="st_dpr_company" rows="2">${esc(st.dpr_company)}</textarea></div>
+      <div class="fg"><label>${L('DPR No. prefix', 'DPR 編號前綴')}</label><input id="st_dpr_no_prefix" class="mono" value="${esc(st.dpr_no_prefix)}">
+        <span class="small muted">${L('A vessel’s first DPR gets “prefix-vessel-001”; later ones add 1 to the previous number.', '船舶第一份 DPR 編為「前綴-船名-001」，之後每份自動接前一份的號碼 +1。')}</span></div>
+      ${ta('dpr_activities', 'Activity types', '工作類別', L('“中文 English” per line.', '每行「中文 English」。'), 6)}
+      ${ta('dpr_functions', 'Personnel functions', '人員角色', '', 6)}
+      ${ta('dpr_companies', 'Companies', '公司', '', 5)}
+    </div></div></div>
     <div class="section"><div class="section-header"><h3>🌱 ${L('Environmental statistics', '環保統計')}</h3></div><div class="section-body"><div class="form-grid">
       <div class="fg full"><label>${L('Fuels (name, density kg/L, CO₂ factor t CO₂ per t fuel — one per line)', '燃料（每行：名稱, 密度 kg/L, CO₂ 排放係數 t CO₂／t 燃料）')}</label><textarea id="st_env_fuels" class="mono" rows="4">${esc(st.env_fuels)}</textarea>
         <span class="small muted">${L('CO₂ = m³ × density (t/m³ = kg/L) × factor. Default factors follow IMO MEPC.308(73); densities are typical values — use your bunker delivery notes if you have them.', 'CO₂＝用油 m³ × 密度（t/m³，數值同 kg/L）× 係數。預設係數依 IMO MEPC.308(73)；密度為一般值，有加油單（BDN）請以實際密度為準。')}</span></div>
@@ -3640,7 +4128,8 @@ function saveSettings(btn) {
     const n = tr.querySelector('.wc-n').value.replace(/[,，]/g, ' ').trim(), d = tr.querySelector('.wc-d').value.trim();
     return n ? [n, d, tr.querySelector('.wc-h').value].join(', ') : '';
   }).filter(Boolean).join('\n');
-  ['project_name', 'pre_watch_min', 'alert_zone_m', 'watch_zone_m', 'response_min', 'repre_pause_min', 'mmo_dist_tol_m', 'sites', 'crew_slots', 'scopes', 'species', 'pause_reasons', 'ais_api_url', 'ais_api_key', 'weather_name', 'weather_points', 'weather_wave_limit', 'weather_wind_limit', 'pos_interval_min', 'track_interval_min', 'env_fuels', 'env_waste_methods', 'env_incident_types', 'env_incident_places', 'env_zero_start'].forEach(k => { p[k] = $('st_' + k).value.trim(); });
+  ['project_name', 'pre_watch_min', 'alert_zone_m', 'watch_zone_m', 'response_min', 'repre_pause_min', 'mmo_dist_tol_m', 'sites', 'crew_slots', 'scopes', 'species', 'pause_reasons', 'ais_api_url', 'ais_api_key', 'weather_name', 'weather_points', 'weather_wave_limit', 'weather_wind_limit', 'pos_interval_min', 'track_interval_min', 'env_fuels', 'env_waste_methods', 'env_incident_types', 'env_incident_places', 'env_zero_start',
+    'dpr_project', 'dpr_client', 'dpr_contractor', 'dpr_company', 'dpr_no_prefix', 'dpr_activities', 'dpr_functions', 'dpr_companies'].forEach(k => { p[k] = $('st_' + k).value.trim(); });
   mut('settings.save', p, L('Settings saved', '設定已儲存'), btn).catch(() => {});
 }
 function adminUsers() {
@@ -3684,9 +4173,10 @@ function roleModal(id) {
 const RESET_GROUPS = [
   ['shifts', 'Batches (incl. pauses, sightings and uploaded files)', '施工批次（含暫停施工、目擊紀錄與上傳檔案）', () => S.shifts.length, true],
   ['tracks', 'Vessel tracks and position history', '船舶軌跡與船位紀錄', () => S.tracks.length, true],
-  ['vessels', 'Vessel list (also clears tracks and environmental records)', '船舶清單（一併清除軌跡與環保紀錄）', () => S.vessels.length, false],
+  ['vessels', 'Vessel list (also clears tracks, environmental records and DPRs)', '船舶清單（一併清除軌跡、環保紀錄與 DPR）', () => S.vessels.length, false],
   ['observers', 'Observer list', '觀察員清單', () => S.observers.length, false],
-  ['env', 'Environmental records (daily, waste, incidents)', '環保紀錄（每日、廢棄物、環境事件）', () => S.env ? S.env.daily.length + S.env.waste.length + S.env.incidents.length : 0, false]
+  ['env', 'Environmental records (daily, waste, incidents)', '環保紀錄（每日、廢棄物、環境事件）', () => S.env ? S.env.daily.length + S.env.waste.length + S.env.incidents.length : 0, false],
+  ['dpr', 'Daily progress reports (DPR)', '每日報告 DPR', () => (S.dpr || []).length, false]
 ];
 function adminReset() {
   $('adminBody').innerHTML = `<div class="section" style="border-color:#efc4c4"><div class="section-header"><h3>⚠️ ${L('Reset data', '清空資料')}</h3></div><div style="padding:14px 16px">
