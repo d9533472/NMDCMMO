@@ -3131,7 +3131,7 @@ function dprNewModal() {
     <div class="fg"><label>${L('Date', '日期')} *</label><input id="dnD" type="date" value="${today()}" max="${today()}"></div>
     <div class="fg full"><span class="small muted">${L('Crew, signatories and start-of-day fuel/water are copied from the previous DPR of this vessel; working times and observers are taken from that day’s batches.',
       '人員、簽名人與本日起始油水量會沿用這艘船的前一份 DPR；作業時間與觀察員會從當天的施工批次帶入。')}</span></div></div>`, {
-    saveText: L('Open', '開啟'),
+    saveText: L('Open', '開啟'), perm: 'dpr.edit',
     onSave: async bg => {
       const vessel_id = val(bg, 'dnV'), date = val(bg, 'dnD');
       if (!vessel_id || !date) { toast(L('Pick a vessel and a date', '請選船舶與日期'), 'error'); return false; }
