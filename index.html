@@ -125,9 +125,14 @@ body:not(.admin) .adm{display:none!important}
 .stat.green{border-top-color:var(--green)}.stat.red{border-top-color:var(--danger)}.stat.amber{border-top-color:#e09a1a}.stat.blue{border-top-color:var(--info)}
 .stat.red .v{color:var(--danger)}
 .section{background:#fff;border:1px solid var(--border);border-radius:var(--radius-lg);margin-bottom:16px;overflow:hidden}
-.section-header{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:12px 16px;border-bottom:1px solid var(--border)}
+.section-header{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:12px 16px;border-bottom:1px solid var(--border);background:var(--info-bg)}
 .section-header h3{font-size:14px;font-weight:600;color:var(--navy)}
 .section-body{padding:16px}
+/* 上傳區的子標題與 12 小時時段框 */
+.up-h{font-size:14px;font-weight:700;color:var(--navy);margin:4px 0 10px;padding-left:8px;border-left:4px solid var(--info)}
+.slot-box{border:1px solid var(--border-2);border-radius:var(--radius-lg);margin-bottom:16px;overflow:hidden}
+.slot-h{background:var(--na-bg);padding:8px 12px;font-weight:700;color:var(--navy);border-bottom:1px solid var(--border-2)}
+.slot-box .items{padding:12px;margin-bottom:0!important}
 .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .empty{padding:28px 16px;text-align:center;color:var(--muted);font-size:13px}
 .table-wrap{overflow-x:auto}
@@ -1573,7 +1578,7 @@ function renderDashboard() {
       <div class="stat ${missing.length ? 'red' : ''}"><div class="v">${missing.length}</div><div class="l">${L('Completed but missing uploads', '已完工但缺件')}</div></div>
     </div>
     ${pauseStatsSection()}
-    <div class="section-header" style="padding:0 0 10px;border:0"><h3>${L('Active MMO vessels', '作業中 MMO 船')}</h3>
+    <div class="section-header" style="padding:0 0 10px;border:0;background:none"><h3>${L('Active MMO vessels', '作業中 MMO 船')}</h3>
       <button class="btn btn-green w" onclick="shiftModal()">＋ ${L('New batch', '新增批次')}</button></div>
     ${active.length ? `<div class="vgrid">${active.map(card).join('')}</div>` : `<div class="section"><div class="empty">${L('No active batches. Create a batch to start recording.', '目前沒有作業中的批次，請先新增批次。')}</div></div>`}
     <div class="dash-top"><div class="dash-left">${vesselPosSection()}</div><div class="dash-right"><div id="dashWeather"></div></div></div>
@@ -2460,14 +2465,14 @@ function uploadGrid(sv, ed) {
         ${ed ? `<label class="btn btn-sm w" style="justify-content:center">⬆ ${L('Upload', '上傳')}<input type="file" multiple hidden ${kind === 'photo' ? 'accept="image/*"' : 'accept=".pdf,image/*,.doc,.docx,.xls,.xlsx"'} onchange="uploadFiles('${sv.id}','${i.id}',this,'${slot || ''}')"></label>` : ''}
       </div>`;
   };
-  const head = (ico, title) => `<h4 style="font-size:13px;color:var(--muted);margin:4px 0 10px">${ico} ${title}</h4>`;
+  const head = (ico, title) => `<h4 class="up-h">${ico} ${title}</h4>`;
   const grid = html => `<div class="items" style="margin-bottom:16px">${html}</div>`;
   const docs = list.filter(i => i.kind !== 'photo'), photos = list.filter(i => i.kind === 'photo'), slots = svSlots(sv);
   const trk = S.files.filter(f => f.shift_id === sv.shift_id && f.kind === 'track'), allEnded = svsOf(sv.shift_id).every(x => x.work_end);
   const noSlot = S.files.filter(f => f.sv_id === sv.id && f.kind === 'photo' && !f.slot);   // v1.4 之前上傳、沒有時段的照片
   return (docs.length ? head('📄', L('Paper records (one set per vessel)', '紙本紀錄（每艘 MMO 船一份）')) + grid(docs.map(i => card(i)).join('')) : '') +
     (photos.length ? head('📷', L('Photos (one set per 12-hour period)', '照片（每 12 小時時段一組）')) +
-      (slots.length ? slots.map(k => `<div class="small" style="margin:0 0 8px"><b>${slotLabel(k)}</b></div>` + grid(photos.map(i => card(i, k)).join('')) ).join('')
+      (slots.length ? slots.map(k => `<div class="slot-box"><div class="slot-h">🕒 ${slotLabel(k)}</div>` + grid(photos.map(i => card(i, k)).join('')) + '</div>').join('')
         : `<div class="small muted" style="margin-bottom:16px">${L('Periods appear once the pre-watch starts.', '預觀測開始後才會出現時段。')}</div>`) : '') +
     (noSlot.length ? `<div class="alert blue small" style="margin-bottom:16px">${L('Uploaded before 12-hour periods existed — these do not count; upload them again under a period.', '以下照片在分時段之前上傳，不計入時段，請重新傳到對應時段：')}
       <div class="files" style="margin-top:6px">${noSlot.map(f => `<div class="file">🖼<a onclick="viewFile('${f.id}')" title="${esc(f.name)}">${esc(f.name)}</a>${ed ? `<button class="btn btn-sm w" style="padding:1px 6px" onclick="delFile('${f.id}')">×</button>` : ''}</div>`).join('')}</div></div>` : '') +
@@ -3547,7 +3552,7 @@ function envKpiRow() {
   if (!S.env) return '';
   const m = today().slice(0, 7), t = envSummary(m).tot, z = envZeroDays();
   const st = (cls, v, l, tab) => `<div class="stat ${cls}" style="cursor:pointer" onclick="ENV.month='${m}';ENV.wFrom=ENV.wTo='';envTab('${tab}')"><div class="v">${v}</div><div class="l">${l}</div></div>`;
-  return `<div class="section-header" style="padding:0 0 10px;border:0"><h3>🌱 ${L('Environmental KPIs this month', '本月環保 KPI')}</h3></div>
+  return `<div class="section-header" style="padding:0 0 10px;border:0;background:none"><h3>🌱 ${L('Environmental KPIs this month', '本月環保 KPI')}</h3></div>
     <div class="stat-grid">
       ${st('', fmtN(t.fuel, 2), L('Fuel used (m³)', '用油量 (m³)'), 'overview')}
       ${st('blue', fmtN(t.water, 1), L('Water used (m³)', '用水量 (m³)'), 'overview')}
