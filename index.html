@@ -671,9 +671,9 @@ function openModal(title, body, opt) {
   const f = bg.querySelector('input:not([type=checkbox]):not([type=file]),select,textarea'); if (f && !opt.noFocus) setTimeout(() => f.focus(), 30);
   return bg;
 }
-function alertBox(msg) {
+function alertBox(msg, title) {
   return new Promise(res => {
-    const bg = openModal('⚠ ' + L('Check the times', '請確認時間'), `<div style="line-height:1.6">${msg}</div>`, { foot: `<button class="btn btn-primary" data-ok>${L('OK', '我知道了')}</button>`, noFocus: true });
+    const bg = openModal('⚠ ' + (title || L('Check the times', '請確認時間')), `<div style="line-height:1.6">${msg}</div>`, { foot: `<button class="btn btn-primary" data-ok>${L('OK', '我知道了')}</button>`, noFocus: true });
     bg.querySelector('[data-x]').remove();
     bg.querySelector('[data-ok]').onclick = () => { bg.remove(); res(); };
     bg.querySelector('.modal-x').addEventListener('click', () => res());
@@ -3365,9 +3365,12 @@ async function dprSave(btn, status) {
   const c = DPR.cur, v = dprVessel(c.vessel_id), d = c.d;
   if (!String(c.dpr_no).trim()) return toast(L('Enter the DPR No.', '請填日報編號'), 'error');
   if (status === 'done') {
-    const t = dprActsTotal(), warn = [];
-    if (t !== 1440) warn.push(L(`Daily activities add up to ${dprHm(t)}, not 24:00.`, `本日工作合計 ${dprHm(t)}，不是 24:00。`));
-    if (!d.personnel.some(p => String(p.name || '').trim())) warn.push(L('No personnel listed.', '沒有填人員。'));
+    const t = dprActsTotal(), miss = [], warn = [];
+    if (t !== 1440) miss.push(L(`Daily activities add up to ${dprHm(t)} — they must total 24:00.`, `本日工作合計 ${dprHm(t)}，必須剛好 24:00。`));
+    if (!d.personnel.some(p => String(p.name || '').trim())) miss.push(L('No personnel listed.', '沒有填人員。'));
+    DPR_CONS.forEach(x => { const cc = d.cons[x[0]];
+      if (dprNum(cc.start) === null || dprNum(cc.end) === null) miss.push(L(`${x[1]}: enter the start-of-day and end-of-day amounts.`, `${x[2]}：請填本日起始量與本日最終量。`)); });
+    if (miss.length) return alertBox(L('Cannot complete this DPR yet — please fill in:', '這份 DPR 還不能完成，請先補齊：') + '<br>• ' + miss.join('<br>• '), L('Required information missing', '必填資料未完成'));
     if (!can('dpr.manage')) warn.push('<b>⚠️ ' + L('Please double-check that all information is correct. Once submitted it can no longer be edited — you will need to contact NMDC staff to make changes.', '請再次確認輸入資訊正確，送出後即不得修改，需通知 NMDC 人員才得進行修改。') + '</b>');
     if (warn.length && !(await confirmBox(warn.join('<br>') + '<br>' + L('Mark as completed?', '確定標記為已完成？'), L('Complete', '完成')))) return;
   }
