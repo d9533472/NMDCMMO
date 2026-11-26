@@ -115,7 +115,7 @@ const ACTION_PERM = {
   'sighting.save': 'shift.edit', 'sighting.delete': 'shift.edit', 'file.upload': 'shift.edit', 'file.delete': 'shift.edit',
   'pos.fetch': 'shift.edit', 'pos.refresh': 'shift.edit', 'track.start': 'shift.edit', 'track.stop': 'shift.edit',
   'shift.reopen': 'shift.manage', 'shift.delete': 'shift.manage',
-  'vessel.save': 'master', 'vessel.delete': 'master', 'observer.save': 'master', 'observer.delete': 'master', 'item.save': 'master', 'item.delete': 'master',
+  'vessel.save': 'master', 'vessel.delete': 'master', 'vessel.refs': 'master', 'observer.save': 'master', 'observer.delete': 'master', 'item.save': 'master', 'item.delete': 'master',
   'settings.save': 'settings', 'pos.test': 'settings', 'summary.rebuild': 'settings',
   'audit.list': 'audit',
   'env.file': 'env',
@@ -155,9 +155,9 @@ function visitHit_(p) {
 function json_(o) { return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON); }
 
 const PUBLIC = { 'ping': 1, 'visit.hit': 1, 'auth.status': 1, 'auth.setup': 1, 'auth.login': 1, 'data.rev': 1 };
-const NO_REV = { 'env.file': 1, 'dpr.get': 1, 'ping': 1, 'visit.hit': 1, 'auth.status': 1, 'auth.login': 1, 'auth.logout': 1, 'auth.changePassword': 1, 'data.load': 1, 'data.rev': 1,
+const NO_REV = { 'env.file': 1, 'dpr.get': 1, 'vessel.refs': 1, 'ping': 1, 'visit.hit': 1, 'auth.status': 1, 'auth.login': 1, 'auth.logout': 1, 'auth.changePassword': 1, 'data.load': 1, 'data.rev': 1,
   'audit.list': 1, 'file.get': 1, 'shift.files': 1, 'pos.fetch': 1, 'pos.test': 1, 'pos.list': 1, 'reset.request': 1 };
-const AUDIT_SKIP = { 'env.file': 1, 'dpr.get': 1, 'ping': 1, 'visit.hit': 1, 'auth.status': 1, 'data.load': 1, 'data.rev': 1, 'audit.list': 1, 'file.get': 1, 'shift.files': 1, 'pos.list': 1 };
+const AUDIT_SKIP = { 'env.file': 1, 'dpr.get': 1, 'vessel.refs': 1, 'ping': 1, 'visit.hit': 1, 'auth.status': 1, 'data.load': 1, 'data.rev': 1, 'audit.list': 1, 'file.get': 1, 'shift.files': 1, 'pos.list': 1 };
 // 這些寫入會改到批次資料 → 重建試算表「總表」
 const SUMMARY_ACTIONS = /^((shift|sv|pause|sighting|file)\.(save|delete|close|reopen|upload)|reset\.confirm)$/;
 
@@ -221,7 +221,8 @@ const ROUTES = {
 
   'vessel.save': (u, p) => saveMaster_('Vessels', p, ['name','kind','mmsi','imo','type','operator','remark','active','sort',
     'charter_start','charter_end','fuel_type','env_report'], ['name','kind']),
-  'vessel.delete': (u, p) => deleteMaster_('Vessels', p.id),
+  'vessel.delete': (u, p) => p.cascade ? deleteVesselCascade_(u, p.id) : deleteMaster_('Vessels', p.id),
+  'vessel.refs': (u, p) => vesselRefs_(p.id),
   'observer.save': (u, p) => saveMaster_('Observers', p, ['name','role','company','phone','cert_no','remark','active'], ['name']),
   'observer.delete': (u, p) => deleteMaster_('Observers', p.id),
   'item.save': (u, p) => saveMaster_('UploadItems', p, ['kind','name_zh','name_en','required','cond','active','sort','note'], ['kind','name_zh']),
@@ -1444,6 +1445,32 @@ function deleteMaster_(sheet, id) {
     const r = Repo.get(sheet, id);
     Repo.remove(sheet, id);
     return { id: id, name: r && r.name };
+  });
+}
+/** 刪船前列出這艘船的紀錄：批次（會擋）、環保每日／廢棄物／環境事件、DPR */
+function vesselRefs_(id) {
+  const of = t => Repo.all(t).filter(x => x.vessel_id === id);
+  return {
+    batches: Repo.all('ShiftVessels').filter(x => x.vessel_id === id).length + Repo.all('Shifts').filter(x => x.construction_vessel_id === id).length,
+    daily: of('EnvDaily').map(r => ({ date: r.date })),
+    waste: of('EnvWaste').map(r => ({ date: r.date, receipt_no: r.receipt_no, file: !!r.drive_id })),
+    incidents: of('EnvIncidents').map(r => ({ time: r.time, type: r.type, status: r.status })),
+    dpr: of('DPR').map(r => ({ date: r.date, dpr_no: r.dpr_no, status: r.status }))
+  };
+}
+/** 連同環保紀錄與 DPR 一起刪船（批次仍然擋）；廢棄物單據的 Drive 檔案丟垃圾桶 */
+function deleteVesselCascade_(u, id) {
+  return withLock_(() => {
+    const ref = vesselRefs_(id);
+    if (ref.batches) fail_('This vessel is used in batches — set it inactive instead');
+    if ((ref.daily.length || ref.waste.length || ref.incidents.length) && !can_(u, 'env.edit')) fail_('You do not have permission to delete environmental records');
+    if (ref.dpr.length && !can_(u, 'dpr.manage')) fail_('You do not have permission to delete DPRs');
+    Repo.all('EnvWaste').filter(x => x.vessel_id === id && x.drive_id).forEach(x => { try { DriveApp.getFileById(x.drive_id).setTrashed(true); } catch (e) {} });
+    const n = {};
+    ['EnvDaily', 'EnvWaste', 'EnvIncidents', 'DPR'].forEach(t => { n[t] = Repo.removeWhere(t, x => x.vessel_id === id); });
+    const r = Repo.get('Vessels', id);
+    Repo.remove('Vessels', id);
+    return { id: id, name: r && r.name, removed: n };
   });
 }
 function deleteItem_(id) {

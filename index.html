@@ -644,7 +644,7 @@ const ERR_ZH = {
   'This code was requested by another administrator': '此驗證碼是由其他管理員申請的', 'Verification code expired — send a new one': '驗證碼已過期，請重新寄送',
   'Too many wrong codes — send a new one': '驗證碼錯誤次數過多，請重新寄送',
   'Could not find a position in the API response': 'API 回應中沒有船位資料',
-  'This vessel has environmental records — set it inactive instead': '這艘船已有環保紀錄，請改為停用',
+  'This vessel has environmental records — set it inactive instead': '這艘船已有環保紀錄，請改為停用', 'You do not have permission to delete environmental records': '你沒有刪除環保紀錄的權限', 'You do not have permission to delete DPRs': '你沒有刪除 DPR 的權限',
   'Enter the weight of at least one waste category': '請至少填一個廢棄物類別的數量', 'Time is required': '請填時間',
   'Incident type is required': '請選事件類型', 'Location is required': '請選擇或填寫地點', 'An observer can only be on one MMO vessel in a batch': '同一批次中，一位觀察人員只能在一艘 MMO 船', 'Vessel not found': '找不到船舶', 'You cannot demote or disable your own account': '不能降級或停用自己的帳號'
 };
@@ -4006,7 +4006,7 @@ function vesselModal(id) {
     <div class="fg"><label>&nbsp;</label><label class="chk"><input type="checkbox" id="vEnv" ${envOn(v) ? 'checked' : ''}> ${L('Daily environmental report required', '需填每日環保資料')}</label></div>
     <div class="fg full"><span class="small muted">${L('Days between charter start and end (or yesterday) count as required reporting days.', '起租日到退租日（或昨天）之間的每一天都算應填報日。')}</span></div></div>`, {
     perm: 'master',
-    foot: id ? `<button class="btn btn-danger" style="margin-right:auto" onclick="delMaster('vessel.delete','${id}',this)">🗑</button>` : '',
+    foot: id ? `<button class="btn btn-danger" style="margin-right:auto" onclick="delVessel('${id}',this)">🗑</button>` : '',
     onSave: async (bg, btn) => {
       if (val(bg, 'vCs') && val(bg, 'vCe') && val(bg, 'vCe') < val(bg, 'vCs')) { toast(L('Charter end is before charter start', '退租日早於起租日'), 'error'); return false; }
       return mut('vessel.save', { id: id || '', name: val(bg, 'vName'), kind: val(bg, 'vKind'), mmsi: val(bg, 'vMmsi'), imo: val(bg, 'vImo'), type: val(bg, 'vType'),
@@ -4018,6 +4018,32 @@ async function delMaster(action, id, btn) {
   if (!(await confirmBox(L('Delete this record?', '確定刪除？'), L('Delete', '刪除'), true))) return;
   btn.closest('.modal-bg').remove();
   mut(action, { id }, L('Deleted', '已刪除')).catch(() => {});
+}
+/** 刪船：先列出這艘船的環保紀錄與 DPR，確認後連同紀錄一起刪；用在批次的船不能刪 */
+async function delVessel(id, btn) {
+  const v = S.vessels.find(x => x.id === id) || {};
+  showLoading(L('Checking records…', '檢查紀錄中…'));
+  let r;
+  try { r = await api('vessel.refs', { id }); } catch (e) { toast(e.message, 'error'); return; } finally { hideLoading(); }
+  if (r.batches) return alertBox(L(`<b>${esc(v.name)}</b> is used in ${r.batches} batch record(s), so it cannot be deleted. Set it inactive instead.`,
+    `<b>${esc(v.name)}</b> 已用在 ${r.batches} 筆施工批次，不能刪除，請改為停用。`), L('Cannot delete this vessel', '不能刪除這艘船'));
+  const few = (a, f) => a.slice(0, 5).map(f).join(L(', ', '、')) + (a.length > 5 ? L(` … (${a.length} total)`, ` …等 ${a.length} 筆`) : '');
+  const span = a => { const d = a.map(x => x.date).filter(Boolean).sort(); return d.length ? d[0] + (d.length > 1 ? ' ~ ' + d[d.length - 1] : '') : ''; };
+  const items = [];
+  if (r.daily.length) items.push([L(`Environment daily entries · ${r.daily.length}`, `環保每日填報 · ${r.daily.length} 筆`), span(r.daily)]);
+  if (r.waste.length) items.push([L(`Waste records · ${r.waste.length}`, `廢棄物紀錄 · ${r.waste.length} 筆`),
+    few(r.waste, x => esc(x.date) + (x.receipt_no ? ' #' + esc(x.receipt_no) : '')) + (r.waste.some(x => x.file) ? L(' (attached receipts go to the Drive trash)', '（附的單據檔案會丟到 Drive 垃圾桶）') : '')]);
+  if (r.incidents.length) items.push([L(`Environmental incidents · ${r.incidents.length}`, `環境事件 · ${r.incidents.length} 筆`), few(r.incidents, x => esc(String(x.time).slice(0, 10)) + ' ' + esc(biName(x.type)))]);
+  if (r.dpr.length) items.push([L(`Daily progress reports (DPR) · ${r.dpr.length}`, `每日報告 DPR · ${r.dpr.length} 份`),
+    few(r.dpr.slice().sort((a, b) => a.date.localeCompare(b.date)), x => esc(x.date) + ' ' + esc(x.dpr_no) + (x.status === 'done' ? L(' (completed)', '（已完成）') : ''))]);
+  const ok = items.length
+    ? await confirmBox(L(`<b>${esc(v.name)}</b> has the records below. Deleting the vessel deletes them too.`, `<b>${esc(v.name)}</b> 有以下紀錄，刪除船舶會一起刪除：`) + dlgList(items) +
+        `<div class="dlg-note" style="background:var(--danger-bg);color:var(--danger)">${L('This cannot be undone.', '刪除後無法復原。')}</div>`,
+        L('Delete vessel and records', '連同紀錄一起刪除'), true, L('Delete vessel and its records?', '連同紀錄一起刪除？'))
+    : await confirmBox(L(`Delete <b>${esc(v.name)}</b>?`, `確定刪除 <b>${esc(v.name)}</b>？`), L('Delete', '刪除'), true, L('Delete vessel', '刪除船舶'));
+  if (!ok) return;
+  btn.closest('.modal-bg').remove();
+  mut('vessel.delete', { id, cascade: items.length ? 1 : '' }, L('Deleted', '已刪除')).catch(() => {});
 }
 function adminObservers() {
   const list = S.observers.slice().sort((a, b) => a.name.localeCompare(b.name));
