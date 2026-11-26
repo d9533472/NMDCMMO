@@ -3425,7 +3425,8 @@ async function dprSave(btn, status) {
 }
 async function dprDelete(btn) {
   const c = DPR.cur;
-  if (!(await confirmBox(L(`Delete DPR ${esc(c.dpr_no)}? This cannot be undone.`, `刪除 DPR ${esc(c.dpr_no)}？刪除後無法復原。`), L('Delete', '刪除'), true))) return;
+  if (!(await confirmBox(L(`Delete DPR <b>${esc(c.dpr_no)}</b>? The environment daily entry created from this DPR is deleted too. This cannot be undone.`,
+    `刪除 DPR <b>${esc(c.dpr_no)}</b>？這份 DPR 同步產生的環保每日填報也會一起刪除，刪除後無法復原。`), L('Delete', '刪除'), true, L('Delete DPR', '刪除 DPR')))) return;
   try { await mut('dpr.delete', { id: c.id }, L('Deleted', '已刪除'), btn); DPR.cur = null; DPR.dirty = false; renderDpr(); } catch (e) {}
 }
 

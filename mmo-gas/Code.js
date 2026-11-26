@@ -244,7 +244,10 @@ const ROUTES = {
   'env.incident.delete': (u, p) => withLock_(() => ({ id: p.id, ok: Repo.remove('EnvIncidents', p.id) })),
   'dpr.get': (u, p) => dprGet_(u, p),
   'dpr.save': (u, p) => dprSave_(u, p),
-  'dpr.delete': (u, p) => withLock_(() => { const r = Repo.get('DPR', p.id); if (r) { dprCheck_(u, r.vessel_id); dprDoneCheck_(u, r); } return { id: p.id, ok: Repo.remove('DPR', p.id) }; }),
+  // 一併刪掉這份 DPR 同步產生的環保每日填報（備註為 DPR 的那筆；環保人員自己填的不動）
+  'dpr.delete': (u, p) => withLock_(() => { const r = Repo.get('DPR', p.id); if (r) { dprCheck_(u, r.vessel_id); dprDoneCheck_(u, r); }
+    const env = r ? Repo.removeWhere('EnvDaily', x => x.vessel_id === r.vessel_id && x.date === r.date && x.remark === 'DPR') : 0;
+    return { id: p.id, ok: Repo.remove('DPR', p.id), env: env }; }),
   'summary.rebuild': (u) => { rebuildSummary_(); return { url: ss_().getUrl() }; }
 };
 
