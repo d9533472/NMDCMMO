@@ -3264,7 +3264,7 @@ function dprEditor() {
       : c.status === 'done' && c.id && can('dpr.manage') ? `<div class="alert blue">🔓 ${L('Completed DPR — you can still edit it because you have the “Edit completed DPRs” permission.', '已完成的 DPR：你有「修改已完成的 DPR」權限，仍可修改。')}</div>` : ''}
     <div class="section"><div class="section-body"><div class="form-grid dpr-head">
       <div class="fg"><label>專案 Project</label><div>${esc(st.dpr_project)}</div></div>
-      <div class="fg"><label>日報編號 DPR No.</label><input class="mono" value="${esc(c.dpr_no)}" oninput="DPR.cur.dpr_no=this.value;DPR.dirty=true" ${ro ? 'disabled' : ''}></div>
+      <div class="fg"><label>日報編號 DPR No.</label><input class="mono" value="${esc(c.dpr_no)}" readonly tabindex="-1" title="${L('Assigned automatically', '系統自動編號')}" style="background:var(--na-bg);color:var(--muted);cursor:not-allowed"></div>
       <div class="fg"><label>客戶 Client</label><div>${esc(st.dpr_client)}</div></div>
       <div class="fg"><label>日期 Date</label><div class="mono">${esc(c.date)}</div></div>
       <div class="fg"><label>承攬商 Contractor</label><div>${esc(st.dpr_contractor)}</div></div>
