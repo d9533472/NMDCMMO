@@ -88,6 +88,10 @@ body:not(.admin) .adm{display:none!important}
 .hamb{display:none;background:none;border:0;font-size:22px;cursor:pointer;color:var(--navy)}
 .live{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
 .live i{width:8px;height:8px;border-radius:50%;background:var(--green);animation:pulse 2s infinite}
+.live.syncing i{background:#f59e0b;animation:pulse .8s infinite}
+.live.syncing{color:#b26a00}
+.live.fail i{background:var(--danger);animation:none}
+.live.fail{color:var(--danger)}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
 .user-chip{display:flex;align-items:center;gap:8px;padding:5px 10px;border:1px solid var(--border);border-radius:20px;cursor:pointer;font-size:13px;position:relative;background:#fff;white-space:nowrap}
 .user-chip .role{font-size:10px;text-transform:uppercase;background:var(--green-bg);color:var(--green-dark);padding:1px 6px;border-radius:8px;font-weight:600}
@@ -707,12 +711,11 @@ async function pendRun() {
 function pendStatus() {
   const el = $('liveTxt'); if (!el) return;
   const n = pendOps().length;
-  el.parentElement.style.color = n && PEND_FAIL ? 'var(--danger)' : '';
-  if (PEND_BUSY || (n && !PEND_FAIL)) el.textContent = L('Syncing…', '同步中…');
-  else if (n) el.textContent = L(`Not synced (${n}) — retrying`, `未同步 ${n} 筆，自動重試中`);
+  if (PEND_BUSY || (n && !PEND_FAIL)) { el.textContent = L('Syncing…', '同步中…'); liveLight('syncing'); }
+  else if (n) { el.textContent = L(`Not synced (${n}) — retrying`, `未同步 ${n} 筆，自動重試中`); liveLight('fail'); }
   else if (/同步中|Syncing|未同步|Not synced/.test(el.textContent)) {
-    el.textContent = L('Synced', '同步完成');
-    setTimeout(() => { if (/同步完成|Synced/.test(el.textContent)) el.textContent = L('Live', '即時'); }, 3000);
+    el.textContent = L('Synced', '同步完成'); liveLight('');
+    setTimeout(() => { if (/同步完成|Synced/.test(el.textContent)) { el.textContent = L('Live', '即時'); liveLight(''); } }, 3000);
   }
 }
 // 沒網路失敗的：每 20 秒、或網路恢復時自動再送
@@ -1127,7 +1130,14 @@ function render() {
 function setSync(on, failed) {
   const el = $('liveTxt'); if (!el) return;
   el.textContent = on ? L('Syncing…', '同步中…') : failed ? L('Offline (showing last data)', '離線（顯示上次資料）') : L('Live', '即時');
-  el.parentElement.style.color = failed ? 'var(--danger)' : '';
+  liveLight(on ? 'syncing' : failed ? 'fail' : '');
+}
+/** 右上角燈號：'' 綠燈即時｜'syncing' 橘燈同步中｜'fail' 紅燈未同步／離線 */
+function liveLight(st) {
+  const el = $('liveTxt'); if (!el) return;
+  el.parentElement.classList.toggle('syncing', st === 'syncing');
+  el.parentElement.classList.toggle('fail', st === 'fail');
+  el.parentElement.title = el.textContent;
 }
 function setTitle(t) { $('pageTitle').textContent = t; }
 function toggleUserMenu(e) {
@@ -4558,6 +4568,33 @@ function dt24All(root) { (root.querySelectorAll ? root : document).querySelector
 new MutationObserver(ms => ms.forEach(m => m.addedNodes.forEach(n => { if (n.nodeType === 1) { if (n.matches && n.matches('input[type=datetime-local]')) dt24(n); else dt24All(n); } })))
   .observe(document.body, { childList: true, subtree: true });
 dt24All(document);
+
+// ==================== 自動更新 ====================
+// 船上的裝置常常一直開著舊版：每 5 分鐘（和切回這個分頁時）抓一次網站最新的 index.html（不走快取），
+// 程式碼跟現在跑的不一樣就自動重新載入（網址加 ?v= 避開瀏覽器快取）；有還沒同步的資料先同步，同步不了、開著視窗或正在輸入就等下次。
+const APP_CODE = (() => { const sc = [...document.scripts].find(x => !x.src && x.textContent.length > 100000); return sc ? sc.textContent : ''; })();
+let UPD_BUSY = false, UPD_LAST = 0;
+async function checkUpdate() {
+  if (UPD_BUSY || !APP_CODE || Date.now() - UPD_LAST < 60000) return;
+  UPD_BUSY = true; UPD_LAST = Date.now();
+  try {
+    const r = await fetch(location.pathname + '?nocache=' + Date.now(), { cache: 'no-store' });
+    if (!r.ok) return;
+    const html = (await r.text()).replace(/\r\n/g, '\n');
+    if (html.indexOf('checkUpdate') < 0 || html.indexOf(APP_CODE) >= 0) return;   // 不是正常頁面，或沒有新版
+    if ($('modals').children.length || ENV.dirty || DPR.dirty || (document.activeElement && /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName))) return;
+    try { if (Date.now() - Number(sessionStorage.getItem('mmo_upd_at') || 0) < 10 * 60000) return; } catch (e) {}   // 剛更新過還是不一樣 → 不要一直重載
+    if (TOKEN && S && pendOps().length && !(await pendSave())) return;
+    try { sessionStorage.setItem('mmo_updated', '1'); sessionStorage.setItem('mmo_upd_at', String(Date.now())); } catch (e) {}
+    location.replace(location.pathname + '?v=' + Date.now() + location.hash);
+  } catch (e) {} finally { UPD_BUSY = false; }
+}
+setInterval(checkUpdate, 5 * 60000);
+setTimeout(checkUpdate, 15000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) checkUpdate(); });
+// 更新後把網址上的 ?v= 拿掉，並提示一下
+if (/[?&]v=\d+/.test(location.search)) history.replaceState(null, '', location.pathname + location.hash);
+try { if (sessionStorage.getItem('mmo_updated')) { sessionStorage.removeItem('mmo_updated'); setTimeout(() => toast(L('Updated to the latest version', '已自動更新到最新版本')), 1500); } } catch (e) {}
 boot();
 </script>
 </body>
