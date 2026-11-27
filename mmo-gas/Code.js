@@ -10,7 +10,7 @@
 // 角色：admin（全部，固定）＋後台自訂角色（Roles 表，勾選 PERMS 裡的功能）；預設 mmo（填報批次）、viewer（唯讀共用帳號）
 // ============================================================
 
-const VERSION = '1.10.5';
+const VERSION = '1.10.6';
 // 自動編號的批次從 10 號開始（1–9 號是年初作業，之後手動補登）
 const FIRST_AUTO_SHIFT_NO = 10;
 const ROOT_FOLDER_ID = '1uVkbv4tndRVERhrHmHUzaTvPlHaFV4em';
@@ -61,7 +61,7 @@ const DEFAULT_SETTINGS = {
   sites: '通霄 Tongxiao, 24.47, 120.55',
   scopes: '海管鋪設 Pipelay\n拋石作業 Rock placement\n後噴埋 Post-lay jetting\n回填作業 Backfilling\n超長段作業 Extra-long section',
   species: '台灣白海豚 Taiwanese humpback dolphin\n印太瓶鼻海豚 Indo-Pacific bottlenose dolphin\n瓶鼻海豚 Common bottlenose dolphin\n印太露脊鼠海豚 Indo-Pacific finless porpoise\n熱帶斑海豚 Pantropical spotted dolphin\n飛旋海豚 Spinner dolphin\n糙齒海豚 Rough-toothed dolphin\n未知鯨豚 Unidentified cetacean',
-  pause_reasons: '目擊鯨豚進入警戒區 Cetacean in alert zone\nPAM 偵測到鯨豚 PAM detection\n天氣／能見度不佳 Poor weather / visibility\n設備故障 Equipment failure\n施工船停止作業 Construction vessel stopped work\n其他 Other',
+  pause_reasons: '目擊鯨豚進入警戒區 Cetacean in alert zone\nPAM 偵測到鯨豚 PAM detection\n天氣／能見度不佳 Poor weather / visibility\n設備故障 Equipment failure\n施工船暫停作業 Construction vessel paused work\n其他 Other',
   ais_api_url: '',              // 之後接付費船位 API（伺服器端呼叫，金鑰不給前端）
   ais_api_key: '',
   pos_interval_min: '60',       // 儀表板自動更新船位（分鐘；0＝關閉），只更新 pos_vessels 勾選的船
@@ -437,6 +437,15 @@ function ensureSchema_() {
         });
       }
       props.setProperty('v15_crew', '1');
+      bumpRev_();
+    }
+    // v1.10.6：暫停原因「施工船停止作業」改成「施工船暫停作業」（設定清單＋既有暫停紀錄）
+    if (!props.getProperty('v1106_pause_reason')) {
+      const OLD = '施工船停止作業 Construction vessel stopped work', NEW = '施工船暫停作業 Construction vessel paused work';
+      const cur = Repo.all('Settings').find(x => x.key === 'pause_reasons');
+      if (cur && String(cur.value).indexOf(OLD) >= 0) Repo.update('Settings', 'pause_reasons', { value: String(cur.value).split(OLD).join(NEW) });
+      Repo.all('Pauses').forEach(p => { if (p.reason === OLD) Repo.update('Pauses', p.id, { reason: NEW }); });
+      props.setProperty('v1106_pause_reason', '1');
       bumpRev_();
     }
     // v1.10.5：結案改成獨立權限「批次結案」，只有 admin 和名稱含「環保人員」的角色有（之後可在後台調整）
