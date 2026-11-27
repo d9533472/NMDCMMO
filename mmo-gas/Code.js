@@ -10,7 +10,7 @@
 // 角色：admin（全部，固定）＋後台自訂角色（Roles 表，勾選 PERMS 裡的功能）；預設 mmo（填報批次）、viewer（唯讀共用帳號）
 // ============================================================
 
-const VERSION = '1.9.4';
+const VERSION = '1.10.0';
 const ROOT_FOLDER_ID = '1uVkbv4tndRVERhrHmHUzaTvPlHaFV4em';
 const SS_NAME = 'MMO 鯨豚觀察總表';
 const TZ = 'Asia/Taipei';
@@ -161,8 +161,40 @@ const AUDIT_SKIP = { 'env.file': 1, 'dpr.get': 1, 'vessel.refs': 1, 'ping': 1, '
 // 這些寫入會改到批次資料 → 重建試算表「總表」
 const SUMMARY_ACTIONS = /^((shift|sv|pause|sighting|file)\.(save|delete|close|reopen|upload)|reset\.confirm)$/;
 
+// 作業時間先存本機：前端按「儲存」時一次送出多筆寫入，依序執行，遇到錯誤就停，回傳完成筆數＋最新資料
+const BATCH_OK = { 'sv.save': 1, 'pause.save': 1, 'pause.delete': 1, 'sighting.save': 1, 'sighting.delete': 1 };
+function handleBatch_(req) {
+  let user;
+  try { ensureSchema_(); user = verifySession_(req.token); }
+  catch (err) { return { ok: false, error: err.message, code: err.code }; }
+  const ops = req.payload && Array.isArray(req.payload.ops) ? req.payload.ops : [];
+  const results = [];
+  let error = '';
+  for (let i = 0; i < ops.length; i++) {
+    const action = String((ops[i] && ops[i].action) || ''), payload = (ops[i] && ops[i].payload) || {};
+    try {
+      if (!BATCH_OK[action]) fail_('Unknown action: ' + action);
+      if (!can_(user, ACTION_PERM[action])) fail_('Permission denied', 'FORBIDDEN');
+      let data;
+      try { data = ROUTES[action](user, payload); }
+      catch (err) { if (/\.delete$/.test(action) && err.code === 'NOT_FOUND') data = { id: payload.id }; else throw err; }   // 重送時已刪掉的不算錯
+      results.push(data === undefined ? null : data);
+      audit_(action, user, payload, data, true, '');
+    } catch (err) {
+      audit_(action, user, payload, null, false, err && err.message);
+      if (!err.code) console.error(action + ': ' + err.message + '\n' + err.stack);
+      error = err.code ? err.message : 'Server error: ' + err.message;
+      break;
+    }
+  }
+  if (results.length) { bumpRev_(); PropertiesService.getScriptProperties().setProperty('summary_dirty', '1'); }
+  Repo.flush();
+  return { ok: true, data: { done: results.length, results: results, error: error }, state: loadData_(user) };
+}
+
 function handle_(req) {
   const action = String(req.action || '');
+  if (action === 'batch.save') return handleBatch_(req);
   const fn = ROUTES[action];
   if (!fn) return { ok: false, error: 'Unknown action: ' + action };
   const payload = req.payload || {};
@@ -1126,7 +1158,10 @@ function saveShiftVesselRow_(u, p) {
     return Repo.update('ShiftVessels', sv.id, patch);
   });
 }
+// new_id：前端先存本機時自己產生的 id（之後的修改都用這個 id）；重送時已存在就當修改
+const CLIENT_ID_RE = /^L[a-z0-9]{8,30}$/;
 function saveChild_(u, sheet, p, fields, required) {
+  if (!p.id && p.new_id && Repo.get(sheet, p.new_id)) p = Object.assign({}, p, { id: p.new_id });
   return withLock_(() => {
     const svId = p.id ? (Repo.get(sheet, p.id) || fail_('Record not found', 'NOT_FOUND')).sv_id : str_(p.sv_id);
     const sv = Repo.get('ShiftVessels', svId);
@@ -1139,7 +1174,7 @@ function saveChild_(u, sheet, p, fields, required) {
     });
     required.forEach(k => { if (!p.id && !patch[k]) fail_('Missing field: ' + k); });
     if (p.id) return Repo.update(sheet, p.id, patch);
-    const rec = Object.assign({ id: genId_(), shift_id: sv.shift_id, sv_id: sv.id, created_by: u.username, created_at: nowIso_() }, patch);
+    const rec = Object.assign({ id: CLIENT_ID_RE.test(str_(p.new_id)) ? str_(p.new_id) : genId_(), shift_id: sv.shift_id, sv_id: sv.id, created_by: u.username, created_at: nowIso_() }, patch);
     Repo.insert(sheet, rec);
     return rec;
   });
@@ -1148,7 +1183,7 @@ function saveChild_(u, sheet, p, fields, required) {
 function savePause_(u, p) {
   const q = Object.assign({}, p);
   delete q.sighting;
-  if (!q.id && !q.start) fail_('Missing field: start');
+  if (!q.id && !q.start && !(q.new_id && Repo.get('Pauses', q.new_id))) fail_('Missing field: start');
   if (p.sighting) q.sighting_id = saveSighting_(u, Object.assign({}, p.sighting, { auto_pause: false })).id;
   return saveChild_(u, 'Pauses', q, PAUSE_FIELDS, ['start']);
 }
