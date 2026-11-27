@@ -10,7 +10,7 @@
 // 角色：admin（全部，固定）＋後台自訂角色（Roles 表，勾選 PERMS 裡的功能）；預設 mmo（填報批次）、viewer（唯讀共用帳號）
 // ============================================================
 
-const VERSION = '1.10.4';
+const VERSION = '1.10.5';
 // 自動編號的批次從 10 號開始（1–9 號是年初作業，之後手動補登）
 const FIRST_AUTO_SHIFT_NO = 10;
 const ROOT_FOLDER_ID = '1uVkbv4tndRVERhrHmHUzaTvPlHaFV4em';
@@ -105,7 +105,7 @@ const ITEM_SEED = [
 ];
 
 // 可勾選的功能（前端 PERM_LABELS 要同步）；admin 角色固定擁有全部，帳號／角色／清空資料只有 admin
-const PERMS = ['dashboard', 'shifts', 'sightings', 'summary', 'tracks', 'shift.edit', 'shift.manage', 'dpr', 'dpr.edit', 'dpr.manage', 'env', 'env.edit', 'master', 'settings', 'audit'];
+const PERMS = ['dashboard', 'shifts', 'sightings', 'summary', 'tracks', 'shift.edit', 'shift.close', 'shift.manage', 'dpr', 'dpr.edit', 'dpr.manage', 'env', 'env.edit', 'master', 'settings', 'audit'];
 const ROLE_SEED = [
   { id: 'mmo', name: 'MMO 填報人員', perms: ['dashboard', 'shifts', 'sightings', 'summary', 'tracks', 'shift.edit', 'dpr', 'dpr.edit'] },
   { id: 'viewer', name: '訪客（唯讀）', perms: ['dashboard', 'shifts', 'sightings', 'summary', 'tracks', 'dpr'] },
@@ -113,7 +113,7 @@ const ROLE_SEED = [
 ];
 // 動作 → 需要的功能；沒列的動作登入就能用（讀取、登出、改密碼）
 const ACTION_PERM = {
-  'shift.save': 'shift.edit', 'shift.close': 'shift.edit', 'sv.save': 'shift.edit', 'pause.save': 'shift.edit', 'pause.delete': 'shift.edit',
+  'shift.save': 'shift.edit', 'shift.close': 'shift.close', 'sv.save': 'shift.edit', 'pause.save': 'shift.edit', 'pause.delete': 'shift.edit',
   'sighting.save': 'shift.edit', 'sighting.delete': 'shift.edit', 'file.upload': 'shift.edit', 'file.delete': 'shift.edit',
   'pos.fetch': 'shift.edit', 'pos.refresh': 'shift.edit', 'track.start': 'shift.edit', 'track.stop': 'shift.edit',
   'shift.reopen': 'shift.manage', 'shift.delete': 'shift.manage',
@@ -437,6 +437,15 @@ function ensureSchema_() {
         });
       }
       props.setProperty('v15_crew', '1');
+      bumpRev_();
+    }
+    // v1.10.5：結案改成獨立權限「批次結案」，只有 admin 和名稱含「環保人員」的角色有（之後可在後台調整）
+    if (!props.getProperty('v1105_shift_close')) {
+      Repo.all('Roles').forEach(r => {
+        const ps = String(r.perms).split(',').map(x => x.trim()).filter(Boolean);
+        if (/環保人員/.test(r.name) && ps.indexOf('shift.close') < 0) Repo.update('Roles', r.id, { perms: ps.concat(['shift.close']).join(','), updated_at: nowIso_() });
+      });
+      props.setProperty('v1105_shift_close', '1');
       bumpRev_();
     }
     // v1.9.0：新增每日報告 DPR；預設角色 MMO 填報人員可填、訪客可看（後台改過角色的只補不刪）

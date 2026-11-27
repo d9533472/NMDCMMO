@@ -156,6 +156,7 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
 .alert.red{background:var(--danger-bg);color:var(--danger);border:1px solid #f1c3c3}
 .alert.amber{background:var(--warn-bg);color:var(--warn);border:1px solid #f0d48a}
 .alert.blue{background:var(--info-bg);color:var(--info);border:1px solid #c3d8f3}
+.alert.green{background:var(--green-bg);color:var(--green-dark);border:1px solid #b5e5c8}
 .alert ul{margin:4px 0 0 18px}
 
 /* forms */
@@ -559,7 +560,8 @@ function can(perm) { return !!S && (isAdmin() || (S.user.perms || []).indexOf(pe
 const PERM_LABELS = [
   ['dashboard', 'Dashboard', '儀表板'], ['shifts', 'Batches (view)', '施工批次（檢視）'], ['sightings', 'Sightings', '目擊紀錄'],
   ['summary', 'Summary sheet', '總表'], ['tracks', 'Vessel tracks', '船舶軌跡'],
-  ['shift.edit', 'Batch data entry (create, record, upload, close)', '批次填報（新增、觀測紀錄、上傳、結案）'],
+  ['shift.edit', 'Batch data entry (create, record, upload)', '批次填報（新增、觀測紀錄、上傳）'],
+  ['shift.close', 'Close batches', '批次結案'],
   ['shift.manage', 'Reopen / delete / edit closed batches', '重新開啟／刪除／修改已結案批次'],
   ['dpr', 'Daily progress report (view)', '每日報告 DPR（檢視）'], ['dpr.edit', 'Daily progress report entry', '每日報告 DPR 填報'],
   ['dpr.manage', 'Edit / delete completed DPRs', '修改／刪除已完成的 DPR'],
@@ -2048,7 +2050,7 @@ function renderShift() {
       <div class="toolbar">
         ${s.folder_id ? `<a class="btn btn-sm" target="_blank" href="https://drive.google.com/drive/folders/${esc(s.folder_id)}">📁 Drive</a>` : ''}
         ${ed ? `<button class="btn btn-sm w" onclick="shiftModal('${s.id}')">✏️ ${L('Edit', '編輯')}</button>` : ''}
-        ${!shiftClosed(s) ? `<button class="btn btn-sm btn-primary w" onclick="closeShift('${s.id}')">🔒 ${L('Close batch', '結案')}</button>` : ''}
+        ${!shiftClosed(s) && can('shift.close') ? `<button class="btn btn-sm btn-primary w" onclick="closeShift('${s.id}')">🔒 ${L('Close batch', '結案')}</button>` : ''}
         ${shiftClosed(s) && can('shift.manage') ? `<button class="btn btn-sm w" onclick="mut('shift.reopen',{id:'${s.id}'},L('Reopened','已重新開啟'))">🔓 ${L('Reopen', '重新開啟')}</button>` : ''}
         ${can('shift.manage') ? `<button class="btn btn-sm btn-danger w" onclick="deleteShift('${s.id}')">🗑</button>` : ''}
       </div></div></div>
@@ -2404,14 +2406,26 @@ async function doNext(svId, k) {
   if (k === 'work_end') endPause(svId);
   return lmut('sv.save', patch, { pre_start: L('Pre-watch started', '預觀測開始'), pre_end: L('Pre-watch ended', '預觀測結束'), work_start: L('Observation started', '開始實際觀測'), work_end: L('Observation ended', '實際觀測結束') }[k] + also);
 }
+// 結案（只有 admin／NMDC 環保人員）：先把這台裝置還沒同步的送上去，再列出各船缺的文件／照片
 async function closeShift(id) {
+  if (pendOps().length && !(await pendSave())) return;
   const vs = svsOf(id);
   const notDone = vs.filter(x => x.checks.status !== 'done' && x.checks.status !== 'idle');
-  const miss = vs.reduce((n, x) => n + x.checks.missing.length, 0);
-  let msg = L('Close this batch? MMO users can no longer edit it.', '確定結案？結案後 MMO 帳號就不能再修改。');
+  const lack = vs.filter(x => x.checks.missing.length);
+  let msg, title, tone;
+  if (lack.length) {
+    title = L('Some uploads are missing', '尚有文件未上傳'); tone = 'warn';
+    msg = L('The following required documents / photos have not been uploaded yet:', '以下必傳的文件／照片還沒上傳：') +
+      lack.map(x => `<div style="margin-top:10px"><b>${esc(x.vessel_name)}</b>（${L('missing', '缺')} ${x.checks.missing.length}）<ul style="margin:4px 0 0;padding-left:20px;line-height:1.7">${x.checks.missing.map(m => `<li>${esc(L(m.en, m.zh))}</li>`).join('')}</ul></div>`).join('') +
+      `<div class="dlg-note" style="margin-top:10px">${L('Close the batch anyway?', '確定仍要結案？')}</div>`;
+  } else {
+    title = L('Documents complete', '文件完整'); tone = 'info';
+    msg = `<div class="alert green">✅ ${L('All required documents and photos are uploaded — this batch can be closed.', '文件完整，可以結案。')}</div>`;
+  }
   if (notDone.length) msg += `<div class="alert amber" style="margin-top:10px">${L('Not completed: ', '尚未完工：')}${esc(notDone.map(x => x.vessel_name).join('、'))}</div>`;
-  if (miss) msg += `<div class="alert amber" style="margin-top:10px">${L(miss + ' required uploads are missing', '尚缺 ' + miss + ' 項必傳文件／照片')}</div>`;
-  if (await confirmBox(msg, L('Close batch', '結案'))) mut('shift.close', { id }, L('Batch closed', '批次已結案')).catch(() => {});
+  msg += `<div class="small muted" style="margin-top:10px">${L('After closing, MMO users can no longer edit it.', '結案後 MMO 帳號就不能再修改。')}</div>`;
+  if (await dlgBox({ tone, title, msg, ok: '🔒 ' + L('Close batch', '結案'), okCls: 'btn-primary', cancel: true }))
+    mut('shift.close', { id }, L('Batch closed', '批次已結案')).catch(() => {});
 }
 async function deleteShift(id) {
   const s = shiftOf(id);
