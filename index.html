@@ -203,6 +203,9 @@ textarea{resize:vertical;min-height:64px}
 .pend-bar{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:1090;display:flex;align-items:center;gap:14px;background:#fff8e1;border:1px solid #f0c36d;border-left:5px solid var(--warn);border-radius:var(--radius);box-shadow:var(--shadow);padding:10px 14px;width:max-content;max-width:calc(100% - 32px);font-size:13px}
 .pend-bar .btn{flex-shrink:0}
 body.has-pend #content{padding-bottom:96px}
+.dt24{display:flex;gap:6px;align-items:center;min-width:0}
+.dt24 input[type=date]{flex:1 1 auto;min-width:0}
+.dt24 .t24{flex:0 0 76px;width:76px;font-family:ui-monospace,Consolas,monospace;text-align:center}
 .toasts{position:fixed;bottom:18px;right:18px;z-index:1300;display:flex;flex-direction:column;gap:8px;max-width:360px}
 .toast{background:var(--navy);color:#fff;padding:10px 14px;border-radius:var(--radius);font-size:13px;box-shadow:var(--shadow);border-left:4px solid var(--green)}
 .toast.error{border-left-color:#ff6b6b}
@@ -3481,6 +3484,7 @@ function dprEditor() {
 
     <div class="section">${head(4, 'Daily Activities', '本日工作', ro ? '' : `<button class="btn btn-sm" onclick="dprActsImport()">📋 ${L('Fill from batches', '從批次帶入')}</button>
         <button class="btn btn-green btn-sm" onclick="dprRow('acts')">＋ ${L('Add row', '新增一列')}</button>`)}
+      ${ro ? '' : `<div class="section-body small muted" style="padding:6px 16px 0">${L('Times: just type 4 digits — no colon needed (e.g. 0830, 1745); use 2400 for the end of the day.', '時間只要打四個數字即可，不需要打冒號（例如 0830、1745）；一天結束打 2400。')}</div>`}
       ${acts.length ? `<div class="table-wrap"><table class="tbl dpr-tbl"><tr><th>起 From</th><th>迄 To</th><th>持續 Duration</th><th>工作類別 Activity Type</th><th>敘述/備註 Description / Remarks</th>${ro ? '' : '<th></th>'}</tr>
         ${acts.map((a, i) => `<tr><td>${dprIn(`acts.${i}.from`, { cls: 'mono', ph: 'hh:mm', style: 'width:72px', change: `dprNormT(this,${i})` })}</td>
           <td>${dprIn(`acts.${i}.to`, { cls: 'mono', ph: 'hh:mm', style: 'width:72px', change: `dprNormT(this,${i})` })}</td>
@@ -3489,7 +3493,7 @@ function dprEditor() {
           <button class="btn btn-danger btn-sm" onclick="dprDelRow('acts',${i})">🗑</button></td>`}</tr>`).join('')}
         <tr style="font-weight:700"><td colspan="2">總計 Total</td><td class="mono" colspan="${ro ? 3 : 4}" id="dprActTot"></td></tr></table></div>`
         : `<div class="empty">${L('No activities yet — “Fill from batches” adds the observation times of this vessel’s batches.', '還沒有工作紀錄；按「從批次帶入」會帶入這艘船當天各批次的觀測時間。')}</div>`}
-      <div class="section-body small muted" style="padding-top:6px">${L('Times as hh:mm (0800 is fine); use 24:00 for the end of the day.', '時間填 hh:mm（打 0800 也可以）；一天結束填 24:00。')}</div></div>
+</div>
 
     <div class="section">${head(5, 'Consumption', '消耗量')}
       <div class="table-wrap"><table class="tbl dpr-tbl"><tr><th></th><th>本日起始量 Start of Day (m³)</th><th>本日加油(水)量 Bunkered Today (m³)</th><th>本日最終量 End of Day (m³)</th><th>本日總計消耗量 Tot. Cons. Today (m³)</th></tr>
@@ -4501,6 +4505,59 @@ async function adminAudit() {
   } catch (e) { $('adminBody').innerHTML = `<div class="alert red">${esc(e.message)}</div>`; }
 }
 
+// ==================== 24 小時制日期時間輸入 ====================
+// 瀏覽器的 datetime-local 會依系統語系顯示「上午／下午」，改成：日期選擇器＋24 小時制時間欄（打 0930 自動變 09:30）。
+// 原本的 input 留著但隱藏，value 讀寫轉給新的兩個欄位，改完照樣觸發它的 change，所以原本的程式都不用改。
+const INPUT_VALUE = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+function t24Norm(v) {
+  v = String(v || '').trim().replace(/[：.]/g, ':');
+  if (!v) return '';
+  let h, m;
+  if (/^\d{1,2}$/.test(v)) { h = +v; m = 0; }
+  else if (/^\d{3,4}$/.test(v)) { v = v.padStart(4, '0'); h = +v.slice(0, 2); m = +v.slice(2); }
+  else { const r = v.match(/^(\d{1,2}):(\d{1,2})$/); if (!r) return null; h = +r[1]; m = +r[2]; }
+  return h < 24 && m < 60 ? String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0') : null;
+}
+function dt24(el) {
+  if (el.__dt24) return;
+  el.__dt24 = true;
+  const init = INPUT_VALUE.get.call(el);
+  const box = document.createElement('span');
+  box.className = 'dt24';
+  box.innerHTML = `<input type="date"><input type="text" class="t24" inputmode="numeric" maxlength="5" placeholder="hh:mm" title="${L('24-hour time, e.g. 0930', '24 小時制，例如打 0930')}">`;
+  const di = box.children[0], ti = box.children[1];
+  di.value = init.slice(0, 10); ti.value = init.slice(11, 16);
+  di.disabled = ti.disabled = el.disabled;
+  el.style.display = 'none';
+  el.parentNode.insertBefore(box, el);
+  let last = init.slice(0, 16);
+  Object.defineProperty(el, 'value', { configurable: true,
+    get() { const t = t24Norm(ti.value); return di.value && t ? di.value + 'T' + t : ''; },
+    set(v) { v = String(v || ''); di.value = v.slice(0, 10); ti.value = v.slice(11, 16); last = v.slice(0, 16); } });
+  const commit = () => {
+    const t = t24Norm(ti.value);
+    if (t === null) { toast(L('Enter the time as hh:mm (24-hour), e.g. 0930', '時間請填 24 小時制，例如 0930 或 14:05'), 'error'); ti.value = last.slice(11, 16); return; }
+    if (t) ti.value = t;
+    if (ti.value && !di.value) di.value = today();
+    if (!di.value && !ti.value) { if (last) { last = ''; el.dispatchEvent(new Event('change', { bubbles: true })); } return; }
+    if (!di.value || !ti.value) return;   // 還沒填完
+    const v = di.value + 'T' + ti.value;
+    if (v !== last) { last = v; el.dispatchEvent(new Event('change', { bubbles: true })); }
+  };
+  // 打字時自動補冒號；打滿四個數字就送出
+  ti.addEventListener('input', () => {
+    if (/:/.test(ti.value)) return;
+    const d = ti.value.replace(/\D/g, '').slice(0, 4);
+    ti.value = d.length > 2 ? d.slice(0, 2) + ':' + d.slice(2) : d;
+    if (d.length === 4) commit();
+  });
+  ti.addEventListener('change', commit);
+  di.addEventListener('change', commit);
+}
+function dt24All(root) { (root.querySelectorAll ? root : document).querySelectorAll('input[type=datetime-local]').forEach(dt24); }
+new MutationObserver(ms => ms.forEach(m => m.addedNodes.forEach(n => { if (n.nodeType === 1) { if (n.matches && n.matches('input[type=datetime-local]')) dt24(n); else dt24All(n); } })))
+  .observe(document.body, { childList: true, subtree: true });
+dt24All(document);
 boot();
 </script>
 </body>
