@@ -86,6 +86,9 @@ body:not(.admin) .adm{display:none!important}
 .header h2{font-size:16px;font-weight:600;color:var(--navy);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .header-left,.header-right{display:flex;align-items:center;gap:10px;min-width:0}
 .hamb{display:none;background:none;border:0;font-size:22px;cursor:pointer;color:var(--navy)}
+.view-as{width:auto;max-width:200px;padding:5px 8px;font-size:13px;flex:0 1 auto}
+body.viewing-as .view-as{background:#fff4dc;border-color:#e0a526;color:#8a5a00;font-weight:600}
+body.viewing-as .header{box-shadow:inset 0 -3px 0 #e0a526}
 .live{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
 .live i{width:8px;height:8px;border-radius:50%;background:var(--green);animation:pulse 2s infinite}
 .live.syncing i{background:#f59e0b;animation:pulse .8s infinite}
@@ -514,7 +517,7 @@ body.has-pend #content{padding-bottom:96px}
   <div class="scrim" onclick="document.body.classList.remove('nav-open')"></div>
   <div class="main">
     <header class="header">
-      <div class="header-left"><button class="hamb" onclick="document.body.classList.toggle('nav-open')">☰</button><h2 id="pageTitle"></h2></div>
+      <div class="header-left"><button class="hamb" onclick="document.body.classList.toggle('nav-open')">☰</button><span id="viewAsBox"></span><h2 id="pageTitle"></h2></div>
       <div class="header-right">
         <div class="live" title="Auto refresh"><i></i><span id="liveTxt"></span></div>
         <button class="btn lang-btn" onclick="toggleLang()"></button>
@@ -556,10 +559,28 @@ function $(id) { return document.getElementById(id); }
 function bool(v) { return v === true || v === 'TRUE' || v === 'true'; }
 function lines(v) { return String(v || '').split('\n').map(x => x.trim()).filter(Boolean); }
 function json(v, d) { try { return v ? JSON.parse(v) : d; } catch (e) { return d; } }
-function isViewer() { return S && S.user.role === 'viewer'; }
-function isAdmin() { return S && S.user.role === 'admin'; }
+// 管理員「切換身分」預覽：只換前端看到的頁面與按鈕（資料、後端權限仍是管理員）；存在 sessionStorage，關掉分頁就恢復
+let VIEW_AS = '';
+try { VIEW_AS = sessionStorage.getItem('mmo_view_as') || ''; } catch (e) {}
+function realAdmin() { return !!S && S.user.role === 'admin'; }
+function viewRole() { return realAdmin() && VIEW_AS ? (S.roles || []).find(r => r.id === VIEW_AS) || null : null; }
+function isViewer() { return !!S && (viewRole() ? VIEW_AS : S.user.role) === 'viewer'; }
+function isAdmin() { return realAdmin() && !viewRole(); }
 /** 目前使用者有沒有某個功能（admin 全部都有；功能清單見 PERM_LABELS） */
-function can(perm) { return !!S && (isAdmin() || (S.user.perms || []).indexOf(perm) >= 0); }
+function can(perm) { const vr = viewRole(); return !!S && (vr ? vr.perms.indexOf(perm) >= 0 : isAdmin() || (S.user.perms || []).indexOf(perm) >= 0); }
+function setViewAs(v) {
+  VIEW_AS = v;
+  try { if (v) sessionStorage.setItem('mmo_view_as', v); else sessionStorage.removeItem('mmo_view_as'); } catch (e) {}
+  render();
+}
+function viewAsBox() {
+  const box = $('viewAsBox');
+  if (!realAdmin()) { box.innerHTML = ''; document.body.classList.remove('viewing-as'); return; }
+  const vr = viewRole();
+  document.body.classList.toggle('viewing-as', !!vr);
+  box.innerHTML = `<select class="view-as" title="${L('Preview the pages another role sees (data and server permissions stay admin)', '預覽其他角色看到的頁面（資料與後端權限仍是管理員）')}" onchange="setViewAs(this.value)">
+    <option value="">👁 ${L('Administrator', '系統管理員')}</option>${(S.roles || []).map(r => `<option value="${esc(r.id)}" ${vr && vr.id === r.id ? 'selected' : ''}>👁 ${esc(r.name)}</option>`).join('')}</select>`;
+}
 // 後台「角色」可勾選的功能（後端 PERMS 要同步）
 const PERM_LABELS = [
   ['dashboard', 'Dashboard', '儀表板'], ['shifts', 'Batches (view)', '施工批次（檢視）'], ['sightings', 'Sightings', '目擊紀錄'],
@@ -1124,7 +1145,8 @@ function render() {
       ${p.id === 'shifts' && missingCount ? `<span class="badge" title="${L('Completed vessels with missing uploads', '已完工但缺件')}">${missingCount}</span>` : ''}</div>`).join('');
   $('sideFoot').innerHTML = `v${esc(S.version)} · ${L('TCO Manual 4th ed.', '作業手冊第四版')}<br>${L('Pre-watch', '預觀測')} ${settingsNum('pre_watch_min', 30)} min · ${L('Alert zone', '警戒區')} ${settingsNum('alert_zone_m', 750)} m<br><span id="visitCnt"></span>`;
   showVisits();
-  const role = S.user.role === 'admin' ? 'Admin' : esc(roleName(S.user.role));
+  viewAsBox();
+  const role = viewRole() ? esc(viewRole().name) : S.user.role === 'admin' ? 'Admin' : esc(roleName(S.user.role));
   $('userChip').innerHTML = `👤 <span class="nm">${esc(S.user.name || S.user.username)}</span><span class="role">${role}</span>`;
   if (!/…|離線|Offline|同步|Sync/.test($('liveTxt').textContent)) $('liveTxt').textContent = L('Live', '即時');
   const P = { tracks: renderTracks, dashboard: renderDashboard, shifts: renderShifts, shift: renderShift, sightings: renderSightings, summary: renderSummary, admin: renderAdmin, env: renderEnv, dpr: renderDpr };
