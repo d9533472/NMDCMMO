@@ -209,7 +209,7 @@ textarea{resize:vertical;min-height:64px}
 .pend-bar .btn{flex-shrink:0}
 body.has-pend #content{padding-bottom:96px}
 .dt24{display:flex;gap:6px;align-items:center;min-width:0}
-.dt24 input[type=date]{flex:1 1 auto;min-width:0}
+.dt24 input[type=date]{flex:0 1 160px;width:160px;min-width:0}
 .dt24 .t24{flex:0 0 76px;width:76px;font-family:ui-monospace,Consolas,monospace;text-align:center}
 .toasts{position:fixed;bottom:18px;right:18px;z-index:1300;display:flex;flex-direction:column;gap:8px;max-width:360px}
 .toast{background:var(--navy);color:#fff;padding:10px 14px;border-radius:var(--radius);font-size:13px;box-shadow:var(--shadow);border-left:4px solid var(--green)}
@@ -240,9 +240,14 @@ body.has-pend #content{padding-bottom:96px}
 .sv-tab.active{background:var(--navy);color:#fff;border-color:var(--navy)}
 .next-box{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:14px 16px;background:linear-gradient(90deg,#f2fbf6,#fff);border-bottom:1px solid var(--border)}
 .next-box .timer{font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:600;color:var(--navy)}
-.trow{display:grid;grid-template-columns:150px 1fr auto;gap:10px;align-items:center;padding:8px 0;border-bottom:1px dashed var(--border)}
-.trow:last-child{border-bottom:0}
-.trow label{font-weight:600;font-size:13px}
+.nb-act{display:flex;flex-direction:column;align-items:flex-start;gap:4px}
+.nb-hint{font-size:12px;color:var(--muted);max-width:220px;line-height:1.35}
+.tpair{display:grid;grid-template-columns:120px minmax(0,1fr) minmax(0,1fr);gap:8px 20px;align-items:center;padding:8px 0;border-bottom:1px dashed var(--border)}
+.tpair:last-child{border-bottom:0}
+.tpair>label{font-weight:600;font-size:13px}
+.tcell{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0}
+.tcell .tsub{font-size:12.5px;color:var(--muted);min-width:30px}
+@media (max-width:1100px){.tpair{grid-template-columns:1fr}}
 .items{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
 .item{border:1px solid var(--border);border-radius:var(--radius-lg);padding:12px;background:#fff;display:flex;flex-direction:column;gap:8px}
 .item.ok{border-color:#a8dcbd;background:#fbfefc}
@@ -457,8 +462,7 @@ body.has-pend #content{padding-bottom:96px}
 }
 @media (max-width:560px){
   .form-grid{grid-template-columns:1fr}
-  .trow{grid-template-columns:1fr auto}
-  .trow label{grid-column:1/-1}
+
   .header{padding:0 12px}
   .stat .v{font-size:22px}
 }
@@ -2135,26 +2139,31 @@ function svPanel(s, sv, ed) {
   const ps = S.pauses.filter(p => p.sv_id === sv.id).sort((a, b) => a.start.localeCompare(b.start));
   const ss = S.sightings.filter(x => x.sv_id === sv.id).sort((a, b) => a.time.localeCompare(b.time));
   const preMin = settingsNum('pre_watch_min', 30);
-  const tRow = (k, en, zh, extra) => `<div class="trow"><label>${L(en, zh)}</label>
+  // 作業時間：同一個動作的開始／結束放同一列（label＝全名，給編輯／刪除的確認視窗用）
+  const tCell = (k, sub, en, zh) => `<div class="tcell"><span class="tsub">${sub}</span>
       <input type="datetime-local" value="${esc(sv[k] || '')}" ${ed ? '' : 'disabled'} onchange="manualSv(this,'${sv.id}','${k}',this.value)">
-      <div class="toolbar">${ed ? `<button class="btn btn-sm w" onclick="manualSv(null,'${sv.id}','${k}',nowLocal())">${L('Now', '現在')}</button>` + rowBtns('sv', sv.id, k, sv[k], L(en, zh)) : ''}${extra || ''}</div></div>`;
+      ${ed ? `<div class="toolbar"><button class="btn btn-sm w" onclick="manualSv(null,'${sv.id}','${k}',nowLocal())">${L('Now', '現在')}</button>${rowBtns('sv', sv.id, k, sv[k], L(en, zh))}</div>` : ''}</div>`;
+  const tPair = (label, a, b, note) => `<div class="tpair"><label>${label}${note ? `<div class="small muted" style="font-weight:400">${note}</div>` : ''}</label>${a}${b}</div>`;
   // 每個時間都可編輯／刪除（修正系統或人為記錯的時間）
   const rowBtns = (kind, id, f, v, label) => { const a = `'${kind}','${id}','${f}','${esc(label).replace(/'/g, '&#39;')}'`;
     return `<button class="btn btn-sm w" title="${L('Edit', '編輯')}" onclick="timeEdit(${a})">✏️</button>` +
       (v ? `<button class="btn btn-sm w" title="${L('Delete', '刪除')}" onclick="timeDel(${a})">🗑</button>` : ''); };
-  // 作業時間依實際順序：暫停施工 → （需要時）重新預觀測 → 回復施工；「現在」只出現在進行中暫停的下一步
-  const pRow = (p, f, en, zh, step, note) => `<div class="trow"><label>${L(en, zh)}${note ? `<div class="small muted" style="font-weight:400">${note}</div>` : ''}</label>
+  // 暫停施工 → （需要時）重新預觀測 → 回復施工；「現在」只出現在進行中暫停的下一步
+  const pCell = (p, f, sub, en, zh, step) => `<div class="tcell"><span class="tsub">${sub}</span>
       <input type="datetime-local" value="${esc(p[f] || '')}" ${ed && !(f === 'end' && !p.end && !step) ? '' : 'disabled'} onchange="manualPause(this,'${p.id}','${f}')">
-      <div class="toolbar">${ed && step ? `<button class="btn btn-sm w" onclick="doNext('${sv.id}','${step}')">${L('Now', '現在')}</button>` : ''}${ed ? rowBtns('pause', p.id, f, p[f], L(en, zh)) : ''}</div></div>`;
+      ${ed ? `<div class="toolbar">${step ? `<button class="btn btn-sm w" onclick="doNext('${sv.id}','${step}')">${L('Now', '現在')}</button>` : ''}${rowBtns('pause', p.id, f, p[f], L(en, zh))}</div>` : ''}</div>`;
+  const START = L('Start', '開始'), END = L('End', '結束');
   const pauseRows = () => ps.slice().sort((a, b) => tms(a.start) - tms(b.start)).map((p, i) => {
     const st = pauseState(p), step = p.end ? '' : pauseStep(p), n = ps.length > 1 ? ' ' + (i + 1) : '';
     const ended = p.end && sv.work_end && tms(p.end) >= tms(sv.work_end);
     const showPre = (st.need && !ended) || p.pre_start || p.pre_end;
     const why = st.zs.length ? L('Cetaceans in alert zone', '鯨豚進入警戒區') : L('Paused over ' + st.limit + ' min', '暫停超過 ' + st.limit + ' 分鐘');
-    return pRow(p, 'start', 'Work paused' + n, '暫停施工' + n, '') +
-      (showPre ? pRow(p, 'pre_start', 'New pre-watch start', '重新預觀測開始', step === 'rp_start' ? step : '', why) +
-        pRow(p, 'pre_end', 'New pre-watch end', '重新預觀測結束', step === 'rp_end' ? step : '', why) : '') +
-      pRow(p, 'end', 'Work resumed' + n, '回復施工' + n, step === 'resume' ? step : '');
+    return tPair(L('Pause / resume', '暫停／回復施工') + n,
+        pCell(p, 'start', L('Pause', '暫停'), 'Work paused' + n, '暫停施工' + n, ''),
+        pCell(p, 'end', L('Resume', '回復'), 'Work resumed' + n, '回復施工' + n, step === 'resume' ? step : '')) +
+      (showPre ? tPair(L('New pre-watch', '重新預觀測') + n,
+        pCell(p, 'pre_start', START, 'New pre-watch start', '重新預觀測開始', step === 'rp_start' ? step : ''),
+        pCell(p, 'pre_end', END, 'New pre-watch end', '重新預觀測結束', step === 'rp_end' ? step : ''), why) : '');
   }).join('');
   const pre = mins(sv.pre_start, sv.pre_end), work = mins(sv.work_start, sv.work_end);
   const wx = json(sv.weather, null);
@@ -2162,19 +2171,19 @@ function svPanel(s, sv, ed) {
   return `
   ${ck.warnings.length ? `<div class="alert red"><b>⚠ ${L('Guideline checks', '作業指引檢核')}</b><ul>${ck.warnings.map(w => `<li>${esc(L(w.en, w.zh))}${ed && w.pause_id ? ` <button class="btn btn-sm w" style="margin-left:6px" onclick="preFillModal('${sv.id}','${w.pause_id}')">✏️ ${L('Fill in pre-watch times', '補填預觀測時間')}</button>` : ''}</li>`).join('')}</ul></div>` : ''}
   <div class="section">
-    ${ed && na ? `<div class="next-box"><button class="btn btn-lg ${na.cls} w" onclick="doNext('${sv.id}','${na.k}')">${na.t}</button>
+    ${ed && na ? `<div class="next-box"><div class="nb-act"><button class="btn btn-lg ${na.cls} w" onclick="doNext('${sv.id}','${na.k}')">${na.t}</button>
+        ${na.k === 'pause' ? `<div class="nb-hint">${L('Only when cetaceans are sighted or the work vessel announces a pause', '目擊鯨豚或施工船宣布暫停施工時才按')}</div>` : ''}</div>
+      ${ck.status === 'work' || ck.status === 'paused' ? `<div class="nb-act"><button class="btn btn-lg w" onclick="doNext('${sv.id}','work_end')">■ ${L('End observation', '結束實際觀測')}</button>
+        <div class="nb-hint">${L('Only when the work vessel confirms work has stopped', '施工船確認停工時才按')}</div></div>` : ''}
       <div><div class="timer" id="timer" data-k="${na.k}"></div><div class="small muted" id="timerHint"></div></div>
-      ${ck.status === 'work' || ck.status === 'paused' || ck.status === 'preDone' || ck.status === 'pre' ? `<button class="btn w" style="margin-left:auto" onclick="sightingModal('${sv.id}')">🐬 ${L('Record sighting', '登錄目擊')}</button>` : ''}
-      ${ck.status === 'work' || ck.status === 'paused' ? `<button class="btn w" onclick="doNext('${sv.id}','work_end')">■ ${L('End observation (work stopped)', '結束實際觀測（施工船宣布停工）')}</button>` : ''}</div>` :
+      ${ck.status === 'work' || ck.status === 'paused' || ck.status === 'preDone' || ck.status === 'pre' ? `<button class="btn w" style="margin-left:auto" onclick="sightingModal('${sv.id}')">🐬 ${L('Record sighting', '登錄目擊')}</button>` : ''}</div>` :
       `<div class="next-box"><div><div class="timer" id="timer" data-k="${na ? na.k : ''}"></div><div class="small muted" id="timerHint"></div></div></div>`}
     <div class="section-header"><h3>⏱ ${L('Operation times', '作業時間')}</h3>
       <span class="small muted">${L('Pre-watch', '預觀測')} ${isNaN(pre) ? '—' : `<b style="color:${pre < preMin ? 'var(--danger)' : 'var(--green-dark)'}">${pre} min</b>`} / ${preMin} · ${L('Observation', '實際觀測')} <b>${fmtDur(work)}</b></span></div>
     <div class="section-body" style="padding-top:6px;padding-bottom:6px">
-      ${tRow('pre_start', 'Pre-watch start', '預觀測開始')}
-      ${tRow('pre_end', 'Pre-watch end', '預觀測結束')}
-      ${tRow('work_start', 'Observation start', '實際觀測開始')}
+      ${tPair(L('Pre-watch', '預觀測'), tCell('pre_start', START, 'Pre-watch start', '預觀測開始'), tCell('pre_end', END, 'Pre-watch end', '預觀測結束'))}
+      ${tPair(L('Observation', '實際觀測'), tCell('work_start', START, 'Observation start', '實際觀測開始'), tCell('work_end', END, 'Observation end', '實際觀測結束'))}
       ${pauseRows()}
-      ${tRow('work_end', 'Observation end', '實際觀測結束')}
     </div>
   </div>
 
@@ -2188,9 +2197,9 @@ function svPanel(s, sv, ed) {
         : `<div class="empty">${L('No pauses', '無暫停施工紀錄')}</div>`}</div>
     <div class="section"><div class="section-header"><h3>🐬 ${L('Sightings', '目擊紀錄')} <span class="muted">(${ss.length})</span></h3>
       ${ed ? `<button class="btn btn-sm w" onclick="sightingModal('${sv.id}')">＋ ${L('Add', '新增')}</button>` : ''}</div>
-      ${ss.length ? `<div class="table-wrap"><table class="tbl"><tr><th>${L('Time', '時間')}</th><th>${L('Species', '物種')}</th><th>${L('Count', '數量')}</th><th>${L('Alert zone', '警戒區')}</th><th></th></tr>
-        ${ss.map(x => `<tr><td class="mono">${fmtT(x.time, true)}</td><td>${esc(biName(x.species))}<div class="small muted">${esc(biName(x.detection))}</div></td><td>${esc(x.count)}</td>
-          <td>${inZone(x) ? `<span class="tag red">${L('Alert zone', '警戒區')}</span>` : '—'}${x.left_time ? `<div class="small muted">${L('Left', '離開')} ${fmtT(x.left_time)}</div>` : ''}</td>
+      ${ss.length ? `<div class="table-wrap"><table class="tbl"><tr><th>${L('Sighted → left', '目擊 → 離開')}</th><th>${L('Species', '物種')}</th><th>${L('Count', '數量')}</th><th>${L('Alert zone', '警戒區')}</th><th></th></tr>
+        ${ss.map(x => `<tr><td class="mono">${fmtT(x.time, true)}${x.left_time ? ' → ' + fmtT(x.left_time, x.left_time.slice(0, 10) !== x.time.slice(0, 10)) : ''}</td><td>${esc(biName(x.species))}<div class="small muted">${esc(biName(x.detection))}</div></td><td>${esc(x.count)}</td>
+          <td>${inZone(x) ? `<span class="tag red">${L('Alert zone', '警戒區')}</span>` : '—'}</td>
           <td>${ed ? `<button class="btn btn-sm w" onclick="sightingModal('${sv.id}','${x.id}')">✏️</button>` : ''}</td></tr>`).join('')}</table></div>`
         : `<div class="empty">${L('No cetaceans sighted', '未目擊鯨豚')}</div>`}</div>
   </div>
