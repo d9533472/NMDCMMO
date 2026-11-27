@@ -10,7 +10,9 @@
 // 角色：admin（全部，固定）＋後台自訂角色（Roles 表，勾選 PERMS 裡的功能）；預設 mmo（填報批次）、viewer（唯讀共用帳號）
 // ============================================================
 
-const VERSION = '1.10.2';
+const VERSION = '1.10.4';
+// 自動編號的批次從 10 號開始（1–9 號是年初作業，之後手動補登）
+const FIRST_AUTO_SHIFT_NO = 10;
 const ROOT_FOLDER_ID = '1uVkbv4tndRVERhrHmHUzaTvPlHaFV4em';
 const SS_NAME = 'MMO 鯨豚觀察總表';
 const TZ = 'Asia/Taipei';
@@ -970,7 +972,7 @@ function saveShift_(u, p) {
     if (!vesselIds.length) fail_('Select at least one MMO vessel');
     const vessels = Repo.all('Vessels');
     const cv = vessels.find(v => v.id === str_(p.construction_vessel_id));
-    const shiftNo = str_(p.shift_no) || String(Repo.all('Shifts').reduce((m, x) => Math.max(m, parseInt(x.shift_no, 10) || 0), 0) + 1);
+    const shiftNo = str_(p.shift_no) || String(Repo.all('Shifts').reduce((m, x) => Math.max(m, parseInt(x.shift_no, 10) || 0), FIRST_AUTO_SHIFT_NO - 1) + 1);
     if (Repo.all('Shifts').find(x => x.shift_no === shiftNo && x.id !== p.id)) fail_('Batch number ' + shiftNo + ' already exists');
     const patch = { shift_no: shiftNo, date: date, site: str_(p.site), scope: str_(p.scope),
       construction_vessel_id: cv ? cv.id : '', construction_vessel: cv ? cv.name : str_(p.construction_vessel),
