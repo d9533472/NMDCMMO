@@ -622,6 +622,7 @@ async function mut(action, payload, okMsg, btn) {
   if (btn) btn.disabled = true;
   showLoading(L('Saving…', '儲存中…'));
   try {
+    if (/^(sv|pause|sighting)\./.test(action)) while (PEND_BUSY) await new Promise(r => setTimeout(r, 300));   // 等背景同步送完，避免重複送
     const d = /^(sv|pause|sighting)\./.test(action) && pendOps().length ? await pendSend({ action, payload }) : await api(action, payload, { reload: true });
     if (okMsg) toast(okMsg);
     render();
@@ -630,11 +631,12 @@ async function mut(action, payload, okMsg, btn) {
   finally { hideLoading(); if (btn) btn.disabled = false; }
 }
 
-// ==================== 作業時間先存本機 ====================
-// 海上網路慢：流程按鈕、「現在」、改時間、暫停施工、目擊都先改這台裝置的資料（存在 localStorage，重新整理也還在），
-// 按「儲存」才一次上傳（batch.save）。新增的紀錄由前端產生 id（new_id），之後的修改都用同一個 id。
+// ==================== 作業時間先存本機、背景同步 ====================
+// 海上網路慢：流程按鈕、「現在」、改時間、暫停施工、目擊都先改這台裝置的資料（時間＝按下的當下；存在 localStorage，重新整理也還在），
+// 再在背景一次上傳（batch.save），右上角顯示同步中／同步完成，不擋畫面；失敗就自動重試。新增的紀錄由前端產生 id（new_id），之後的修改都用同一個 id。
 const PEND_KEY = 'mmo_pending';
-let PEND = { user: null, ops: [] }, PEND_BUSY = false, PEND_ERR = '';
+let PEND = { user: null, ops: [] }, PEND_BUSY = false, PEND_ERR = '', PEND_FAIL = false, PEND_TIMER = null;
+const PEND_SENDING = new Set();   // 上傳中的寫入：不能再併入新的修改（不然那部分不會被送出）
 // 每個帳號分開存（同一台裝置換人登入不會混在一起）
 function pendFor(user) {
   if (PEND.user !== user) {
@@ -660,25 +662,59 @@ function qOp(action, payload) {
   pendFor(S.user.username);
   const key = opKey(payload);
   if (/\.delete$/.test(action)) {
-    const save = action.replace('.delete', '.save'), local = PEND.ops.some(o => o.action === save && o.payload.new_id === key);
-    PEND.ops = PEND.ops.filter(o => !(o.action === save && opKey(o.payload) === key));
+    const mine = o => o.action === save && opKey(o.payload) === key && !PEND_SENDING.has(o);
+    const save = action.replace('.delete', '.save'), local = PEND.ops.some(o => mine(o) && o.payload.new_id === key) && !PEND.ops.some(o => PEND_SENDING.has(o) && opKey(o.payload) === key);
+    PEND.ops = PEND.ops.filter(o => !mine(o));
     if (!local) PEND.ops.push({ action, payload });
   } else {
-    const o = PEND.ops.find(o => o.action === action && opKey(o.payload) === key);
+    const o = PEND.ops.find(o => o.action === action && opKey(o.payload) === key && !PEND_SENDING.has(o));
     if (o) { delete payload.id; delete payload.new_id; Object.assign(o.payload, payload); } else PEND.ops.push({ action, payload });
   }
   pendWrite();
   applyPending(S);
   return key;
 }
-/** 本機寫入：跟 mut 一樣的用法，但不等伺服器 */
+/** 本機寫入：跟 mut 一樣的用法，但不等伺服器（背景同步） */
 function lmut(action, payload, okMsg) {
   qOp(action, payload);
   hideLoading();
-  if (okMsg) toast(okMsg + L(' · saved on this device', '（已暫存）'));
+  if (okMsg) toast(okMsg);
   render();
+  pendSync();
   return Promise.resolve();
 }
+// 背景同步：連按好幾下只送一次；上傳中又有新的，傳完再送一次
+function pendSync(delay) {
+  clearTimeout(PEND_TIMER);
+  PEND_TIMER = setTimeout(pendRun, delay === undefined ? 400 : delay);
+}
+async function pendRun() {
+  if (PEND_BUSY) return pendSync(1000);
+  if (!TOKEN || !S || !pendOps().length) return pendStatus();
+  PEND_BUSY = true; pendStatus();
+  try {
+    await pendSend();
+    PEND_FAIL = false;
+    // 輸入中或開著視窗就先不重畫（資料已經是最新的，下次重畫就會顯示）
+    if (!$('modals').children.length && !(document.activeElement && /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName))) render();
+  } catch (e) { PEND_FAIL = true; }
+  finally { PEND_BUSY = false; pendStatus(); pendBar(); if (pendOps().length && !PEND_FAIL) pendSync(0); }
+}
+// 右上角狀態：同步中…／同步完成／未同步 N 筆
+function pendStatus() {
+  const el = $('liveTxt'); if (!el) return;
+  const n = pendOps().length;
+  el.parentElement.style.color = n && PEND_FAIL ? 'var(--danger)' : '';
+  if (PEND_BUSY || (n && !PEND_FAIL)) el.textContent = L('Syncing…', '同步中…');
+  else if (n) el.textContent = L(`Not synced (${n}) — retrying`, `未同步 ${n} 筆，自動重試中`);
+  else if (/同步中|Syncing|未同步|Not synced/.test(el.textContent)) {
+    el.textContent = L('Synced', '同步完成');
+    setTimeout(() => { if (/同步完成|Synced/.test(el.textContent)) el.textContent = L('Live', '即時'); }, 3000);
+  }
+}
+// 沒網路失敗的：每 20 秒、或網路恢復時自動再送
+setInterval(() => { if (PEND_FAIL && !PEND_BUSY && TOKEN && S && pendOps().length) pendRun(); }, 20000);
+window.addEventListener('online', () => { if (TOKEN && S && pendOps().length) pendSync(0); });
 const PEND_COLL = { pause: 'pauses', sighting: 'sightings' };
 const PEND_FIELDS = {
   pause: ['start', 'end', 'pre_start', 'pre_end', 'reason', 'remark', 'sighting_id', 'monitoring', 'restart'],
@@ -688,7 +724,7 @@ const PEND_FIELDS = {
 function applyPending(st) {
   const ops = st && st.svs ? pendOps(st) : [];
   if (!ops.length) return st;
-  const fields = p => { const r = {}; Object.keys(p).forEach(k => { if (!/^(id|new_id|auto_pause|sighting)$/.test(k)) r[k] = /^(in_alert_zone|monitoring)$/.test(k) ? (bool(p[k]) || p[k] === 1 ? 'TRUE' : 'FALSE') : p[k]; }); return r; };
+  const fields = p => { const r = {}; Object.keys(p).forEach(k => { if (!/^(id|new_id|auto_pause|sighting)$/.test(k)) r[k] = /^(in_alert_zone|monitoring)$/.test(k) ? (bool(p[k]) || p[k] === 1 ? 'TRUE' : 'FALSE') : (k === 'weather' || k === 'crew') && typeof p[k] === 'object' ? JSON.stringify(p[k]) : p[k]; }); return r; };
   ops.forEach(o => {
     const p = o.payload, kind = o.action.split('.')[0], key = opKey(p);
     if (kind === 'sv') { const r = st.svs.find(x => x.id === p.id); if (r) Object.assign(r, fields(p)); return; }
@@ -719,7 +755,10 @@ function svStatus(sv, st) {
 /** 上傳暫存的寫入（extra：再接一筆要立刻存的）；成功的從暫存移除，失敗的留著下次再送 */
 async function pendSend(extra) {
   const ops = pendOps().slice();
-  const r = await api('batch.save', { ops: extra ? ops.concat([extra]) : ops }, { reload: true });
+  ops.forEach(o => PEND_SENDING.add(o));
+  let r;
+  try { r = await api('batch.save', { ops: extra ? ops.concat([extra]) : ops }, { reload: true }); }
+  finally { ops.forEach(o => PEND_SENDING.delete(o)); }
   const done = ops.slice(0, Math.min(r.done, ops.length));
   PEND.ops = PEND.ops.filter(o => done.indexOf(o) < 0);
   PEND_ERR = r.error ? trErr(r.error) : '';
@@ -736,13 +775,16 @@ function afterUpload(done) {
   svOps.forEach(o => { const sv = o.payload.work_end && S.svs.find(x => x.id === o.payload.id); if (sv) ends[sv.shift_id] = sv.id; });
   (async () => { for (const k in ends) await trackImage(ends[k], true); })();
 }
+/** 手動「立即同步」（離開前、提示列按鈕）：等背景同步做完再送剩下的 */
 async function pendSave(btn) {
-  if (PEND_BUSY || !pendOps().length) return true;
-  PEND_BUSY = true; if (btn) btn.disabled = true;
-  showLoading(L('Uploading…', '上傳中…'));
-  try { await pendSend(); toast(L('All changes uploaded', '已全部儲存上傳')); return true; }
-  catch (e) { toast(e.message, 'error'); return false; }
-  finally { PEND_BUSY = false; hideLoading(); if (btn) btn.disabled = false; render(); }
+  clearTimeout(PEND_TIMER);
+  while (PEND_BUSY) await new Promise(r => setTimeout(r, 300));
+  if (!pendOps().length) return true;
+  PEND_BUSY = true; if (btn) btn.disabled = true; pendStatus();
+  showLoading(L('Syncing…', '同步中…'));
+  try { await pendSend(); PEND_FAIL = false; toast(L('Synced', '同步完成')); return true; }
+  catch (e) { PEND_FAIL = true; toast(e.message, 'error'); return false; }
+  finally { PEND_BUSY = false; hideLoading(); if (btn) btn.disabled = false; pendStatus(); render(); }
 }
 async function pendDiscard() {
   if (!(await confirmBox(L('Discard all changes that have not been uploaded? This cannot be undone.', '確定捨棄所有尚未上傳的變更？捨棄後無法復原。'), L('Discard', '捨棄'), true))) return;
@@ -750,21 +792,22 @@ async function pendDiscard() {
   try { S = await api('data.load'); LAST_REV = S.rev; } catch (e) {}
   render();
 }
+// 平常不顯示；同步失敗（沒網路／被伺服器拒絕）才出現
 function pendBar() {
   let el = $('pendBar');
-  const n = TOKEN && S && S.user ? pendOps().length : 0;
+  const n = TOKEN && S && S.user && PEND_FAIL ? pendOps().length : 0;
   document.body.classList.toggle('has-pend', !!n);
   if (!n) { if (el) el.remove(); return; }
   if (!el) { el = document.createElement('div'); el.id = 'pendBar'; el.className = 'pend-bar'; document.body.appendChild(el); }
-  el.innerHTML = `<div><b>⚠ ${L(n + ' change(s) not uploaded yet', `${n} 筆變更尚未上傳`)}</b><div class="small">${PEND_ERR ? '❌ ' + esc(PEND_ERR) + ' · <a href="#" onclick="pendDiscard();return false">' + L('Discard', '捨棄') + '</a>' : L('Saved on this device — press Save when you have signal', '已暫存在這台裝置，有網路時請按儲存')}</div></div>
-    <button class="btn btn-primary" onclick="pendSave(this)">💾 ${L('Save', '儲存')}</button>`;
+  el.innerHTML = `<div><b>⚠ ${L(n + ' change(s) not synced yet', `${n} 筆變更尚未同步`)}</b><div class="small">${PEND_ERR ? '❌ ' + esc(PEND_ERR) + ' · <a href="#" onclick="pendDiscard();return false">' + L('Discard', '捨棄') + '</a>' : L('Kept on this device — will retry automatically when there is signal', '已暫存在這台裝置，有網路時會自動同步')}</div></div>
+    <button class="btn btn-primary" onclick="pendSave(this)">🔄 ${L('Sync now', '立即同步')}</button>`;
 }
 /** 離開前提醒：true＝可以離開（已儲存或選擇先不儲存），false＝留在這頁 */
 async function pendLeaveOk() {
   const n = pendOps().length;
   if (!n) return true;
-  const r = await dlgBox({ tone: 'warn', title: L('Not saved yet', '尚未儲存'), ok: '💾 ' + L('Save', '儲存'), cancel: true, cancelText: L('Leave without saving', '先不儲存，離開'),
-    msg: L(`${n} change(s) have not been uploaded. They stay on this device until you press Save.`, `有 ${n} 筆變更還沒按儲存上傳（會先暫存在這台裝置，之後仍可儲存）。`) });
+  const r = await dlgBox({ tone: 'warn', title: L('Not synced yet', '尚未同步完成'), ok: '🔄 ' + L('Sync now', '立即同步'), cancel: true, cancelText: L('Leave anyway', '先離開'),
+    msg: L(`${n} change(s) have not reached the server yet. They stay on this device and will sync automatically when there is signal.`, `有 ${n} 筆變更還沒同步到伺服器（已暫存在這台裝置，有網路時會自動同步）。`) });
   if (r === true) return pendSave();
   return r === false;
 }
@@ -1028,6 +1071,7 @@ function canPage(id) {
 }
 function enterApp() {
   applyPending(S);
+  if (pendOps().length) pendSync(1500);
   $('auth').classList.add('hidden'); $('app').classList.remove('hidden');
   const h = location.hash.match(/^#shift=(.+)$/);
   if (h && shiftOf(h[1])) { PAGE = 'shift'; CUR.shift = h[1]; }
@@ -1070,7 +1114,7 @@ function render() {
   showVisits();
   const role = S.user.role === 'admin' ? 'Admin' : esc(roleName(S.user.role));
   $('userChip').innerHTML = `👤 <span class="nm">${esc(S.user.name || S.user.username)}</span><span class="role">${role}</span>`;
-  if (!/…|離線|Offline/.test($('liveTxt').textContent)) $('liveTxt').textContent = L('Live', '即時');
+  if (!/…|離線|Offline|同步|Sync/.test($('liveTxt').textContent)) $('liveTxt').textContent = L('Live', '即時');
   const P = { tracks: renderTracks, dashboard: renderDashboard, shifts: renderShifts, shift: renderShift, sightings: renderSightings, summary: renderSummary, admin: renderAdmin, env: renderEnv, dpr: renderDpr };
   if (PAGE === 'shift' && !shiftOf(CUR.shift)) PAGE = 'shifts';
   if (!canPage(PAGE)) PAGE = (PAGES.find(p => canPage(p.id)) || {}).id || '';
@@ -2590,7 +2634,7 @@ async function fetchWeather(svId, quiet) {
       temp: round1(g(f, 'temperature_2m', i)), code: g(f, 'weather_code', i), rain: g(f, 'precipitation', i), vis: vis !== undefined ? round1(vis / 1000) : undefined,
       wave: round1(g(m, 'wave_height', mi)), wave_dir: g(m, 'wave_direction', mi), wave_period: round1(g(m, 'wave_period', mi)), src: 'Open-Meteo' };
     if (!quiet) hideLoading();
-    await mut('sv.save', { id: svId, weather: wx }, quiet ? '' : L('Weather recorded', '已記錄天氣'));
+    await (quiet ? lmut : mut)('sv.save', { id: svId, weather: wx }, quiet ? '' : L('Weather recorded', '已記錄天氣'));
   } catch (e) { if (!quiet) { hideLoading(); toast(L('Could not load weather: ', '無法取得天氣：') + e.message, 'error'); } }
 }
 function round1(v) { return v === undefined || v === null || isNaN(v) ? undefined : Math.round(v * 10) / 10; }
