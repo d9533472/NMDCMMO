@@ -240,8 +240,8 @@ body.has-pend #content{padding-bottom:96px}
 .sv-tab.active{background:var(--navy);color:#fff;border-color:var(--navy)}
 .next-box{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:14px 16px;background:linear-gradient(90deg,#f2fbf6,#fff);border-bottom:1px solid var(--border)}
 .next-box .timer{font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:600;color:var(--navy)}
-.nb-act{display:flex;flex-direction:column;align-items:flex-start;gap:4px}
-.nb-hint{font-size:12px;color:var(--muted);max-width:220px;line-height:1.35}
+.nb-btn{flex-direction:column;align-items:flex-start;gap:3px;padding:10px 18px;min-width:170px}
+.nb-btn small{font-size:11.5px;font-weight:400;opacity:.75}
 .tpair{display:grid;grid-template-columns:120px minmax(0,1fr) minmax(0,1fr);gap:8px 20px;align-items:center;padding:8px 0;border-bottom:1px dashed var(--border)}
 .tpair:last-child{border-bottom:0}
 .tpair>label{font-weight:600;font-size:13px}
@@ -2171,10 +2171,10 @@ function svPanel(s, sv, ed) {
   return `
   ${ck.warnings.length ? `<div class="alert red"><b>⚠ ${L('Guideline checks', '作業指引檢核')}</b><ul>${ck.warnings.map(w => `<li>${esc(L(w.en, w.zh))}${ed && w.pause_id ? ` <button class="btn btn-sm w" style="margin-left:6px" onclick="preFillModal('${sv.id}','${w.pause_id}')">✏️ ${L('Fill in pre-watch times', '補填預觀測時間')}</button>` : ''}</li>`).join('')}</ul></div>` : ''}
   <div class="section">
-    ${ed && na ? `<div class="next-box"><div class="nb-act"><button class="btn btn-lg ${na.cls} w" onclick="doNext('${sv.id}','${na.k}')">${na.t}</button>
-        ${na.k === 'pause' ? `<div class="nb-hint">${L('Only when cetaceans are sighted or the work vessel announces a pause', '目擊鯨豚或施工船宣布暫停施工時才按')}</div>` : ''}</div>
-      ${ck.status === 'work' || ck.status === 'paused' ? `<div class="nb-act"><button class="btn btn-lg w" onclick="doNext('${sv.id}','work_end')">■ ${L('End observation', '結束實際觀測')}</button>
-        <div class="nb-hint">${L('Only when the work vessel confirms work has stopped', '施工船確認停工時才按')}</div></div>` : ''}
+    ${ed && na ? `<div class="next-box"><button class="btn btn-lg ${na.cls} w${na.k === 'pause' ? ' nb-btn' : ''}" onclick="doNext('${sv.id}','${na.k}')">${na.k === 'pause'
+        ? `<span>${na.t}</span><small>${L('Cetaceans sighted, or the work vessel announces a pause', '目擊鯨豚，或施工船宣布暫停施工')}</small>` : na.t}</button>
+      ${ck.status === 'work' || ck.status === 'paused' ? `<button class="btn btn-lg w nb-btn" onclick="doNext('${sv.id}','work_end')"><span>■ ${L('End observation', '結束實際觀測')}</span>
+        <small>${L('The work vessel confirms work has stopped', '施工船確認停工')}</small></button>` : ''}
       <div><div class="timer" id="timer" data-k="${na.k}"></div><div class="small muted" id="timerHint"></div></div>
       ${ck.status === 'work' || ck.status === 'paused' || ck.status === 'preDone' || ck.status === 'pre' ? `<button class="btn w" style="margin-left:auto" onclick="sightingModal('${sv.id}')">🐬 ${L('Record sighting', '登錄目擊')}</button>` : ''}</div>` :
       `<div class="next-box"><div><div class="timer" id="timer" data-k="${na ? na.k : ''}"></div><div class="small muted" id="timerHint"></div></div></div>`}
